@@ -34,15 +34,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - S3_BUCKET=${S3_BUCKET:-health-app-uploads-${APP_ENV:-dev}}
-      - DB_HOST=${DB_HOST:-database}
-      - DB_PORT=${DB_PORT:-3306}
-      - DB_USER=${DB_USER:-health_user}
-      - DB_PASSWORD=${DB_PASSWORD:-health_password}
-      - DB_NAME=${DB_NAME:-health_app_${APP_ENV:-dev}}
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
-    depends_on:
-      database:
-        condition: service_healthy
+      - DYNAMODB_PROFILES_TABLE=${DYNAMODB_PROFILES_TABLE:-health-profiles-${APP_ENV:-dev}}
+      - DYNAMODB_UPLOADS_TABLE=${DYNAMODB_UPLOADS_TABLE:-health-profiles-${APP_ENV:-dev}-uploads}
     networks:
       - health-network
     healthcheck:
@@ -51,26 +44,6 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  # Database (MySQL)
-  database:
-    image: mysql:8.0
-    container_name: health-db-${APP_ENV:-dev}
-    environment:
-      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD:-rootpassword}
-      - MYSQL_DATABASE=${DB_NAME:-health_app_${APP_ENV:-dev}}
-      - MYSQL_USER=${DB_USER:-health_user}
-      - MYSQL_PASSWORD=${DB_PASSWORD:-health_password}
-    volumes:
-      - mysql_data_${APP_ENV:-dev}:/var/lib/mysql
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
-    networks:
-      - health-network
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
 
   # Redis (for caching)
   redis:
@@ -88,11 +61,3 @@ networks:
   health-network:
     driver: bridge
     name: health-network-${APP_ENV:-dev}
-
-volumes:
-  mysql_data_dev:
-    driver: local
-  mysql_data_test:
-    driver: local
-  mysql_data_prod:
-    driver: local

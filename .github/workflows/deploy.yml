@@ -1,0 +1,128 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: health-app-cluster
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    outputs:
+      dynamodb_profiles_table: ${{ steps.terraform.outputs.dynamodb_profiles_table }}
+      dynamodb_uploads_table: ${{ steps.terraform.outputs.dynamodb_uploads_table }}
+      s3_bucket: ${{ steps.terraform.outputs.s3_bucket }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      working-directory: ./terraform
+      run: terraform init
+
+    - name: Terraform Plan
+      working-directory: ./terraform
+      run: |
+        terraform plan \
+          -var="environment=${{ github.event.inputs.environment || 'dev' }}" \
+          -var="cluster_name=${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}"
+
+    - name: Terraform Apply
+      working-directory: ./terraform
+      run: |
+        terraform apply -auto-approve \
+          -var="environment=${{ github.event.inputs.environment || 'dev' }}" \
+          -var="cluster_name=${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}"
+
+    - name: Get Terraform Outputs
+      id: terraform
+      working-directory: ./terraform
+      run: |
+        echo "dynamodb_profiles_table=$(terraform output -raw dynamodb_profiles_table_name)" >> $GITHUB_OUTPUT
+        echo "dynamodb_uploads_table=$(terraform output -raw dynamodb_uploads_table_name)" >> $GITHUB_OUTPUT
+        echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
+
+  deploy:
+    needs: terraform
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ env.AWS_REGION }} \
+          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}
+
+    - name: Update Kubernetes secrets
+      run: |
+        kubectl create secret generic health-api-config \
+          --from-literal=DYNAMODB_PROFILES_TABLE=${{ needs.terraform.outputs.dynamodb_profiles_table }} \
+          --from-literal=DYNAMODB_UPLOADS_TABLE=${{ needs.terraform.outputs.dynamodb_uploads_table }} \
+          --from-literal=S3_BUCKET=${{ needs.terraform.outputs.s3_bucket }} \
+          --from-literal=AWS_REGION=${{ env.AWS_REGION }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy to Kubernetes
+      run: |
+        # Update image tags based on environment
+        ENV=${{ github.event.inputs.environment || 'dev' }}
+        
+        # Update health-api deployment
+        sed -i "s|ghcr.io/arunprabus/health-api:latest|ghcr.io/arunprabus/health-api:${ENV}|g" k8s/health-api-deployment.yaml
+        
+        # Update frontend deployment
+        sed -i "s|ghcr.io/arunprabus/frontend-config-app:latest|ghcr.io/arunprabus/frontend-config-app:${ENV}|g" k8s/frontend-deployment.yaml
+        
+        # Apply deployments
+        kubectl apply -f k8s/health-api-deployment.yaml
+        kubectl apply -f k8s/frontend-deployment.yaml
+
+    - name: Wait for deployment
+      run: |
+        kubectl rollout status deployment/health-api --timeout=300s
+        kubectl rollout status deployment/frontend --timeout=300s
+
+    - name: Get service URLs
+      run: |
+        echo "Health API Service:"
+        kubectl get service health-api-service
+        echo "Frontend Service:"
+        kubectl get service frontend-service
