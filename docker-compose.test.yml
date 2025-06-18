@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  frontend:
+    ports:
+      - "8081:80"
+    environment:
+      - API_URL=http://localhost:3002/api
+      - APP_NAME=Health Profile Management - Test
+      - NODE_ENV=test
+      - APP_ENV=test
+
+  api:
+    ports:
+      - "3002:3001"
+    environment:
+      - NODE_ENV=test
+      - APP_ENV=test
+      - PORT=3001
+      - JWT_SECRET=test-secret-key
+      - DB_NAME=health_app_test
+
+  database:
+    ports:
+      - "3307:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=test-root-password
+      - MYSQL_DATABASE=health_app_test
+
+  redis:
+    ports:
+      - "6380:6379"
+
+  # Test runner service
+  test-runner:
+    image: ghcr.io/arunprabus/health-api:test
+    environment:
+      - NODE_ENV=test
+      - APP_ENV=test
+      - DB_HOST=database
+      - DB_NAME=health_app_test
+      - DB_USER=health_user
+      - DB_PASSWORD=health_password
+    command: npm run test:integration
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - health-network

@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  frontend:
+    environment:
+      - API_URL=${API_URL:-http://api:3001/api}
+      - APP_NAME=Health Profile Management
+      - NODE_ENV=production
+      - APP_ENV=prod
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    environment:
+      - NODE_ENV=production
+      - APP_ENV=prod
+      - JWT_SECRET=${JWT_SECRET}
+      - DB_URL=${DB_URL}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET:-health-app-uploads-prod}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  database:
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${DB_NAME:-health_app_prod}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

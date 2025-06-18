@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # Frontend Service
+  frontend:
+    image: ghcr.io/arunprabus/frontend-config-app:${APP_ENV:-dev}
+    container_name: health-frontend-${APP_ENV:-dev}
+    environment:
+      - API_URL=${API_URL:-http://api:3001/api}
+      - APP_NAME=${APP_NAME:-Health Profile Management}
+      - NODE_ENV=${NODE_ENV:-development}
+      - APP_ENV=${APP_ENV:-dev}
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - health-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API Service
+  api:
+    image: ghcr.io/arunprabus/health-api:${APP_ENV:-dev}
+    container_name: health-api-${APP_ENV:-dev}
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - APP_ENV=${APP_ENV:-dev}
+      - PORT=3001
+      - FRONTEND_URL=${FRONTEND_URL:-http://frontend:80}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET:-health-app-uploads-${APP_ENV:-dev}}
+      - DB_HOST=${DB_HOST:-database}
+      - DB_PORT=${DB_PORT:-3306}
+      - DB_USER=${DB_USER:-health_user}
+      - DB_PASSWORD=${DB_PASSWORD:-health_password}
+      - DB_NAME=${DB_NAME:-health_app_${APP_ENV:-dev}}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-key}
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - health-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Database (MySQL)
+  database:
+    image: mysql:8.0
+    container_name: health-db-${APP_ENV:-dev}
+    environment:
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD:-rootpassword}
+      - MYSQL_DATABASE=${DB_NAME:-health_app_${APP_ENV:-dev}}
+      - MYSQL_USER=${DB_USER:-health_user}
+      - MYSQL_PASSWORD=${DB_PASSWORD:-health_password}
+    volumes:
+      - mysql_data_${APP_ENV:-dev}:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - health-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis (for caching)
+  redis:
+    image: redis:7-alpine
+    container_name: health-redis-${APP_ENV:-dev}
+    networks:
+      - health-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  health-network:
+    driver: bridge
+    name: health-network-${APP_ENV:-dev}
+
+volumes:
+  mysql_data_dev:
+    driver: local
+  mysql_data_test:
+    driver: local
+  mysql_data_prod:
+    driver: local
