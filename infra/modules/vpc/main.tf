@@ -1,4 +1,3 @@
-# VPC
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
@@ -9,7 +8,6 @@ resource "aws_vpc" "main" {
   })
 }
 
-# Internet Gateway
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -18,7 +16,6 @@ resource "aws_internet_gateway" "main" {
   })
 }
 
-# Public Subnets
 resource "aws_subnet" "public" {
   count = length(var.public_subnet_cidrs)
 
@@ -29,11 +26,10 @@ resource "aws_subnet" "public" {
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-public-${count.index + 1}"
-    "kubernetes.io/role/elb" = "1"
+    Type = "public"
   })
 }
 
-# Private Subnets
 resource "aws_subnet" "private" {
   count = length(var.private_subnet_cidrs)
 
@@ -43,17 +39,18 @@ resource "aws_subnet" "private" {
 
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-private-${count.index + 1}"
-    "kubernetes.io/role/internal-elb" = "1"
+    Type = "private"
   })
 }
 
-# NAT Gateways
 resource "aws_eip" "nat" {
   count = length(var.public_subnet_cidrs)
 
   domain = "vpc"
+  depends_on = [aws_internet_gateway.main]
+
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-nat-${count.index + 1}"
+    Name = "${var.name_prefix}-nat-eip-${count.index + 1}"
   })
 }
 
@@ -66,11 +63,8 @@ resource "aws_nat_gateway" "main" {
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-nat-${count.index + 1}"
   })
-
-  depends_on = [aws_internet_gateway.main]
 }
 
-# Route Tables
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -99,7 +93,6 @@ resource "aws_route_table" "private" {
   })
 }
 
-# Route Table Associations
 resource "aws_route_table_association" "public" {
   count = length(var.public_subnet_cidrs)
 

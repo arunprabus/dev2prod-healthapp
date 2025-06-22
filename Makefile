@@ -1,106 +1,90 @@
-# Health App Orchestration Makefile
+# Health App Infrastructure Management
 
-.PHONY: help up-dev up-test up-prod down-dev down-test down-prod logs clean
+.PHONY: help infra-up-all infra-down-all infra-up infra-down infra-plan infra-destroy
 
 # Default environment
 ENV ?= dev
+TF_DIR = infra
 
 help: ## Show this help message
-	@echo "Health App Orchestration Commands:"
+	@echo "Health App Infrastructure Commands:"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$\' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# Development Environment
-up-dev: ## Start development environment
-	@echo "🚀 Starting development environment..."
-	@cp .env.dev .env
-	@docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
-	@echo "✅ Development environment started!"
-	@echo "🌐 Frontend: http://localhost:8080"
-	@echo "🔗 API: http://localhost:3001"
+# Infrastructure Commands
+infra-up-all: ## Deploy all environments (dev, test, prod)
+	@echo "🚀 Deploying all environments..."
+	@$(MAKE) infra-up ENV=dev
+	@$(MAKE) infra-up ENV=test
+	@$(MAKE) infra-up ENV=prod
+	@echo "✅ All environments deployed!"
 
-down-dev: ## Stop development environment
-	@echo "🛑 Stopping development environment..."
-	@docker-compose -f docker-compose.yml -f docker-compose.dev.yml down
-	@echo "✅ Development environment stopped!"
+infra-down-all: ## Destroy all environments
+	@echo "🛑 Destroying all environments..."
+	@$(MAKE) infra-down ENV=dev
+	@$(MAKE) infra-down ENV=test
+	@$(MAKE) infra-down ENV=prod
+	@echo "✅ All environments destroyed!"
 
-logs-dev: ## View development logs
-	@docker-compose -f docker-compose.yml -f docker-compose.dev.yml logs -f
+infra-up: ## Deploy specific environment (ENV=dev|test|prod)
+	@echo "🚀 Deploying $(ENV) environment..."
+	@cd $(TF_DIR) && terraform init -backend-config="key=health-app-$(ENV).tfstate"
+	@cd $(TF_DIR) && terraform plan -var-file="environments/$(ENV).tfvars"
+	@cd $(TF_DIR) && terraform apply -var-file="environments/$(ENV).tfvars" -auto-approve
+	@echo "✅ $(ENV) environment deployed!"
 
-# Test Environment
-up-test: ## Start test environment
-	@echo "🧪 Starting test environment..."
-	@cp .env.test .env
-	@docker-compose -f docker-compose.yml -f docker-compose.test.yml up -d
-	@echo "✅ Test environment started!"
-	@echo "🌐 Frontend: http://localhost:8081"
-	@echo "🔗 API: http://localhost:3002"
+infra-down: ## Destroy specific environment (ENV=dev|test|prod)
+	@echo "🛑 Destroying $(ENV) environment..."
+	@cd $(TF_DIR) && terraform init -backend-config="key=health-app-$(ENV).tfstate"
+	@cd $(TF_DIR) && terraform destroy -var-file="environments/$(ENV).tfvars" -auto-approve
+	@echo "✅ $(ENV) environment destroyed!"
 
-down-test: ## Stop test environment
-	@echo "🛑 Stopping test environment..."
-	@docker-compose -f docker-compose.yml -f docker-compose.test.yml down
-	@echo "✅ Test environment stopped!"
-
-test: ## Run integration tests
-	@echo "🧪 Running integration tests..."
-	@cp .env.test .env
-	@docker-compose -f docker-compose.yml -f docker-compose.test.yml up -d test-runner
-	@docker-compose -f docker-compose.yml -f docker-compose.test.yml logs test-runner
-
-# Production Environment
-up-prod: ## Start production environment
-	@echo "🚀 Starting production environment..."
-	@cp .env.prod .env
-	@docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-	@echo "✅ Production environment started!"
-
-down-prod: ## Stop production environment
-	@echo "🛑 Stopping production environment..."
-	@docker-compose -f docker-compose.yml -f docker-compose.prod.yml down
-	@echo "✅ Production environment stopped!"
+infra-plan: ## Plan infrastructure changes (ENV=dev|test|prod)
+	@echo "📋 Planning $(ENV) environment..."
+	@cd $(TF_DIR) && terraform init -backend-config="key=health-app-$(ENV).tfstate"
+	@cd $(TF_DIR) && terraform plan -var-file="environments/$(ENV).tfvars"
 
 # Utility Commands
-logs: ## View logs for current environment
-	@docker-compose logs -f
+infra-status: ## Show Terraform state for environment (ENV=dev|test|prod)
+	@echo "📊 Checking $(ENV) environment status..."
+	@cd $(TF_DIR) && terraform init -backend-config="key=health-app-$(ENV).tfstate"
+	@cd $(TF_DIR) && terraform show
 
-status: ## Show status of all services
-	@docker-compose ps
+infra-output: ## Show Terraform outputs for environment (ENV=dev|test|prod)
+	@echo "📋 Showing $(ENV) environment outputs..."
+	@cd $(TF_DIR) && terraform init -backend-config="key=health-app-$(ENV).tfstate"
+	@cd $(TF_DIR) && terraform output
 
-clean: ## Clean up all containers, networks, and volumes
-	@echo "🧹 Cleaning up all environments..."
-	@docker-compose -f docker-compose.yml -f docker-compose.dev.yml down -v --remove-orphans
-	@docker-compose -f docker-compose.yml -f docker-compose.test.yml down -v --remove-orphans
-	@docker-compose -f docker-compose.yml -f docker-compose.prod.yml down -v --remove-orphans
-	@docker system prune -f
-	@echo "✅ Cleanup complete!"
+infra-clean: ## Clean Terraform cache
+	@echo "🧹 Cleaning Terraform cache..."
+	@cd $(TF_DIR) && rm -rf .terraform .terraform.lock.hcl
+	@echo "✅ Terraform cache cleaned!"
 
-# Database Commands
-db-migrate: ## Run database migrations
-	@echo "📊 Running database migrations for $(ENV) environment..."
-	@docker-compose exec api npm run migrate:$(ENV)
+# Kubernetes Commands
+k8s-config: ## Update kubeconfig for environment (ENV=dev|test|prod)
+	@echo "⚙️ Updating kubeconfig for $(ENV)..."
+	@aws eks update-kubeconfig --region ap-south-1 --name health-app-$(ENV)-cluster
 
-db-seed: ## Seed database with sample data
-	@echo "🌱 Seeding database for $(ENV) environment..."
-	@docker-compose exec api npm run seed:$(ENV)
+k8s-status: ## Show Kubernetes cluster status
+	@echo "📊 Kubernetes cluster status:"
+	@kubectl get nodes
+	@kubectl get pods --all-namespaces
 
-# Development Helpers
-shell-api: ## Open shell in API container
-	@docker-compose exec api sh
+# Cost Management
+shutdown-all: ## 🚨 DESTROY ALL ENVIRONMENTS (Cost Saving)
+	@echo "⚠️  WARNING: This will destroy ALL environments!"
+	@echo "💰 This action saves costs by destroying all AWS resources"
+	@read -p "Type 'DESTROY' to confirm: " confirm && [ "$$confirm" = "DESTROY" ] || exit 1
+	@$(MAKE) infra-down ENV=dev
+	@$(MAKE) infra-down ENV=test
+	@$(MAKE) infra-down ENV=prod
+	@echo "💸 All environments destroyed - costs saved!"
 
-shell-frontend: ## Open shell in frontend container
-	@docker-compose exec frontend sh
-
-shell-db: ## Open MySQL shell
-	@docker-compose exec database mysql -u health_user -p health_app_$(ENV)
-
-# Pull latest images
-pull: ## Pull latest container images
-	@echo "📥 Pulling latest images..."
-	@docker-compose pull
-	@echo "✅ Images updated!"
-
-# Build local images (for development)
-build: ## Build images locally
-	@echo "🔨 Building images locally..."
-	@docker-compose build
-	@echo "✅ Images built!"
+status-all: ## Show status of all environments
+	@echo "📊 Infrastructure Status:"
+	@echo "Dev Environment:"
+	@$(MAKE) infra-status ENV=dev || echo "❌ Dev not deployed"
+	@echo "Test Environment:"
+	@$(MAKE) infra-status ENV=test || echo "❌ Test not deployed"
+	@echo "Prod Environment:"
+	@$(MAKE) infra-status ENV=prod || echo "❌ Prod not deployed"
