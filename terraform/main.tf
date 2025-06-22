@@ -5,10 +5,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.0"
-    }
   }
 }
 
@@ -16,107 +12,46 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Data source for EKS cluster
-data "aws_eks_cluster" "cluster" {
-  name = var.cluster_name
-}
-
-data "aws_eks_cluster_auth" "cluster" {
-  name = var.cluster_name
-}
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.cluster.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.cluster.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.cluster.token
-}
-
-# S3 Bucket for file uploads
-resource "aws_s3_bucket" "health_app_uploads" {
-  bucket = "${var.project_name}-uploads-${var.environment}-${random_id.bucket_suffix.hex}"
-
-  tags = merge(var.common_tags, {
-    Name        = "${var.project_name}-uploads-${var.environment}"
+# Local variables
+locals {
+  name_prefix = "health-api"
+  tags = {
+    Project     = "Health API"
     Environment = var.environment
-  })
-}
-
-resource "random_id" "bucket_suffix" {
-  byte_length = 4
-}
-
-resource "aws_s3_bucket_versioning" "health_app_uploads" {
-  bucket = aws_s3_bucket.health_app_uploads.id
-  versioning_configuration {
-    status = "Enabled"
+    ManagedBy   = "Terraform"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "health_app_uploads" {
-  bucket = aws_s3_bucket.health_app_uploads.id
+# VPC Module
+module "vpc" {
+  source = "./vpc"
 
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
+  name_prefix           = local.name_prefix
+  vpc_cidr             = var.vpc_cidr
+  availability_zones   = var.availability_zones
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+  tags                 = local.tags
 }
 
-resource "aws_s3_bucket_public_access_block" "health_app_uploads" {
-  bucket = aws_s3_bucket.health_app_uploads.id
+# ECR Module
+module "ecr" {
+  source = "./ecr"
 
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+  repository_name = "health-api"
+  tags           = local.tags
 }
 
-# DynamoDB Module
-module "dynamodb" {
-  source = "./dynamodb"
+# EKS Module
+module "eks" {
+  source = "./eks"
 
-  table_name                    = "${var.project_name}-${var.environment}"
-  environment                   = var.environment
-  enable_point_in_time_recovery = var.environment == "prod"
-  common_tags                   = var.common_tags
-  aws_region                    = var.aws_region
-}
-
-# IAM Module
-module "iam" {
-  source = "./iam"
-
-  cluster_name              = var.cluster_name
-  namespace                 = var.kubernetes_namespace
-  service_account_name      = var.service_account_name
-  health_profiles_table_arn = module.dynamodb.health_profiles_table_arn
-  file_uploads_table_arn    = module.dynamodb.file_uploads_table_arn
-  s3_bucket_arn             = aws_s3_bucket.health_app_uploads.arn
-  common_tags               = var.common_tags
-}
-
-# Kubernetes Service Account
-resource "kubernetes_service_account" "health_api" {
-  metadata {
-    name      = var.service_account_name
-    namespace = var.kubernetes_namespace
-    annotations = {
-      "eks.amazonaws.com/role-arn" = module.iam.health_api_role_arn
-    }
-  }
-}
-
-# Kubernetes Secret for DynamoDB table names
-resource "kubernetes_secret" "health_api_config" {
-  metadata {
-    name      = "health-api-config"
-    namespace = var.kubernetes_namespace
-  }
-
-  data = {
-    DYNAMODB_PROFILES_TABLE = module.dynamodb.health_profiles_table_name
-    DYNAMODB_UPLOADS_TABLE  = module.dynamodb.file_uploads_table_name
-    S3_BUCKET               = aws_s3_bucket.health_app_uploads.bucket
-    AWS_REGION              = var.aws_region
-  }
+  cluster_name       = "${local.name_prefix}-cluster"
+  private_subnet_ids = module.vpc.private_subnet_ids
+  public_subnet_ids  = module.vpc.public_subnet_ids
+  node_desired_size  = var.node_desired_size
+  node_max_size      = var.node_max_size
+  node_min_size      = var.node_min_size
+  node_instance_types = var.node_instance_types
+  tags               = local.tags
 }

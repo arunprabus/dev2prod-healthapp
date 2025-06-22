@@ -1,168 +1,128 @@
-# Dev2Prod Health App - Orchestration
+# Health API Infrastructure
 
-This repository contains the orchestration setup for the Health Profile Management microservices application.
+Infrastructure as Code for the Health API platform using Terraform and Kubernetes.
 
 ## Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │   Backend API   │    │   AWS Services  │
-│                 │    │                 │    │                 │
-│ • React SPA     │◄──►│ • Node.js API   │◄──►│ • S3 Storage    │
-│ • Runtime Config│    │ • Profile CRUD  │    │ • RDS MySQL     │
-│ • File Upload   │    │ • File Upload   │    │ • EKS Cluster   │
-│ • Nginx         │    │ • Validation    │    │ • Load Balancer │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌──────────────┐    ┌─────────────┐
+│   Frontend      │    │  Health API  │    │ PostgreSQL  │
+│   (React)       │◄──►│(Node.js/EKS) │◄──►│ (RDS)       │
+└─────────────────┘    └──────────────┘    └─────────────┘
+         │                       │                  │
+         └───────────────────────┼──────────────────┘
+                                 │
+                    ┌─────────────▼──────────────┐
+                    │      AWS Infrastructure    │
+                    │  • EKS Cluster             │
+                    │  • VPC with Public/Private │
+                    │  • ECR Repository          │
+                    │  • ALB Ingress Controller  │
+                    │  • AWS Cognito             │
+                    └────────────────────────────┘
 ```
 
-## Services
+## Components
 
-### Frontend (frontend-config-app)
-- **Repository**: `ghcr.io/arunprabus/frontend-config-app`
-- **Port**: 8080
-- **Technology**: React + TypeScript + Nginx
-- **Features**: Runtime configuration, responsive UI, file upload
+### Infrastructure Modules
+- **VPC**: Network infrastructure with public/private subnets
+- **EKS**: Kubernetes cluster for container orchestration
+- **ECR**: Container registry for Docker images
+- **IAM**: Roles and policies for AWS services
+- **DynamoDB**: NoSQL database for application data
 
-### Backend (health-api)
-- **Repository**: `ghcr.io/arunprabus/health-api`
-- **Port**: 3001
-- **Technology**: Node.js + Express
-- **Features**: Profile CRUD, PDF upload, validation
-
-### Database
-- **Technology**: MySQL 8.0
-- **Port**: 3306
-- **Features**: Profile storage, audit logging
-
-### Cache
-- **Technology**: Redis 7
-- **Port**: 6379
-- **Features**: Session storage, caching
+### Deployment
+- **Kubernetes**: Container orchestration
+- **GitHub Actions**: CI/CD pipeline
+- **Docker**: Application containerization
 
 ## Quick Start
 
-### Prerequisites
-- Docker 20.10+
-- Docker Compose 2.0+
-
-### Local Development
+### 1. Deploy Infrastructure
 ```bash
-# Clone the orchestration repo
-git clone https://github.com/arunprabus/dev2prod-healthapp.git
-cd dev2prod-healthapp
-
-# Copy environment file
-cp .env.example .env
-
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Check service status
-docker-compose ps
-```
-
-### Access Points
-- **Frontend**: http://localhost:8080
-- **Backend API**: http://localhost:3001
-- **API Health**: http://localhost:3001/health
-- **Database**: localhost:3306
-- **Redis**: localhost:6379
-
-## Environment Configuration
-
-Create a `.env` file with the following variables:
-
-```env
-# Frontend
-API_URL=http://localhost:3001/api
-APP_NAME=Health Profile Management
-
-# Backend
-AWS_ACCESS_KEY_ID=your_aws_key
-AWS_SECRET_ACCESS_KEY=your_aws_secret
-S3_BUCKET=your-s3-bucket
-
-# Database
-DB_ROOT_PASSWORD=secure_password
-DB_USER=health_user
-DB_PASSWORD=secure_password
-```
-
-## Production Deployment
-
-### Terraform Infrastructure
-```bash
-cd terraform/
+cd terraform
 terraform init
 terraform plan
 terraform apply
 ```
 
-### GitHub Actions CI/CD
-The pipeline automatically:
-1. Builds and tests both services
-2. Pushes images to GitHub Container Registry
-3. Deploys to EKS using Terraform
-4. Runs health checks and integration tests
-
-## Monitoring
-
-### Health Checks
-- Frontend: `curl http://localhost:8080/health`
-- Backend: `curl http://localhost:3001/health`
-- Database: Built-in MySQL health check
-
-### Logs
+### 2. Configure kubectl
 ```bash
-# All services
-docker-compose logs
-
-# Specific service
-docker-compose logs frontend
-docker-compose logs backend
+aws eks update-kubeconfig --region ap-south-1 --name health-api-cluster
 ```
 
-## Development Workflow
-
-1. **Frontend Changes**: Push to `frontend-config-app` repo
-2. **Backend Changes**: Push to `health-api` repo
-3. **Infrastructure Changes**: Update this repo's Terraform configs
-4. **Local Testing**: Use `docker-compose up` to test integration
-
-## API Documentation
-
-### Profile Endpoints
-- `GET /api/profile` - List all profiles
-- `POST /api/profile` - Create profile
-- `GET /api/profile/:id` - Get profile by ID
-- `DELETE /api/profile/:id` - Delete profile
-
-### Upload Endpoints
-- `POST /api/upload` - Upload PDF file
-
-### Example Profile Creation
+### 3. Install AWS Load Balancer Controller
 ```bash
-curl -X POST http://localhost:3001/api/profile \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "John Doe",
-    "bloodGroup": "O+",
-    "insurance": "Blue Cross",
-    "email": "john@example.com",
-    "idProof": "DL123456789"
-  }'
+kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
+
+helm repo add eks https://aws.github.io/eks-charts
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  -n kube-system \
+  --set clusterName=health-api-cluster
 ```
 
-## Contributing
+### 4. Deploy Applications
+Applications are deployed via their respective repositories:
+- **Backend API**: `health-api` repository
+- **Frontend**: `health-frontend` repository
 
-1. Make changes in respective service repositories
-2. Update orchestration configs here if needed
-3. Test locally with `docker-compose`
-4. Submit pull requests to individual repos
+## Environment Management
 
-## License
+### Development
+- **Namespace**: `dev-{branch-name}`
+- **URL**: `{branch-name}.yourdomain.com`
+- **Auto-scaling**: 1-2 nodes
 
-MIT License - see individual service repositories for details.
+### Production
+- **Namespace**: `production`
+- **URL**: `yourdomain.com`
+- **Auto-scaling**: 2-4 nodes
+
+## Repository Structure
+
+```
+terraform/
+├── vpc/           # VPC and networking
+├── eks/           # EKS cluster configuration
+├── ecr/           # Container registry
+├── iam/           # IAM roles and policies
+├── dynamodb/      # DynamoDB tables
+├── main.tf        # Main configuration
+├── variables.tf   # Input variables
+└── outputs.tf     # Output values
+
+k8s/
+├── frontend-deployment.yaml
+└── health-api-deployment.yaml
+
+.github/workflows/
+└── deploy.yml     # Infrastructure deployment pipeline
+```
+
+## Cost Optimization
+
+- **EKS**: t3.medium instances with auto-scaling
+- **ECR**: Lifecycle policies to clean old images
+- **VPC**: NAT Gateways only in required AZs
+- **Monitoring**: CloudWatch for cost tracking
+
+## Security
+
+- **Network**: Private subnets for workloads
+- **IAM**: Least privilege access
+- **Secrets**: Kubernetes secrets for sensitive data
+- **Container**: Non-root user in Docker images
+
+## Monitoring & Logging
+
+- **CloudWatch**: Infrastructure metrics
+- **EKS**: Container Insights enabled
+- **ALB**: Access logs to S3
+- **Application**: Structured logging to CloudWatch
+
+## Disaster Recovery
+
+- **Multi-AZ**: Resources across availability zones
+- **Backups**: Automated RDS and DynamoDB backups
+- **Infrastructure**: Version-controlled Terraform state
+- **Applications**: Blue-green deployments

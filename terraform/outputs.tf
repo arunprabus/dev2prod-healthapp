@@ -1,24 +1,34 @@
-output "dynamodb_profiles_table_name" {
-  description = "Name of the health profiles DynamoDB table"
-  value       = module.dynamodb.health_profiles_table_name
+output "vpc_id" {
+  description = "ID of the VPC"
+  value       = module.vpc.vpc_id
 }
 
-output "dynamodb_uploads_table_name" {
-  description = "Name of the file uploads DynamoDB table"
-  value       = module.dynamodb.file_uploads_table_name
+output "private_subnet_ids" {
+  description = "IDs of the private subnets"
+  value       = module.vpc.private_subnet_ids
 }
 
-output "s3_bucket_name" {
-  description = "Name of the S3 bucket for file uploads"
-  value       = aws_s3_bucket.health_app_uploads.bucket
+output "public_subnet_ids" {
+  description = "IDs of the public subnets"
+  value       = module.vpc.public_subnet_ids
 }
 
-output "health_api_role_arn" {
-  description = "ARN of the IAM role for Health API"
-  value       = module.iam.health_api_role_arn
+output "eks_cluster_endpoint" {
+  description = "Endpoint for EKS control plane"
+  value       = module.eks.cluster_endpoint
 }
 
-output "service_account_name" {
-  description = "Name of the Kubernetes service account"
-  value       = kubernetes_service_account.health_api.metadata[0].name
+output "eks_cluster_name" {
+  description = "Kubernetes Cluster Name"
+  value       = module.eks.cluster_name
+}
+
+output "ecr_repository_url" {
+  description = "ECR Repository URL"
+  value       = module.ecr.repository_url
+}
+
+output "kubeconfig_command" {
+  description = "Command to update kubeconfig"
+  value       = "aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}"
 }
