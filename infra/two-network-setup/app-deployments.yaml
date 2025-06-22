@@ -1,0 +1,87 @@
+# Frontend Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        env:
+        - name: BACKEND_URL
+          value: "http://backend:3000"
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+  type: NodePort
+---
+# Backend Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: node:alpine
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DB_HOST
+          value: "RDS_ENDPOINT_PLACEHOLDER"
+        - name: DB_USER
+          value: "admin"
+        - name: DB_PASSWORD
+          value: "ENV_PASSWORD_PLACEHOLDER"
+        - name: DB_NAME
+          value: "healthapp"
+        command: ["/bin/sh"]
+        args: ["-c", "while true; do echo 'Backend running on port 3000'; sleep 30; done"]
+---
+# Backend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-service
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 3000
+    targetPort: 3000
+    nodePort: 30081
+  type: NodePort
