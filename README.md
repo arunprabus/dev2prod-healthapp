@@ -1,182 +1,117 @@
-# Health App Infrastructure
+# 🏥 Health App - Two-Network Infrastructure (AWS Free Tier)
 
-Infrastructure as Code for Health App with EKS, Terraform, and RDS across Dev/Test/Prod environments.
+> 🚀 Cost-optimized multi-environment K3s + RDS setup with full **network isolation**—ideal for hands-on AWS, Kubernetes, and DevOps training.
 
-## Architecture
+---
+
+## 🧱 Network Architecture
 
 ```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────┐
-│   Frontend      │    │  Health API  │    │ PostgreSQL  │
-│   (React)       │◄──►│(Node.js/EKS) │◄──►│ (RDS)       │
-└─────────────────┘    └──────────────┘    └─────────────┘
-         │                       │                  │
-         └───────────────────────┼──────────────────┘
-                                 │
-                    ┌─────────────▼──────────────┐
-                    │      AWS Infrastructure    │
-                    │  • EKS Cluster             │
-                    │  • VPC with Public/Private │
-                    │  • ECR Repository          │
-                    │  • ALB Ingress Controller  │
-                    │  • AWS Cognito             │
-                    └────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│                       AWS Region: ap-south-1                          │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│ ┌─────────────────────────────────────────────────────────────────┐   │
+│ │                 LOWER NETWORK (10.0.0.0/16)                     │   │
+│ │ ┌──────────────┐     ┌──────────────┐                           │   │
+│ │ │  DEV ENV     │     │  TEST ENV    │                           │   │
+│ │ │ K3s + RDS    │     │ K3s + RDS    │                           │   │
+│ │ └──────────────┘     └──────────────┘                           │   │
+│ └─────────────────────────────────────────────────────────────────┘   │
+│                                                                       │
+│ ┌─────────────────────────────────────────────────────────────────┐   │
+│ │                HIGHER NETWORK (10.1.0.0/16)                     │   │
+│ │ ┌──────────────┐                                               │   │
+│ │ │  PROD ENV    │                                               │   │
+│ │ │ K3s + RDS    │                                               │   │
+│ │ └──────────────┘                                               │   │
+│ └─────────────────────────────────────────────────────────────────┘   │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
-## Components
+---
 
-### Infrastructure Modules
-- **VPC**: Network infrastructure with public/private subnets
-- **EKS**: Kubernetes cluster for container orchestration
-- **ECR**: Container registry for Docker images
-- **IAM**: Roles and policies for AWS services
-- **DynamoDB**: NoSQL database for application data
+## 💰 Free Tier Resource Usage
 
-### Deployment
-- **Kubernetes**: Container orchestration
-- **GitHub Actions**: CI/CD pipeline
-- **Docker**: Application containerization
+| Resource        | Quantity | Free Tier | Cost |
+|----------------|----------|-----------|------|
+| EC2 t2.micro    | 3        | 750 hrs   | ₹0   |
+| RDS db.t3.micro | 3        | 750 hrs   | ₹0   |
+| VPCs            | 2        | Unlimited | ₹0   |
+| EBS             | 60GB     | 30GB Free | ₹0\* |
 
-## Setup
+\*Assuming 32 hrs/month usage
 
-### GitHub Secrets Required
+---
+
+## 🚀 Quick Start
+
 ```bash
-AWS_ACCESS_KEY_ID=AKIA...
-AWS_SECRET_ACCESS_KEY=...
-TF_STATE_BUCKET=health-app-terraform-state-bucket
+# 1. Setup SSH
+ssh-keygen -t rsa -f ~/.ssh/id_rsa
+
+# 2. Navigate to infra
+cd infra/two-network-setup
+
+# 3. Deploy infra and apps
+make deploy-all
+make deploy-apps ENV=dev
+make deploy-apps ENV=test
+make deploy-apps ENV=prod
 ```
 
-### AWS Prerequisites
+---
+
+## 🌐 Application Access
+
+| Environment | Network       | Frontend         | Backend          | DB Password |
+|-------------|---------------|------------------|------------------|-------------|
+| Dev         | 10.0.0.0/16   | :30080           | :30081           | `dev123!`   |
+| Test        | 10.0.0.0/16   | :30080           | :30081           | `test123!`  |
+| Prod        | 10.1.0.0/16   | :30080           | :30081           | `prod123!`  |
+
+---
+
+## 🛠️ Management Commands
+
+| Command | Description |
+|--------|-------------|
+| `make deploy-lower ENV=dev` | Deploy Dev environment |
+| `make deploy-lower ENV=test` | Deploy Test environment |
+| `make deploy-higher ENV=prod` | Deploy Prod environment |
+| `make ssh ENV=dev` | SSH into Dev |
+| `make check-apps ENV=prod` | Check app status |
+| `make status` | Show all environments |
+
+---
+
+## 💸 Cost Control
+
 ```bash
-# Create S3 bucket for Terraform state
-aws s3 mb s3://health-app-terraform-state-bucket
-
-# Create DynamoDB table for state locking
-aws dynamodb create-table --table-name terraform-state-lock \
-  --attribute-definitions AttributeName=LockID,AttributeType=S \
-  --key-schema AttributeName=LockID,KeyType=HASH \
-  --billing-mode PAY_PER_REQUEST
+make stop-all     # Stop all EC2 (save costs)
+make start-all    # Restart EC2 instances
+make destroy-all  # Tear everything down
 ```
 
-**📋 See [SETUP.md](SETUP.md) for detailed configuration**
+---
 
-## Quick Start
+## 🔒 Security & Isolation
 
-### 1. Deploy Infrastructure
-```bash
-# Deploy all environments
-make infra-up-all
+- ✅ Two distinct VPCs (Lower: Dev/Test, Higher: Prod)
+- ✅ Complete isolation—no cross-VPC traffic
+- ✅ SSH key-based login
+- ✅ Public subnets only (no NAT Gateway)
 
-# Deploy specific environment
-make infra-up ENV=dev
+---
 
-# Check status
-make status-all
-```
+## 🧪 Learning Highlights
 
-### 2. Cost Management
-```bash
-# Destroy all environments (SAVE COSTS)
-make shutdown-all
+- ⚙️ Kubernetes (K3s) in EC2
+- 🗄️ MySQL on RDS integration
+- 🔁 Environment lifecycle management
+- 🔐 VPC & Subnet configuration
+- 💥 Cost-saving strategies
 
-# Destroy specific environment
-make infra-down ENV=test
-```
+---
 
-### 2. Configure kubectl
-```bash
-aws eks update-kubeconfig --region ap-south-1 --name health-api-cluster
-```
-
-### 3. Install AWS Load Balancer Controller
-```bash
-kubectl apply -k "github.com/aws/eks-charts/stable/aws-load-balancer-controller/crds?ref=master"
-
-helm repo add eks https://aws.github.io/eks-charts
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
-  -n kube-system \
-  --set clusterName=health-api-cluster
-```
-
-### 4. Deploy Applications
-Applications are deployed via their respective repositories:
-- **Backend API**: `health-api` repository
-- **Frontend**: `health-frontend` repository
-
-## Environment Management
-
-### Development
-- **Namespace**: `dev-{branch-name}`
-- **URL**: `{branch-name}.yourdomain.com`
-- **Auto-scaling**: 1-2 nodes
-
-### Production
-- **Namespace**: `production`
-- **URL**: `yourdomain.com`
-- **Auto-scaling**: 2-4 nodes
-
-## Repository Structure
-
-```
-infra/
-├── environments/     # Environment-specific configs
-│   ├── dev.tfvars   # Dev environment
-│   ├── test.tfvars  # Test environment
-│   └── prod.tfvars  # Prod environment
-├── modules/         # Terraform modules
-│   ├── vpc/         # VPC and networking
-│   ├── eks/         # EKS cluster
-│   └── rds/         # RDS database
-├── main.tf          # Main configuration
-├── variables.tf     # Input variables
-└── backend.tf       # State backend
-
-.github/workflows/
-├── infra-deploy.yml    # Infrastructure deployment
-└── infra-shutdown.yml  # Cost-saving shutdown
-
-Makefile            # Infrastructure commands
-```
-
-## Network Architecture
-- **Dev & Test**: Shared network (10.0.0.0/16)
-- **Prod**: Isolated network (10.1.0.0/16)
-
-## Cost Management
-
-### Automatic Shutdown
-```bash
-# GitHub Actions workflow for complete shutdown
-# Requires typing "DESTROY" to confirm
-make shutdown-all
-```
-
-### Environment-Specific Costs
-- **Dev**: t3.small, 1-2 nodes, db.t3.micro
-- **Test**: t3.small, 1-3 nodes, db.t3.micro  
-- **Prod**: t3.medium, 2-6 nodes, db.t3.small
-
-### Cost Optimization
-- Shared network for Dev/Test
-- Auto-scaling based on demand
-- Easy shutdown workflows
-
-## Security
-
-- **Network**: Private subnets for workloads
-- **IAM**: Least privilege access
-- **Secrets**: Kubernetes secrets for sensitive data
-- **Container**: Non-root user in Docker images
-
-## Monitoring & Logging
-
-- **CloudWatch**: Infrastructure metrics
-- **EKS**: Container Insights enabled
-- **ALB**: Access logs to S3
-- **Application**: Structured logging to CloudWatch
-
-## Disaster Recovery
-
-- **Multi-AZ**: Resources across availability zones
-- **Backups**: Automated RDS and DynamoDB backups
-- **Infrastructure**: Version-controlled Terraform state
-- **Applications**: Blue-green deployments
+**Perfect for mastering real-world AWS multi-env deployment!**
