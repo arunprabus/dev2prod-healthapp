@@ -48,20 +48,54 @@
 
 ### Prerequisites
 - AWS CLI configured
+- GitHub environments and variables configured
 - GitHub repository secrets configured
-- Docker images pushed to GHCR
+- Docker images pushed to container registry
 
 ```bash
 # 1. Clone repository
 git clone <your-repo-url>
 cd dev2prod-healthapp
 
-# 2. Configure GitHub Secrets
+# 2. Configure GitHub Environments & Variables
+# See ENVIRONMENT-SETUP.md for detailed configuration
+
+# 3. Configure GitHub Secrets
 # AWS_ACCESS_KEY_ID
 # AWS_SECRET_ACCESS_KEY
+# SLACK_WEBHOOK_URL
 
-# 3. Deploy via GitHub Actions
+# 4. Deploy via GitHub Actions
 # Go to Actions → Deploy to EKS → Run workflow
+```
+
+## ⚙️ Configuration Management
+
+### **Environment Variables (Configurable)**
+| Variable | Default | Purpose |
+|----------|---------|----------|
+| `AWS_REGION` | `ap-south-1` | Deployment region |
+| `EKS_CLUSTER_NAME` | `health-app-cluster` | Cluster base name |
+| `CONTAINER_REGISTRY` | `ghcr.io` | Container registry |
+| `REGISTRY_NAMESPACE` | `arunprabus` | Registry namespace |
+| `TERRAFORM_VERSION` | `1.6.0` | Terraform version |
+| `KUBECTL_TIMEOUT` | `300s` | K8s operation timeout |
+
+### **Multi-Environment Support**
+- **Dev**: Fast deployments, shorter timeouts
+- **Test**: Balanced configuration for testing
+- **Prod**: Conservative settings, longer timeouts
+
+### **Multi-Region Ready**
+```yaml
+# Asia Pacific
+AWS_REGION: "ap-south-1"
+
+# US East
+AWS_REGION: "us-east-1"
+
+# Europe
+AWS_REGION: "eu-west-1"
 ```
 
 ---

@@ -13,8 +13,8 @@ on:
         - prod
 
 env:
-  AWS_REGION: ap-south-1
-  EKS_CLUSTER_NAME: health-app-cluster
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'health-app-cluster' }}
 
 jobs:
   rollback:

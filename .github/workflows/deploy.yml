@@ -16,8 +16,14 @@ on:
         - prod
 
 env:
-  AWS_REGION: ap-south-1
-  EKS_CLUSTER_NAME: health-app-cluster
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'health-app-cluster' }}
+  CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY || 'ghcr.io' }}
+  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'arunprabus' }}
+  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.6.0' }}
+  KUBECTL_TIMEOUT: ${{ vars.KUBECTL_TIMEOUT || '300s' }}
+  CLEANUP_DELAY: ${{ vars.CLEANUP_DELAY || '30' }}
+  LB_WAIT_TIME: ${{ vars.LB_WAIT_TIME || '60' }}
 
 jobs:
   terraform:
@@ -41,7 +47,7 @@ jobs:
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
-        terraform_version: 1.6.0
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
         terraform_wrapper: false
 
     - name: Terraform Init
@@ -95,7 +101,7 @@ jobs:
     - name: Security Scan
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: 'ghcr.io/arunprabus/health-api:${{ github.event.inputs.environment }}'
+        image-ref: '${{ env.CONTAINER_REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/health-api:${{ github.event.inputs.environment }}'
         format: 'sarif'
         output: 'trivy-results.sarif'
         
@@ -126,13 +132,13 @@ jobs:
         echo "Current active: $CURRENT_COLOR, Deploying to: $NEW_COLOR"
         
         # Update deployments with new color and image tags
-        sed -e "s|ghcr.io/arunprabus/health-api:latest|ghcr.io/arunprabus/health-api:${ENV}|g" \
+        sed -e "s|ghcr.io/arunprabus/health-api:latest|${{ env.CONTAINER_REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/health-api:${ENV}|g" \
             -e "s|name: health-api|name: health-api-${NEW_COLOR}|g" \
             -e "/labels:/a\        color: ${NEW_COLOR}" \
             -e "/spec:/,/template:/{ /labels:/a\        color: ${NEW_COLOR} ; }" \
             k8s/health-api-deployment.yaml > k8s/health-api-${NEW_COLOR}.yaml
         
-        sed -e "s|ghcr.io/arunprabus/frontend-config-app:latest|ghcr.io/arunprabus/frontend-config-app:${ENV}|g" \
+        sed -e "s|ghcr.io/arunprabus/frontend-config-app:latest|${{ env.CONTAINER_REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/frontend-config-app:${ENV}|g" \
             -e "s|name: frontend|name: frontend-${NEW_COLOR}|g" \
             -e "/labels:/a\        color: ${NEW_COLOR}" \
             -e "/spec:/,/template:/{ /labels:/a\        color: ${NEW_COLOR} ; }" \
@@ -153,11 +159,11 @@ jobs:
         NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
         NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
         
-        kubectl rollout status deployment/health-api-${NEW_COLOR} --timeout=300s
-        kubectl rollout status deployment/frontend-${NEW_COLOR} --timeout=300s
+        kubectl rollout status deployment/health-api-${NEW_COLOR} --timeout=${{ env.KUBECTL_TIMEOUT }}
+        kubectl rollout status deployment/frontend-${NEW_COLOR} --timeout=${{ env.KUBECTL_TIMEOUT }}
         
         # Health check
-        kubectl wait --for=condition=ready pod -l app=health-api,color=${NEW_COLOR} --timeout=300s
+        kubectl wait --for=condition=ready pod -l app=health-api,color=${NEW_COLOR} --timeout=${{ env.KUBECTL_TIMEOUT }}
         
     - name: Smoke Tests
       run: |
@@ -168,7 +174,7 @@ jobs:
         ENDPOINT=$(kubectl get service health-api-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
         
         # Wait for load balancer
-        sleep 60
+        sleep ${{ env.LB_WAIT_TIME }}
         
         # Smoke tests
         curl -f http://${ENDPOINT}/health || exit 1
@@ -210,7 +216,7 @@ jobs:
         OLD_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
         
         # Wait before cleanup (allows for quick rollback if needed)
-        sleep 30
+        sleep ${{ env.CLEANUP_DELAY }}
         
         # Remove old deployments
         kubectl delete deployment health-api-${OLD_COLOR} --ignore-not-found=true
