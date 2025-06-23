@@ -45,18 +45,18 @@ jobs:
         terraform_wrapper: false
 
     - name: Terraform Init
-      working-directory: ./terraform
+      working-directory: ./infra
       run: terraform init
 
     - name: Terraform Plan
-      working-directory: ./terraform
+      working-directory: ./infra
       run: |
         terraform plan \
           -var="environment=${{ github.event.inputs.environment || 'dev' }}" \
           -var="cluster_name=${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}"
 
     - name: Terraform Apply
-      working-directory: ./terraform
+      working-directory: ./infra
       run: |
         terraform apply -auto-approve \
           -var="environment=${{ github.event.inputs.environment || 'dev' }}" \
@@ -64,7 +64,7 @@ jobs:
 
     - name: Get Terraform Outputs
       id: terraform
-      working-directory: ./terraform
+      working-directory: ./infra
       run: |
         echo "dynamodb_profiles_table=$(terraform output -raw dynamodb_profiles_table_name)" >> $GITHUB_OUTPUT
         echo "dynamodb_uploads_table=$(terraform output -raw dynamodb_uploads_table_name)" >> $GITHUB_OUTPUT

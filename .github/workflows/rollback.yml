@@ -1,0 +1,51 @@
+name: Manual Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to rollback'
+        required: true
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER_NAME: health-app-cluster
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ env.AWS_REGION }} \
+          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment }}
+
+    - name: Execute rollback
+      run: |
+        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        ROLLBACK_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        echo "Rolling back from $CURRENT_COLOR to $ROLLBACK_COLOR"
+        
+        if kubectl get deployment health-api-${ROLLBACK_COLOR} >/dev/null 2>&1; then
+          kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
+          kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
+          echo "✅ Rollback completed to $ROLLBACK_COLOR"
+        else
+          echo "❌ No previous version found"
+          exit 1
+        fi

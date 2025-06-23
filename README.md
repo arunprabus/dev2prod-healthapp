@@ -97,6 +97,7 @@ Green (New) ──┘
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
 | `Deploy to EKS` | Manual | Blue-green deployment with rollback |
+| `Manual Rollback` | Manual | Instant rollback to previous version |
 | `Infrastructure Deploy` | Manual | Terraform infrastructure setup |
 | `Infrastructure Shutdown` | Manual | Cost-saving resource cleanup |
 
@@ -108,10 +109,46 @@ kubectl get services
 
 # View current active color
 kubectl get service health-api-service -o jsonpath='{.spec.selector.color}'
+```
 
-# Manual rollback (if needed)
+## 🚨 Rollback Procedures
+
+### 1. GitHub Actions Rollback (Recommended)
+1. Go to **Actions** → **Manual Rollback**
+2. Select environment (dev/test/prod)
+3. Click **Run workflow**
+
+### 2. Emergency Production Rollback (Fastest)
+```bash
+aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-prod
+kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
+kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"blue"}}}'
+```
+
+### 3. Script-based Rollback
+```bash
+chmod +x scripts/rollback.sh
+./scripts/rollback.sh prod    # Production
+./scripts/rollback.sh test    # Test
+./scripts/rollback.sh dev     # Development
+```
+
+### 4. Environment-Specific Commands
+```bash
+# Dev Environment
+aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-dev
+kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
+
+# Test Environment
+aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-test
+kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
+
+# Production Environment
+aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-prod
 kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
 ```
+
+> ⚡ **Rollback is instant** - switches traffic between blue/green versions with zero downtime
 
 ---
 
@@ -186,12 +223,39 @@ kubectl apply -f k8s/argocd-app.yaml
 
 ## 🎯 Deployment Strategies Comparison
 
-| Strategy | Downtime | Risk | Complexity | Use Case |
-|----------|----------|------|------------|----------|
-| Rolling | Minimal | Medium | Low | Development |
-| Blue-Green | Zero | Low | Medium | **Current Setup** |
-| Canary | Zero | Very Low | High | Production |
-| A/B Testing | Zero | Low | High | Feature testing |
+| Strategy | Downtime | Risk | Complexity | Rollback Time | Use Case |
+|----------|----------|------|------------|---------------|----------|
+| Rolling | Minimal | Medium | Low | 2-5 min | Development |
+| Blue-Green | Zero | Low | Medium | **Instant** | **Current Setup** |
+| Canary | Zero | Very Low | High | Instant | Production |
+| A/B Testing | Zero | Low | High | Instant | Feature testing |
+
+## 🔍 Monitoring & Verification
+
+### Check Current Status
+```bash
+# View active deployment color
+kubectl get service health-api-service -o jsonpath='{.spec.selector.color}'
+
+# List all deployments
+kubectl get deployments -l app=health-api
+
+# Check service health
+kubectl get services
+kubectl get pods -l app=health-api
+```
+
+### Troubleshooting
+```bash
+# View deployment logs
+kubectl logs -l app=health-api,color=green
+
+# Check pod status
+kubectl describe pods -l app=health-api
+
+# View recent events
+kubectl get events --sort-by=.metadata.creationTimestamp
+```
 
 ---
 
