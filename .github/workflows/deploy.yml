@@ -100,25 +100,69 @@ jobs:
           --from-literal=AWS_REGION=${{ env.AWS_REGION }} \
           --dry-run=client -o yaml | kubectl apply -f -
 
-    - name: Deploy to Kubernetes
+    - name: Blue-Green Deployment
       run: |
-        # Update image tags based on environment
         ENV=${{ github.event.inputs.environment || 'dev' }}
+        TIMESTAMP=$(date +%s)
         
-        # Update health-api deployment
-        sed -i "s|ghcr.io/arunprabus/health-api:latest|ghcr.io/arunprabus/health-api:${ENV}|g" k8s/health-api-deployment.yaml
+        # Determine current active color
+        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        NEW_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
         
-        # Update frontend deployment
-        sed -i "s|ghcr.io/arunprabus/frontend-config-app:latest|ghcr.io/arunprabus/frontend-config-app:${ENV}|g" k8s/frontend-deployment.yaml
+        echo "Current active: $CURRENT_COLOR, Deploying to: $NEW_COLOR"
         
-        # Apply deployments
-        kubectl apply -f k8s/health-api-deployment.yaml
-        kubectl apply -f k8s/frontend-deployment.yaml
+        # Update deployments with new color and image tags
+        sed -e "s|ghcr.io/arunprabus/health-api:latest|ghcr.io/arunprabus/health-api:${ENV}|g" \
+            -e "s|name: health-api|name: health-api-${NEW_COLOR}|g" \
+            -e "/labels:/a\        color: ${NEW_COLOR}" \
+            -e "/spec:/,/template:/{ /labels:/a\        color: ${NEW_COLOR} ; }" \
+            k8s/health-api-deployment.yaml > k8s/health-api-${NEW_COLOR}.yaml
+        
+        sed -e "s|ghcr.io/arunprabus/frontend-config-app:latest|ghcr.io/arunprabus/frontend-config-app:${ENV}|g" \
+            -e "s|name: frontend|name: frontend-${NEW_COLOR}|g" \
+            -e "/labels:/a\        color: ${NEW_COLOR}" \
+            -e "/spec:/,/template:/{ /labels:/a\        color: ${NEW_COLOR} ; }" \
+            k8s/frontend-deployment.yaml > k8s/frontend-${NEW_COLOR}.yaml
+        
+        # Deploy new version
+        kubectl apply -f k8s/health-api-${NEW_COLOR}.yaml
+        kubectl apply -f k8s/frontend-${NEW_COLOR}.yaml
 
-    - name: Wait for deployment
+    - name: Wait and validate new deployment
       run: |
-        kubectl rollout status deployment/health-api --timeout=300s
-        kubectl rollout status deployment/frontend --timeout=300s
+        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        kubectl rollout status deployment/health-api-${NEW_COLOR} --timeout=300s
+        kubectl rollout status deployment/frontend-${NEW_COLOR} --timeout=300s
+        
+        # Health check
+        kubectl wait --for=condition=ready pod -l app=health-api,color=${NEW_COLOR} --timeout=300s
+        
+    - name: Switch traffic to new version
+      run: |
+        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        # Update service selectors to point to new color
+        kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"'${NEW_COLOR}'"}}}'
+        kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"'${NEW_COLOR}'"}}}'
+        
+        echo "Traffic switched to $NEW_COLOR version"
+        
+    - name: Cleanup old version
+      run: |
+        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}')
+        OLD_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        # Wait before cleanup (allows for quick rollback if needed)
+        sleep 30
+        
+        # Remove old deployments
+        kubectl delete deployment health-api-${OLD_COLOR} --ignore-not-found=true
+        kubectl delete deployment frontend-${OLD_COLOR} --ignore-not-found=true
+        
+        echo "Cleaned up $OLD_COLOR version"
 
     - name: Get service URLs
       run: |
@@ -126,3 +170,38 @@ jobs:
         kubectl get service health-api-service
         echo "Frontend Service:"
         kubectl get service frontend-service
+        
+  rollback:
+    if: failure()
+    needs: [terraform, deploy]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Update kubeconfig
+      run: |
+        aws eks update-kubeconfig \
+          --region ${{ env.AWS_REGION }} \
+          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}
+
+    - name: Rollback to previous version
+      run: |
+        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        ROLLBACK_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        echo "Rolling back from $CURRENT_COLOR to $ROLLBACK_COLOR"
+        
+        if kubectl get deployment health-api-${ROLLBACK_COLOR} >/dev/null 2>&1; then
+          kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
+          kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
+          echo "Rollback completed to $ROLLBACK_COLOR"
+        else
+          echo "No previous version found for rollback"
+          exit 1
+        fi

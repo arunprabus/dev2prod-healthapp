@@ -1,6 +1,6 @@
-# 🏥 Health App - Two-Network Infrastructure (AWS Free Tier)
+# 🏥 Health App - Production-Ready Infrastructure with Blue-Green Deployment
 
-> 🚀 Cost-optimized multi-environment K3s + RDS setup with full **network isolation**—ideal for hands-on AWS, Kubernetes, and DevOps training.
+> 🚀 Enterprise-grade multi-environment setup with EKS, RDS, and **Blue-Green deployment strategy**—perfect for learning production DevOps practices.
 
 ---
 
@@ -46,42 +46,72 @@
 
 ## 🚀 Quick Start
 
+### Prerequisites
+- AWS CLI configured
+- GitHub repository secrets configured
+- Docker images pushed to GHCR
+
 ```bash
-# 1. Setup SSH
-ssh-keygen -t rsa -f ~/.ssh/id_rsa
+# 1. Clone repository
+git clone <your-repo-url>
+cd dev2prod-healthapp
 
-# 2. Navigate to infra
-cd infra/two-network-setup
+# 2. Configure GitHub Secrets
+# AWS_ACCESS_KEY_ID
+# AWS_SECRET_ACCESS_KEY
 
-# 3. Deploy infra and apps
-make deploy-all
-make deploy-apps ENV=dev
-make deploy-apps ENV=test
-make deploy-apps ENV=prod
+# 3. Deploy via GitHub Actions
+# Go to Actions → Deploy to EKS → Run workflow
 ```
 
 ---
 
+## 🔄 Blue-Green Deployment Strategy
+
+### How It Works
+1. **Blue Environment**: Current production version
+2. **Green Environment**: New version deployment
+3. **Traffic Switch**: Instant cutover with zero downtime
+4. **Auto Rollback**: Automatic revert on failure
+
+### Deployment Flow
+```
+Blue (Live) ──┐
+              ├─→ Load Balancer ──→ Users
+Green (New) ──┘
+```
+
 ## 🌐 Application Access
 
-| Environment | Network       | Frontend         | Backend          | DB Password |
-|-------------|---------------|------------------|------------------|-------------|
-| Dev         | 10.0.0.0/16   | :30080           | :30081           | `dev123!`   |
-| Test        | 10.0.0.0/16   | :30080           | :30081           | `test123!`  |
-| Prod        | 10.1.0.0/16   | :30080           | :30081           | `prod123!`  |
+| Environment | EKS Cluster | Frontend | Backend | Status |
+|-------------|-------------|----------|---------|--------|
+| Dev | health-app-cluster-dev | LoadBalancer | LoadBalancer | Active |
+| Test | health-app-cluster-test | LoadBalancer | LoadBalancer | Active |
+| Prod | health-app-cluster-prod | LoadBalancer | LoadBalancer | Blue-Green |
 
 ---
 
-## 🛠️ Management Commands
+## 🛠️ Deployment Commands
 
-| Command | Description |
-|--------|-------------|
-| `make deploy-lower ENV=dev` | Deploy Dev environment |
-| `make deploy-lower ENV=test` | Deploy Test environment |
-| `make deploy-higher ENV=prod` | Deploy Prod environment |
-| `make ssh ENV=dev` | SSH into Dev |
-| `make check-apps ENV=prod` | Check app status |
-| `make status` | Show all environments |
+### GitHub Actions Workflows
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `Deploy to EKS` | Manual | Blue-green deployment with rollback |
+| `Infrastructure Deploy` | Manual | Terraform infrastructure setup |
+| `Infrastructure Shutdown` | Manual | Cost-saving resource cleanup |
+
+### Manual Operations
+```bash
+# Check deployment status
+kubectl get deployments
+kubectl get services
+
+# View current active color
+kubectl get service health-api-service -o jsonpath='{.spec.selector.color}'
+
+# Manual rollback (if needed)
+kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
+```
 
 ---
 
@@ -104,14 +134,65 @@ make destroy-all  # Tear everything down
 
 ---
 
+## 📁 Repository Structure
+
+```
+├── .github/workflows/     # CI/CD pipelines
+│   ├── deploy.yml        # Blue-green deployment
+│   ├── infra-deploy.yml  # Infrastructure setup
+│   └── infra-shutdown.yml # Cost management
+├── infra/                # Terraform infrastructure
+│   ├── modules/          # Reusable modules
+│   └── environments/     # Environment configs
+├── k8s/                  # Kubernetes manifests
+│   ├── health-api-deployment.yaml
+│   ├── frontend-deployment.yaml
+│   ├── canary-rollout.yaml      # Advanced deployment
+│   └── argocd-app.yaml          # GitOps setup
+└── README.md
+```
+
+## 🔧 Advanced Deployment Options
+
+### 1. Canary Deployment
+```bash
+# Install Argo Rollouts
+kubectl create namespace argo-rollouts
+kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+
+# Deploy canary
+kubectl apply -f k8s/canary-rollout.yaml
+```
+
+### 2. GitOps with ArgoCD
+```bash
+# Install ArgoCD
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# Deploy application
+kubectl apply -f k8s/argocd-app.yaml
+```
+
 ## 🧪 Learning Highlights
 
-- ⚙️ Kubernetes (K3s) in EC2
-- 🗄️ MySQL on RDS integration
-- 🔁 Environment lifecycle management
-- 🔐 VPC & Subnet configuration
-- 💥 Cost-saving strategies
+- 🔄 **Blue-Green Deployment**: Zero-downtime deployments
+- ⚙️ **EKS Management**: Production Kubernetes
+- 🗄️ **DynamoDB + S3**: Serverless data layer
+- 🔁 **Multi-environment**: Dev/Test/Prod isolation
+- 🔐 **Security**: IAM roles, secrets management
+- 📊 **Monitoring**: Health checks, rollback automation
+- 🚀 **CI/CD**: GitHub Actions automation
+
+## 🎯 Deployment Strategies Comparison
+
+| Strategy | Downtime | Risk | Complexity | Use Case |
+|----------|----------|------|------------|----------|
+| Rolling | Minimal | Medium | Low | Development |
+| Blue-Green | Zero | Low | Medium | **Current Setup** |
+| Canary | Zero | Very Low | High | Production |
+| A/B Testing | Zero | Low | High | Feature testing |
 
 ---
 
-**Perfect for mastering real-world AWS multi-env deployment!**
+**🎓 Perfect for mastering enterprise-grade deployment strategies!**
