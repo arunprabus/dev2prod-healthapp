@@ -98,6 +98,111 @@ AWS_REGION: "us-east-1"
 AWS_REGION: "eu-west-1"
 ```
 
+## 🏢 Enterprise Benefits
+
+### **Multi-Customer Deployments**
+- **Isolated configurations** per customer
+- **Separate AWS accounts** and regions
+- **Custom branding** and domain names
+- **Independent scaling** policies
+
+### **Regional Compliance**
+- **Data residency** requirements
+- **GDPR compliance** in EU regions
+- **Local regulations** adherence
+- **Disaster recovery** across regions
+
+### **Environment Isolation**
+- **Different settings** per environment
+- **Resource sizing** optimization
+- **Security policies** per env
+- **Cost allocation** tracking
+
+### **Zero Code Changes**
+- **Configuration-driven** deployments
+- **Template reusability** across projects
+- **Rapid environment** provisioning
+- **Consistent deployments** everywhere
+
+### **Centralized Configuration**
+- **GitHub variables** management
+- **Environment-specific** secrets
+- **Version-controlled** configurations
+- **Audit trail** for changes
+
+## 🚀 Usage Examples
+
+### **Global Company Setup**
+```yaml
+# US Production
+AWS_REGION: "us-east-1"
+EKS_CLUSTER_NAME: "health-app-us-prod"
+CONTAINER_REGISTRY: "your-company.dkr.ecr.us-east-1.amazonaws.com"
+REGISTRY_NAMESPACE: "production"
+MIN_REPLICAS: "3"
+MAX_REPLICAS: "20"
+
+# EU Production  
+AWS_REGION: "eu-west-1"
+EKS_CLUSTER_NAME: "health-app-eu-prod"
+CONTAINER_REGISTRY: "your-company.dkr.ecr.eu-west-1.amazonaws.com"
+REGISTRY_NAMESPACE: "production-eu"
+MIN_REPLICAS: "2"
+MAX_REPLICAS: "15"
+
+# APAC Production
+AWS_REGION: "ap-south-1" 
+EKS_CLUSTER_NAME: "health-app-apac-prod"
+CONTAINER_REGISTRY: "your-company.dkr.ecr.ap-south-1.amazonaws.com"
+REGISTRY_NAMESPACE: "production-apac"
+MIN_REPLICAS: "2"
+MAX_REPLICAS: "10"
+```
+
+### **Multi-Tenant SaaS Setup**
+```yaml
+# Customer A (Enterprise)
+REGISTRY_NAMESPACE: "customer-a"
+EKS_CLUSTER_NAME: "customer-a-cluster"
+AWS_REGION: "us-west-2"
+MIN_REPLICAS: "5"
+MAX_REPLICAS: "50"
+KUBECTL_TIMEOUT: "600s"
+CLEANUP_DELAY: "120"
+
+# Customer B (Startup)
+REGISTRY_NAMESPACE: "customer-b"  
+EKS_CLUSTER_NAME: "customer-b-cluster"
+AWS_REGION: "us-east-1"
+MIN_REPLICAS: "2"
+MAX_REPLICAS: "10"
+KUBECTL_TIMEOUT: "300s"
+CLEANUP_DELAY: "30"
+```
+
+### **Development vs Production**
+```yaml
+# Development Environment
+AWS_REGION: "ap-south-1"
+EKS_CLUSTER_NAME: "health-app-dev"
+CONTAINER_REGISTRY: "ghcr.io"
+MIN_REPLICAS: "1"
+MAX_REPLICAS: "3"
+KUBECTL_TIMEOUT: "180s"
+CLEANUP_DELAY: "10"
+LB_WAIT_TIME: "30"
+
+# Production Environment
+AWS_REGION: "us-east-1"
+EKS_CLUSTER_NAME: "health-app-prod"
+CONTAINER_REGISTRY: "your-company.dkr.ecr.us-east-1.amazonaws.com"
+MIN_REPLICAS: "3"
+MAX_REPLICAS: "20"
+KUBECTL_TIMEOUT: "600s"
+CLEANUP_DELAY: "120"
+LB_WAIT_TIME: "180"
+```
+
 ---
 
 ## 🔄 Blue-Green Deployment Strategy
@@ -385,6 +490,152 @@ kubectl describe pods -l app=health-api
 
 # View recent events
 kubectl get events --sort-by=.metadata.creationTimestamp
+```
+
+---
+
+## 📄 Complete Variables & Secrets Reference
+
+### **Repository Variables (GitHub Settings → Variables)**
+
+#### **Core Configuration**
+```yaml
+AWS_REGION: "ap-south-1"                    # AWS deployment region
+EKS_CLUSTER_NAME: "health-app-cluster"       # Base cluster name
+CONTAINER_REGISTRY: "ghcr.io"               # Container registry URL
+REGISTRY_NAMESPACE: "your-username"          # Registry namespace
+```
+
+#### **Tool Versions**
+```yaml
+TERRAFORM_VERSION: "1.6.0"                  # Terraform version
+KUBECTL_VERSION: "latest"                   # kubectl version
+```
+
+#### **Deployment Timeouts**
+```yaml
+KUBECTL_TIMEOUT: "300s"                     # Kubernetes operations timeout
+CLEANUP_DELAY: "30"                         # Seconds before cleanup
+LB_WAIT_TIME: "60"                          # Load balancer wait time
+HEALTH_CHECK_RETRIES: "5"                   # Health check retry count
+```
+
+#### **Auto-Scaling Configuration**
+```yaml
+MIN_REPLICAS: "2"                           # Minimum pod replicas
+MAX_REPLICAS: "10"                          # Maximum pod replicas
+```
+
+### **Repository Secrets (GitHub Settings → Secrets)**
+
+#### **AWS Credentials**
+```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."                # AWS access key
+AWS_SECRET_ACCESS_KEY: "xyz123..."          # AWS secret key
+```
+
+#### **Notifications**
+```yaml
+SLACK_WEBHOOK_URL: "https://hooks.slack.com/..."  # Slack notifications
+```
+
+#### **Optional: Environment-Specific Secrets**
+```yaml
+# Development
+AWS_ACCESS_KEY_ID_DEV: "AKIA..."            # Dev AWS credentials
+AWS_SECRET_ACCESS_KEY_DEV: "xyz123..."
+
+# Production
+AWS_ACCESS_KEY_ID_PROD: "AKIA..."           # Prod AWS credentials
+AWS_SECRET_ACCESS_KEY_PROD: "xyz123..."
+```
+
+### **Environment-Specific Variables**
+
+#### **Development Environment**
+```yaml
+AWS_REGION: "ap-south-1"
+EKS_CLUSTER_NAME: "health-app-dev"
+CONTAINER_REGISTRY: "ghcr.io"
+REGISTRY_NAMESPACE: "dev-team"
+MIN_REPLICAS: "1"
+MAX_REPLICAS: "3"
+KUBECTL_TIMEOUT: "180s"
+CLEANUP_DELAY: "10"
+LB_WAIT_TIME: "30"
+```
+
+#### **Test Environment**
+```yaml
+AWS_REGION: "ap-south-1"
+EKS_CLUSTER_NAME: "health-app-test"
+CONTAINER_REGISTRY: "ghcr.io"
+REGISTRY_NAMESPACE: "test-team"
+MIN_REPLICAS: "2"
+MAX_REPLICAS: "5"
+KUBECTL_TIMEOUT: "240s"
+CLEANUP_DELAY: "20"
+LB_WAIT_TIME: "45"
+```
+
+#### **Production Environment**
+```yaml
+AWS_REGION: "us-east-1"
+EKS_CLUSTER_NAME: "health-app-prod"
+CONTAINER_REGISTRY: "your-company.dkr.ecr.us-east-1.amazonaws.com"
+REGISTRY_NAMESPACE: "production"
+MIN_REPLICAS: "3"
+MAX_REPLICAS: "20"
+KUBECTL_TIMEOUT: "600s"
+CLEANUP_DELAY: "120"
+LB_WAIT_TIME: "180"
+```
+
+### **Sample Multi-Region Configuration**
+
+#### **US Region (Primary)**
+```yaml
+AWS_REGION: "us-east-1"
+EKS_CLUSTER_NAME: "health-app-us"
+CONTAINER_REGISTRY: "123456789.dkr.ecr.us-east-1.amazonaws.com"
+REGISTRY_NAMESPACE: "us-production"
+```
+
+#### **EU Region (GDPR Compliance)**
+```yaml
+AWS_REGION: "eu-west-1"
+EKS_CLUSTER_NAME: "health-app-eu"
+CONTAINER_REGISTRY: "123456789.dkr.ecr.eu-west-1.amazonaws.com"
+REGISTRY_NAMESPACE: "eu-production"
+```
+
+#### **APAC Region (Local Performance)**
+```yaml
+AWS_REGION: "ap-south-1"
+EKS_CLUSTER_NAME: "health-app-apac"
+CONTAINER_REGISTRY: "123456789.dkr.ecr.ap-south-1.amazonaws.com"
+REGISTRY_NAMESPACE: "apac-production"
+```
+
+### **Quick Setup Commands**
+
+```bash
+# Set repository variables using GitHub CLI
+gh variable set AWS_REGION --body "ap-south-1"
+gh variable set EKS_CLUSTER_NAME --body "health-app-cluster"
+gh variable set CONTAINER_REGISTRY --body "ghcr.io"
+gh variable set REGISTRY_NAMESPACE --body "your-username"
+gh variable set MIN_REPLICAS --body "2"
+gh variable set MAX_REPLICAS --body "10"
+
+# Set repository secrets
+gh secret set AWS_ACCESS_KEY_ID --body "AKIA..."
+gh secret set AWS_SECRET_ACCESS_KEY --body "xyz123..."
+gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/..."
+
+# Set environment-specific variables
+gh variable set AWS_REGION --env dev --body "ap-south-1"
+gh variable set AWS_REGION --env prod --body "us-east-1"
 ```
 
 ---
