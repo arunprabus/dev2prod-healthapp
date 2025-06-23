@@ -125,7 +125,7 @@ kubectl create secret generic health-api-config \
   --from-literal=DYNAMODB_PROFILES_TABLE=<table-name> \
   --from-literal=DYNAMODB_UPLOADS_TABLE=<table-name> \
   --from-literal=S3_BUCKET=<bucket-name> \
-  --from-literal=AWS_REGION=us-east-1
+  --from-literal=AWS_REGION=ap-south-1
 
 # 3. Redeploy applications
 kubectl apply -f k8s/health-api-deployment.yaml

@@ -16,7 +16,7 @@ on:
         - prod
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   EKS_CLUSTER_NAME: health-app-cluster
 
 jobs:
@@ -73,6 +73,7 @@ jobs:
   deploy:
     needs: terraform
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
     
     steps:
     - name: Checkout code
@@ -91,6 +92,19 @@ jobs:
           --region ${{ env.AWS_REGION }} \
           --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}
 
+    - name: Security Scan
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'ghcr.io/arunprabus/health-api:${{ github.event.inputs.environment }}'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        
+    - name: Upload Security Results
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+        
     - name: Update Kubernetes secrets
       run: |
         kubectl create secret generic health-api-config \
@@ -125,8 +139,14 @@ jobs:
             k8s/frontend-deployment.yaml > k8s/frontend-${NEW_COLOR}.yaml
         
         # Deploy new version
+        kubectl apply -f k8s/rbac.yaml
         kubectl apply -f k8s/health-api-${NEW_COLOR}.yaml
         kubectl apply -f k8s/frontend-${NEW_COLOR}.yaml
+        kubectl apply -f k8s/hpa.yaml
+        kubectl apply -f k8s/vpa.yaml
+        kubectl apply -f k8s/cluster-autoscaler.yaml
+        kubectl apply -f k8s/monitoring.yaml
+        kubectl apply -f k8s/logging.yaml
 
     - name: Wait and validate new deployment
       run: |
@@ -138,6 +158,40 @@ jobs:
         
         # Health check
         kubectl wait --for=condition=ready pod -l app=health-api,color=${NEW_COLOR} --timeout=300s
+        
+    - name: Smoke Tests
+      run: |
+        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        # Get service endpoint
+        ENDPOINT=$(kubectl get service health-api-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        
+        # Wait for load balancer
+        sleep 60
+        
+        # Smoke tests
+        curl -f http://${ENDPOINT}/health || exit 1
+        curl -f http://${ENDPOINT}/metrics || exit 1
+        
+        echo "✅ Smoke tests passed for $NEW_COLOR deployment"
+        
+    - name: Integration Tests
+      run: |
+        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
+        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
+        
+        ENDPOINT=$(kubectl get service health-api-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        
+        # Test API endpoints
+        curl -f -X POST http://${ENDPOINT}/api/profiles -d '{"name":"test"}' -H "Content-Type: application/json" || exit 1
+        curl -f http://${ENDPOINT}/api/profiles || exit 1
+        
+        # Test frontend connectivity
+        FRONTEND_ENDPOINT=$(kubectl get service frontend-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        curl -f http://${FRONTEND_ENDPOINT} || exit 1
+        
+        echo "✅ Integration tests passed"
         
     - name: Switch traffic to new version
       run: |
@@ -171,10 +225,29 @@ jobs:
         echo "Frontend Service:"
         kubectl get service frontend-service
         
+    - name: Notify Success
+      if: success()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        text: '✅ Deployment successful to ${{ github.event.inputs.environment }}'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        
+    - name: Notify Failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        text: '❌ Deployment failed to ${{ github.event.inputs.environment }}'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        
   rollback:
     if: failure()
     needs: [terraform, deploy]
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
     
     steps:
     - name: Configure AWS credentials

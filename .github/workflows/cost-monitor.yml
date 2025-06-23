@@ -1,0 +1,38 @@
+name: Cost Monitor
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'  # Weekly Monday 8 AM
+  workflow_dispatch:
+
+jobs:
+  cost-check:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Get Cost Report
+      run: |
+        END_DATE=$(date +%Y-%m-%d)
+        START_DATE=$(date -d '7 days ago' +%Y-%m-%d)
+        
+        aws ce get-cost-and-usage \
+          --time-period Start=$START_DATE,End=$END_DATE \
+          --granularity DAILY \
+          --metrics BlendedCost \
+          --group-by Type=DIMENSION,Key=SERVICE \
+          --query 'ResultsByTime[*].Groups[?Keys[0]==`Amazon Elastic Kubernetes Service`]' \
+          > cost-report.json
+        
+        COST=$(cat cost-report.json | jq -r '.[].Groups[].Metrics.BlendedCost.Amount' | awk '{sum += $1} END {print sum}')
+        echo "Weekly EKS Cost: $${COST}"
+        
+        if (( $(echo "$COST > 50" | bc -l) )); then
+          echo "⚠️ Cost Alert: Weekly spend exceeded $50"
+          exit 1
+        fi

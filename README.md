@@ -120,7 +120,7 @@ kubectl get service health-api-service -o jsonpath='{.spec.selector.color}'
 
 ### 2. Emergency Production Rollback (Fastest)
 ```bash
-aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-prod
+aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-prod
 kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
 kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"blue"}}}'
 ```
@@ -136,15 +136,15 @@ chmod +x scripts/rollback.sh
 ### 4. Environment-Specific Commands
 ```bash
 # Dev Environment
-aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-dev
+aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-dev
 kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
 
 # Test Environment
-aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-test
+aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-test
 kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
 
 # Production Environment
-aws eks update-kubeconfig --region us-east-1 --name health-app-cluster-prod
+aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-prod
 kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
 ```
 
@@ -184,8 +184,15 @@ make destroy-all  # Tear everything down
 ├── k8s/                  # Kubernetes manifests
 │   ├── health-api-deployment.yaml
 │   ├── frontend-deployment.yaml
-│   ├── canary-rollout.yaml      # Advanced deployment
-│   └── argocd-app.yaml          # GitOps setup
+│   ├── hpa.yaml             # Horizontal Pod Autoscaler
+│   ├── vpa.yaml             # Vertical Pod Autoscaler
+│   ├── cluster-autoscaler.yaml  # Cluster scaling
+│   ├── advanced-hpa.yaml    # Custom metrics scaling
+│   ├── rbac.yaml            # Security policies
+│   ├── monitoring.yaml      # Prometheus setup
+│   ├── logging.yaml         # Centralized logging
+│   ├── canary-rollout.yaml  # Advanced deployment
+│   └── argocd-app.yaml      # GitOps setup
 └── README.md
 ```
 
@@ -211,6 +218,29 @@ kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/st
 kubectl apply -f k8s/argocd-app.yaml
 ```
 
+## 🏢 Enterprise Features
+
+### Security & Compliance
+- 🔒 **RBAC**: Role-based access control
+- 🛡️ **Pod Security**: Non-root containers, read-only filesystem
+- 🔍 **Security Scanning**: Trivy vulnerability scanning
+- 🌐 **Network Policies**: Micro-segmentation
+
+### Monitoring & Observability
+- 📊 **Prometheus**: Metrics collection
+- 🚨 **Alerting**: Automated incident detection
+- 📄 **Centralized Logging**: Fluent Bit + CloudWatch
+- 💰 **Cost Monitoring**: Weekly spend alerts
+
+### Auto-Scaling & Performance
+- 📈 **Horizontal Scaling (HPA)**: 2-10 pods based on CPU/memory
+- 📉 **Vertical Scaling (VPA)**: Auto-adjusts pod resources
+- 🏢 **Cluster Scaling**: Auto-adds/removes nodes
+- 📊 **Advanced Metrics**: Custom scaling triggers
+- 🧪 **Load Testing**: Automated performance validation
+- 🔄 **Blue-Green**: Zero-downtime deployments
+- 💾 **Backup**: Automated DynamoDB backups
+
 ## 🧪 Learning Highlights
 
 - 🔄 **Blue-Green Deployment**: Zero-downtime deployments
@@ -221,8 +251,9 @@ kubectl apply -f k8s/argocd-app.yaml
 - 📊 **Monitoring**: Health checks, rollback automation
 - 🚀 **CI/CD**: GitHub Actions automation
 
-## 🎯 Deployment Strategies Comparison
+## 🎯 Deployment & Scaling Strategies
 
+### Deployment Strategies
 | Strategy | Downtime | Risk | Complexity | Rollback Time | Use Case |
 |----------|----------|------|------------|---------------|----------|
 | Rolling | Minimal | Medium | Low | 2-5 min | Development |
@@ -230,7 +261,72 @@ kubectl apply -f k8s/argocd-app.yaml
 | Canary | Zero | Very Low | High | Instant | Production |
 | A/B Testing | Zero | Low | High | Instant | Feature testing |
 
+### Auto-Scaling Strategies
+| Type | Scope | Trigger | Response Time | Cost Impact |
+|------|-------|---------|---------------|-------------|
+| **HPA** | Pod replicas | CPU/Memory/Custom | 30-60s | Medium |
+| **VPA** | Pod resources | Resource usage | 2-5 min | Low |
+| **Cluster** | Node count | Pod scheduling | 2-3 min | High |
+| **Predictive** | All levels | ML forecasting | Proactive | Optimized |
+
+## 📈 Auto-Scaling Architecture
+
+### 3-Tier Scaling Strategy
+```
+📊 Load Increases
+    ↓
+🔄 HPA: Scales pods (2→10)
+    ↓
+📉 VPA: Adjusts resources per pod
+    ↓
+🏢 Cluster: Adds/removes nodes
+    ↓
+⚡ Full auto-scaling achieved!
+```
+
+### Horizontal Pod Autoscaler (HPA)
+- **Health API**: 2-10 replicas
+- **Frontend**: 2-5 replicas
+- **Triggers**: CPU > 70%, Memory > 80%
+- **Advanced**: Custom metrics (RPS, queue length)
+
+### Vertical Pod Autoscaler (VPA)
+- **Auto-adjusts**: CPU/Memory requests & limits
+- **Health API**: 100m-1000m CPU, 128Mi-1Gi memory
+- **Frontend**: 50m-500m CPU, 64Mi-512Mi memory
+
+### Cluster Autoscaler
+- **Node scaling**: Adds EC2 instances when needed
+- **Cost optimization**: Removes unused nodes
+- **Multi-AZ**: Distributes across availability zones
+
 ## 🔍 Monitoring & Verification
+
+### Auto-Scaling Status
+```bash
+# Monitor HPA status
+kubectl get hpa -w
+
+# Check VPA recommendations
+kubectl get vpa -w
+
+# View resource usage
+kubectl top pods
+kubectl top nodes
+
+# Scaling events
+kubectl get events --field-selector reason=ScalingReplicaSet
+```
+
+### Manual Scaling (if needed)
+```bash
+# Manual horizontal scaling
+kubectl scale deployment health-api --replicas=5
+
+# Check current scaling status
+kubectl describe hpa health-api-hpa
+kubectl describe vpa health-api-vpa
+```
 
 ### Check Current Status
 ```bash

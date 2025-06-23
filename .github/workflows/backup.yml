@@ -1,0 +1,33 @@
+name: Backup & DR
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Backup DynamoDB Tables
+      run: |
+        aws dynamodb create-backup \
+          --table-name health-profiles-prod \
+          --backup-name health-profiles-backup-$(date +%Y%m%d)
+        
+        aws dynamodb create-backup \
+          --table-name health-uploads-prod \
+          --backup-name health-uploads-backup-$(date +%Y%m%d)
+
+    - name: Backup Kubernetes Configs
+      run: |
+        aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-prod
+        kubectl get all -o yaml > k8s-backup-$(date +%Y%m%d).yaml
+        aws s3 cp k8s-backup-$(date +%Y%m%d).yaml s3://health-app-backups/

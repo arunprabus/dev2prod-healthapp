@@ -9,7 +9,7 @@ CLUSTER_NAME="health-app-cluster-${ENV}"
 echo "🔄 Rolling back $ENV environment..."
 
 # Update kubeconfig
-aws eks update-kubeconfig --region us-east-1 --name $CLUSTER_NAME
+aws eks update-kubeconfig --region ap-south-1 --name $CLUSTER_NAME
 
 # Get current color
 CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
