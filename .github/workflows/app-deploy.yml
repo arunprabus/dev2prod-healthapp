@@ -103,7 +103,7 @@ jobs:
         # Update image tag in ArgoCD application
         kubectl patch application health-api-${{ needs.determine-environment.outputs.environment }} \
           -n argocd \
-          --type merge \
+          --type=merge \
           -p '{"spec":{"source":{"targetRevision":"${{ github.sha }}"}}}'        
 
         # Wait for sync to complete

@@ -1,5 +1,6 @@
-# 🏥 Health App - Production-Ready Infrastructure with Blue-Green Deployment
-# Health App Infrastructure Repository
+# 🏥 Health App Infrastructure Repository
+
+## Production-Ready Infrastructure with Blue-Green Deployment
 
 This repository contains the infrastructure code for the Health App platform. The application code has been moved to separate repositories to follow separation of concerns.
 
@@ -14,8 +15,8 @@ This repository contains the infrastructure code for the Health App platform. Th
 
 ## Related Repositories
 
-- [HealthApi](https://github.com/arunprabus/HealthApi): Backend API code
-- [HealthFrontend](https://github.com/arunprabus/frontend-config-app): Frontend application code
+- [Health API](https://github.com/your-organization/health-api): Backend API code
+- [Health Frontend](https://github.com/your-organization/health-frontend): Frontend application code
 
 ## Infrastructure Deployment
 
@@ -30,7 +31,7 @@ The infrastructure code manages the following resources:
 
 ### Infrastructure
 
-The infrastructure is deployed using the GitHub Actions workflow in `.github/workflows/infra-deploy.yml`. This creates the base infrastructure for each environment (dev, test, prod).
+The infrastructure is deployed using the GitHub Actions workflow in `.github/workflows/infra-deploy.yml`. This creates the base infrastructure for each environment (development, test, production).
 
 ### Applications
 
@@ -140,8 +141,8 @@ The separation of application and infrastructure code allows for:
 
 ```bash
 # 1. Clone repository
-git clone <your-repo-url>
-cd dev2prod-healthapp
+git clone https://github.com/your-organization/health-app-infra.git
+cd health-app-infra
 
 # 2. Configure GitHub Environments & Variables
 # See ENVIRONMENT-SETUP.md for detailed configuration
@@ -163,7 +164,7 @@ cd dev2prod-healthapp
 | `AWS_REGION` | `ap-south-1` | Deployment region |
 | `EKS_CLUSTER_NAME` | `health-app-cluster` | Cluster base name |
 | `CONTAINER_REGISTRY` | `ghcr.io` | Container registry |
-| `REGISTRY_NAMESPACE` | `arunprabus` | Registry namespace |
+| `REGISTRY_NAMESPACE` | `your-organization` | Registry namespace |
 | `TERRAFORM_VERSION` | `1.6.0` | Terraform version |
 | `KUBECTL_TIMEOUT` | `300s` | K8s operation timeout |
 
@@ -710,7 +711,7 @@ REGISTRY_NAMESPACE: "apac-production"
 gh variable set AWS_REGION --body "ap-south-1"
 gh variable set EKS_CLUSTER_NAME --body "health-app-cluster"
 gh variable set CONTAINER_REGISTRY --body "ghcr.io"
-gh variable set REGISTRY_NAMESPACE --body "your-username"
+gh variable set REGISTRY_NAMESPACE --body "your-organization"
 gh variable set MIN_REPLICAS --body "2"
 gh variable set MAX_REPLICAS --body "10"
 

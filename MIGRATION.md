@@ -79,9 +79,9 @@ The deployment targets different environments based on branch patterns:
 
 1. Clone the relevant repositories:
    ```bash
-   git clone https://github.com/arunprabus/health-app-infra.git
-   git clone https://github.com/arunprabus/HealthApi.git
-   git clone https://github.com/arunprabus/frontend-config-app.git
+   git clone https://github.com/your-organization/health-app-infra.git
+   git clone https://github.com/your-organization/health-api.git
+   git clone https://github.com/your-organization/health-frontend.git
    ```
 
 2. Update your local development workflow:
