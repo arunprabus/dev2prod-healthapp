@@ -60,8 +60,3 @@ resource "kubernetes_manifest" "argocd_health_api" {
 
   depends_on = [kubernetes_namespace.health_app]
 }
-
-output "namespace" {
-  value = kubernetes_namespace.health_app.metadata[0].name
-  description = "The Kubernetes namespace for the Health app deployment"
-}

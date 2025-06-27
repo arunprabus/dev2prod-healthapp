@@ -126,7 +126,230 @@ Application deployment is handled automatically through GitHub Actions when code
 - **develop** branch → Development environment
 - **staging** branch → Test environment
 - **main** branch → Production environment
+# Environment Setup Guide
 
+This document provides detailed instructions for setting up GitHub Environments, Variables, and Secrets for the Health App infrastructure and deployment.
+
+## Overview
+
+The Health App platform uses GitHub Actions for CI/CD and requires proper configuration of the following:
+
+1. GitHub Environments (dev, test, prod)
+2. Repository Variables (global and environment-specific)
+3. Repository Secrets (global and environment-specific)
+
+## GitHub Environments
+
+Create three environments in your GitHub repository:
+
+1. Navigate to your repository → Settings → Environments
+2. Create the following environments:
+   - `dev` (Development)
+   - `test` (Testing/QA)
+   - `prod` (Production)
+
+### Environment Protection Rules
+
+Set up protection rules for each environment:
+
+#### Development
+- **Required reviewers**: None (for faster iteration)
+- **Wait timer**: None
+- **Deployment branches**: `develop` and custom branch patterns
+
+#### Testing
+- **Required reviewers**: Add 1 reviewer
+- **Wait timer**: Optional (5 minutes)
+- **Deployment branches**: `staging` and protected branches
+
+#### Production
+- **Required reviewers**: Add 2 reviewers
+- **Wait timer**: 15 minutes
+- **Deployment branches**: `main` only
+
+## Repository Variables
+
+### Global Variables
+
+Set these variables at the repository level (Settings → Secrets and variables → Actions → Variables):
+
+```yaml
+TERRAFORM_VERSION: "1.6.0"         # Terraform version used in pipelines
+KUBECTL_VERSION: "latest"          # kubectl version used in pipelines
+```
+
+### Environment-Specific Variables
+
+Set these variables for each environment:
+
+#### Development (dev)
+
+```yaml
+AWS_REGION: "ap-south-1"           # AWS deployment region
+EKS_CLUSTER_NAME: "health-app-dev"  # EKS cluster name
+CONTAINER_REGISTRY: "ghcr.io"       # Container registry URL
+REGISTRY_NAMESPACE: "arunprabus"    # Registry namespace
+MIN_REPLICAS: "1"                  # Minimum pod replicas
+MAX_REPLICAS: "3"                  # Maximum pod replicas
+KUBECTL_TIMEOUT: "180s"            # Kubernetes operations timeout
+CLEANUP_DELAY: "10"                # Seconds before cleanup
+LB_WAIT_TIME: "30"                 # Load balancer wait time
+```
+
+#### Testing (test)
+
+```yaml
+AWS_REGION: "ap-south-1"           # AWS deployment region
+EKS_CLUSTER_NAME: "health-app-test"  # EKS cluster name
+CONTAINER_REGISTRY: "ghcr.io"       # Container registry URL
+REGISTRY_NAMESPACE: "arunprabus"    # Registry namespace
+MIN_REPLICAS: "2"                  # Minimum pod replicas
+MAX_REPLICAS: "5"                  # Maximum pod replicas
+KUBECTL_TIMEOUT: "240s"            # Kubernetes operations timeout
+CLEANUP_DELAY: "20"                # Seconds before cleanup
+LB_WAIT_TIME: "45"                 # Load balancer wait time
+```
+
+#### Production (prod)
+
+```yaml
+AWS_REGION: "ap-south-1"            # AWS deployment region
+EKS_CLUSTER_NAME: "health-app-prod"  # EKS cluster name
+CONTAINER_REGISTRY: "ghcr.io"        # Container registry URL (or ECR URL)
+REGISTRY_NAMESPACE: "arunprabus"     # Registry namespace
+MIN_REPLICAS: "3"                   # Minimum pod replicas
+MAX_REPLICAS: "10"                  # Maximum pod replicas
+KUBECTL_TIMEOUT: "300s"             # Kubernetes operations timeout
+CLEANUP_DELAY: "30"                 # Seconds before cleanup
+LB_WAIT_TIME: "60"                  # Load balancer wait time
+```
+
+## Repository Secrets
+
+### Global Secrets
+
+Set these secrets at the repository level:
+
+```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."         # AWS access key
+AWS_SECRET_ACCESS_KEY: "xyz123..."    # AWS secret key
+SLACK_WEBHOOK_URL: "https://hooks.slack.com/..."  # Slack notifications
+```
+
+### Environment-Specific Secrets (Optional)
+
+For more granular control, you can set environment-specific AWS credentials:
+
+#### Development (dev)
+
+```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."        # Dev AWS access key
+AWS_SECRET_ACCESS_KEY: "xyz123..."   # Dev AWS secret key
+```
+
+#### Testing (test)
+
+```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."        # Test AWS access key
+AWS_SECRET_ACCESS_KEY: "xyz123..."   # Test AWS secret key
+```
+
+#### Production (prod)
+
+```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."        # Prod AWS access key
+AWS_SECRET_ACCESS_KEY: "xyz123..."   # Prod AWS secret key
+```
+
+## Setting Up with GitHub CLI
+
+You can automate the configuration using the GitHub CLI:
+
+### Install GitHub CLI
+
+```bash
+# macOS
+brew install gh
+
+# Windows
+winget install github.cli
+
+# Linux
+sudo apt install gh  # Ubuntu/Debian
+```
+
+### Login to GitHub
+
+```bash
+gh auth login
+```
+
+### Set Repository Variables
+
+```bash
+# Global variables
+gh variable set TERRAFORM_VERSION --body "1.6.0"
+gh variable set KUBECTL_VERSION --body "latest"
+
+# Environment-specific variables
+gh variable set AWS_REGION --env dev --body "ap-south-1"
+gh variable set EKS_CLUSTER_NAME --env dev --body "health-app-dev"
+# ... and so on for all variables
+```
+
+### Set Repository Secrets
+
+```bash
+# Global secrets
+gh secret set AWS_ACCESS_KEY_ID --body "AKIA..."
+gh secret set AWS_SECRET_ACCESS_KEY --body "xyz123..."
+gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/..."
+
+# Environment-specific secrets (optional)
+gh secret set AWS_ACCESS_KEY_ID --env prod --body "AKIA..."
+gh secret set AWS_SECRET_ACCESS_KEY --env prod --body "xyz123..."
+# ... and so on for all secrets
+```
+
+## Validation
+
+To validate your configuration:
+
+1. Go to your repository → Actions
+2. Run the workflow `Validate Environment Configuration`
+3. Check the logs to ensure all variables and secrets are properly set
+
+## Troubleshooting
+
+### Missing Variables or Secrets
+
+If a workflow fails with an error like:
+```
+Error: Parameter value is missing: AWS_ACCESS_KEY_ID
+```
+
+Check that you've set the required secret for the environment.
+
+### Environment Not Found
+
+If you get an error like:
+```
+Error: Environment 'test' not found on repository
+```
+
+Ensure you've created all required environments in the repository settings.
+
+### Access Issues
+
+If you encounter AWS access errors:
+
+1. Verify that the AWS credentials are valid
+2. Check that the IAM user has the necessary permissions
+3. Ensure the AWS region is correctly set for each environment
+
+## Contact
+
+For questions about environment setup, contact the DevOps team at devops@example.com.
 ## Network Connectivity
 
 The VPC peering connections allow resources in the Monitoring environment to communicate with resources in both the Lower and Higher environments. This enables centralized monitoring and logging for all environments.
