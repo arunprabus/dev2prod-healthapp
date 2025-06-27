@@ -15,8 +15,8 @@ This repository contains the infrastructure code for the Health App platform. Th
 
 ## Related Repositories
 
-- [Health API](https://github.com/your-organization/health-api): Backend API code
-- [Health Frontend](https://github.com/your-organization/health-frontend): Frontend application code
+- [Health API](https://github.com/arunprabus/health-api): Backend API code
+- [Health Frontend](https://github.com/arunprabus/health-dash): Frontend application code
 
 ## Infrastructure Deployment
 
