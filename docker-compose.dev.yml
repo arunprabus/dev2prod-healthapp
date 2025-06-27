@@ -1,0 +1,14 @@
+# Development override - exposes API for debugging
+version: '3.8'
+
+services:
+  health-api:
+    ports:
+      - "8080:8080"  # Expose API for development/debugging
+    environment:
+      - NODE_ENV=development
+      - DEBUG=true
+
+  health-frontend:
+    environment:
+      - REACT_APP_API_URL=http://localhost:8080  # Direct API access for dev

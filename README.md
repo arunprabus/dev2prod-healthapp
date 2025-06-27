@@ -1,5 +1,81 @@
 # 🏥 Health App - Production-Ready Infrastructure with Blue-Green Deployment
+# Health App Infrastructure Repository
 
+This repository contains the infrastructure code for the Health App platform. The application code has been moved to separate repositories to follow separation of concerns.
+
+## Repository Structure
+
+- `infra/`: Infrastructure as Code (IaC) using Terraform
+  - `modules/`: Reusable Terraform modules
+  - `environments/`: Environment-specific configurations
+- `.github/workflows/`: CI/CD pipelines
+  - `infra-deploy.yml`: Infrastructure deployment pipeline
+  - `app-deploy.yml`: Application deployment pipeline (triggers deployments to infrastructure)
+
+## Related Repositories
+
+- [HealthApi](https://github.com/arunprabus/HealthApi): Backend API code
+- [HealthFrontend](https://github.com/arunprabus/frontend-config-app): Frontend application code
+
+## Infrastructure Deployment
+
+The infrastructure code manages the following resources:
+
+- VPC and networking components
+- EKS clusters for different environments
+- RDS database instances
+- Deployment configurations via ArgoCD
+
+## Deployment Strategy
+
+### Infrastructure
+
+The infrastructure is deployed using the GitHub Actions workflow in `.github/workflows/infra-deploy.yml`. This creates the base infrastructure for each environment (dev, test, prod).
+
+### Applications
+
+Application deployments are handled through the following process:
+
+1. Code is pushed to the application repositories (HealthApi or HealthFrontend)
+2. The `.github/workflows/app-deploy.yml` workflow is triggered
+3. The workflow builds the application and pushes it to the container registry
+4. ArgoCD detects the changes and deploys the application to the appropriate environment
+
+### Environment Targeting
+
+- **Development Environment**: Triggered by pushes to the `develop` branch
+- **Test Environment**: Triggered by pushes to the `staging` branch
+- **Production Environment**: Triggered by pushes to the `main` branch
+
+## Getting Started
+
+### Prerequisites
+
+- AWS CLI configured with appropriate credentials
+- Terraform CLI (v1.6.0 or later)
+- kubectl
+
+### Deploying Infrastructure
+
+You can deploy the infrastructure using the GitHub Actions workflow or manually:
+
+```bash
+cd infra
+terraform init \
+  -backend-config="bucket=your-terraform-state-bucket" \
+  -backend-config="key=health-app-dev.tfstate" \
+  -backend-config="region=ap-south-1"
+terraform apply -var-file="environments/dev.tfvars"
+```
+
+## Maintenance
+
+The separation of application and infrastructure code allows for:
+
+1. Independent scaling of infrastructure without affecting application code
+2. Clearer responsibility boundaries
+3. Simplified CI/CD pipelines
+4. Better security and access control
 > 🚀 Enterprise-grade multi-environment setup with EKS, RDS, and **Blue-Green deployment strategy**—perfect for learning production DevOps practices.
 
 ---
@@ -15,19 +91,29 @@
 │ │                 LOWER NETWORK (10.0.0.0/16)                     │   │
 │ │ ┌──────────────┐     ┌──────────────┐                           │   │
 │ │ │  DEV ENV     │     │  TEST ENV    │                           │   │
-│ │ │ K3s + RDS    │     │ K3s + RDS    │                           │   │
+│ │ │ EKS + RDS    │     │ EKS + RDS    │                           │   │
 │ │ └──────────────┘     └──────────────┘                           │   │
 │ └─────────────────────────────────────────────────────────────────┘   │
 │                                                                       │
 │ ┌─────────────────────────────────────────────────────────────────┐   │
 │ │                HIGHER NETWORK (10.1.0.0/16)                     │   │
-│ │ ┌──────────────┐                                               │   │
-│ │ │  PROD ENV    │                                               │   │
-│ │ │ K3s + RDS    │                                               │   │
-│ │ └──────────────┘                                               │   │
+│ │ ┌──────────────┐                                                │   │
+│ │ │  PROD ENV    │                                                │   │
+│ │ │ EKS + RDS    │                                                │   │
+│ │ └──────────────┘                                                │   │
+│ └─────────────────────────────────────────────────────────────────┘   │
+│                                                                       │
+│ ┌─────────────────────────────────────────────────────────────────┐   │
+│ │               MONITORING NETWORK (10.3.0.0/16)                  │   │
+│ │ ┌───────────────────────────────────┐      VPC Peering          │   │
+│ │ │  MONITORING ENV                   │◀─────Connection──────────▶│   │
+│ │ │  EKS + Splunk + Prometheus        │                           │   │
+│ │ └───────────────────────────────────┘                           │   │
 │ └─────────────────────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────────────────┘
 ```
+
+> 🔒 **Enhanced Architecture**: Complete network isolation between Production and Dev/Test environments with centralized monitoring that has visibility into all environments.
 
 ---
 

@@ -1,0 +1,37 @@
+services:
+  health-api:
+    build: ../health-api
+    # No external port exposure - only internal
+    expose:
+      - "8080"
+    env_file:
+      - ../health-api/.env.docker
+    environment:
+      - PORT=8080
+      - AWS_REGION=ap-south-1
+      - DB_PORT=5432
+      - DB_NAME=postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8080/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - health-network
+
+  health-frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://health-api:8080
+    depends_on:
+      - health-api
+    restart: unless-stopped
+    networks:
+      - health-network
+
+networks:
+  health-network:
+    driver: bridge

@@ -1,17 +1,42 @@
-# Health App Infrastructure Management
+# Health App Management
 
-.PHONY: help infra-up-all infra-down-all infra-up infra-down infra-plan infra-destroy
+.PHONY: help dev dev-debug prod individual-api individual-frontend
 
 # Default environment
 ENV ?= dev
 TF_DIR = infra
 
 help: ## Show this help message
-	@echo "Health App Infrastructure Commands:"
+	@echo "Health App Commands:"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$\' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# Infrastructure Commands
+# Local Development
+dev: ## Start app in production-like mode (API not exposed)
+	@echo "🚀 Starting production-like mode..."
+	@docker-compose up
+	@echo "✅ Access frontend: http://localhost:3000"
+
+dev-debug: ## Start app in development mode (API exposed for debugging)
+	@echo "🔧 Starting development mode with API access..."
+	@docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+	@echo "✅ Frontend: http://localhost:3000"
+	@echo "✅ API: http://localhost:8080"
+
+individual-api: ## Run backend individually
+	@echo "🔧 Starting backend individually..."
+	@cd health-api && npm run dev
+
+individual-frontend: ## Run frontend individually  
+	@echo "🔧 Starting frontend individually..."
+	@cd frontend && npm start
+
+stop: ## Stop all services
+	@echo "🛑 Stopping all services..."
+	@docker-compose down
+	@echo "✅ All services stopped!"
+
+# Infrastructure Commands (for AWS deployment)
 infra-up-all: ## Deploy all environments (dev, test, prod)
 	@echo "🚀 Deploying all environments..."
 	@$(MAKE) infra-up ENV=dev
