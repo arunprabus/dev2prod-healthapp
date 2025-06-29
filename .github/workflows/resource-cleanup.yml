@@ -1,0 +1,95 @@
+name: AWS Resource Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Cleanup Action'
+        required: true
+        type: choice
+        options:
+        - audit
+        - cleanup-dry-run
+        - cleanup-execute
+      confirm_cleanup:
+        description: 'Type "CLEANUP" to confirm resource deletion'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  resource-cleanup:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y jq
+
+    - name: Run Resource Audit
+      if: github.event.inputs.action == 'audit'
+      run: |
+        chmod +x scripts/aws-resource-audit.sh
+        ./scripts/aws-resource-audit.sh
+
+    - name: Run Cleanup (Dry Run)
+      if: github.event.inputs.action == 'cleanup-dry-run'
+      run: |
+        chmod +x scripts/aws-resource-cleanup.sh
+        DRY_RUN=true ./scripts/aws-resource-cleanup.sh
+
+    - name: Run Cleanup (Execute)
+      if: github.event.inputs.action == 'cleanup-execute' && github.event.inputs.confirm_cleanup == 'CLEANUP'
+      run: |
+        chmod +x scripts/aws-resource-cleanup.sh
+        DRY_RUN=false ./scripts/aws-resource-cleanup.sh
+
+    - name: Cleanup Confirmation Check
+      if: github.event.inputs.action == 'cleanup-execute' && github.event.inputs.confirm_cleanup != 'CLEANUP'
+      run: |
+        echo "❌ Cleanup cancelled - must type 'CLEANUP' to confirm"
+        exit 1
+
+    - name: Upload Reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: cleanup-reports-${{ github.run_number }}
+        path: |
+          *.json
+          *.log
+        retention-days: 30
+
+    - name: Generate Summary
+      if: always()
+      run: |
+        echo "## 🧹 AWS Resource Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+        echo "* Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Date: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "* Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "audit.log" ]; then
+          echo "### 📊 Audit Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 audit.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f "cleanup-*.log" ]; then
+          echo "### 🧹 Cleanup Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 cleanup-*.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        fi
