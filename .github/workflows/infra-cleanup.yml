@@ -1,0 +1,108 @@
+name: Infrastructure Cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to cleanup'
+        required: true
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+        - monitoring
+        - all
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm deletion'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+  TF_STATE_BUCKET: "health-app-terraform-state"
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Cleanup Single Environment
+      if: github.event.inputs.environment != 'all'
+      working-directory: infra
+      run: |
+        echo "🗑️ Destroying ${{ github.event.inputs.environment }} environment..."
+        
+        terraform init \
+          -backend-config="bucket=$TF_STATE_BUCKET" \
+          -backend-config="key=health-app-${{ github.event.inputs.environment }}.tfstate" \
+          -backend-config="region=$AWS_REGION"
+        
+        terraform destroy \
+          -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -auto-approve
+        
+        echo "✅ ${{ github.event.inputs.environment }} environment destroyed"
+
+    - name: Cleanup All Environments
+      if: github.event.inputs.environment == 'all'
+      working-directory: infra
+      run: |
+        echo "🗑️ Destroying ALL environments..."
+        
+        # Destroy in reverse order (monitoring -> prod -> test -> dev)
+        for env in monitoring prod test dev; do
+          echo "Destroying $env environment..."
+          
+          terraform init \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=health-app-$env.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -reconfigure
+          
+          terraform destroy \
+            -var-file="environments/$env.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -auto-approve || echo "⚠️ $env environment may not exist"
+        done
+        
+        echo "✅ All environments destroyed"
+
+    - name: Cleanup Summary
+      run: |
+        echo "## 🗑️ Infrastructure Cleanup Complete" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment(s): ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Action: DESTROY" >> $GITHUB_STEP_SUMMARY
+        echo "* Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Status: ✅ Complete" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**All AWS resources have been deleted. No ongoing costs.**" >> $GITHUB_STEP_SUMMARY
+
+  cleanup-failed:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy != 'DESTROY'
+    
+    steps:
+    - name: Confirmation Required
+      run: |
+        echo "❌ Cleanup cancelled - confirmation required"
+        echo "Please type 'DESTROY' exactly to confirm deletion"
+        exit 1

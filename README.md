@@ -189,6 +189,13 @@ ssh -i ~/.ssh/aws-key ubuntu@<EC2_PUBLIC_IP>
 kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 ```
 
+**Step 5: Cleanup When Done**
+1. Go to **Actions** → **Infrastructure Cleanup**
+2. Select **environment** (dev/test/prod/monitoring/all)
+3. Type **"DESTROY"** in confirmation field
+4. Click **Run workflow**
+5. All resources will be deleted (cost returns to $0)
+
 #### **💰 Cost Verification**
 | Resource | Usage | Free Tier | Status |
 |----------|-------|-----------|--------|
@@ -402,10 +409,10 @@ Green (New) ──┘
 ### GitHub Actions Workflows
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| `Deploy to EKS` | Manual | Blue-green deployment with rollback |
+| `Infrastructure Deployment` | Manual | Deploy K3s infrastructure ($0 cost) |
+| `Infrastructure Cleanup` | Manual | **Destroy all resources** (type "DESTROY" to confirm) |
 | `Manual Rollback` | Manual | Instant rollback to previous version |
-| `Infrastructure Deploy` | Manual | Terraform infrastructure setup |
-| `Infrastructure Shutdown` | Manual | Cost-saving resource cleanup |
+| `Cost Monitor` | Schedule | Monitor AWS costs and usage |
 
 ### Manual Operations
 ```bash
