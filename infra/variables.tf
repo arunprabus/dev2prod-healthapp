@@ -93,3 +93,9 @@ variable "connect_to_higher_env" {
   type        = bool
   default     = false
 }
+
+variable "enable_monitoring" {
+  description = "Whether to enable monitoring stack"
+  type        = bool
+  default     = false
+}

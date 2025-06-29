@@ -58,20 +58,20 @@ output "kubernetes_namespace" {
   value       = module.deployment.namespace
 }
 
-output "argocd_application_name" {
-  description = "Name of the ArgoCD application"
-  value       = module.deployment.argocd_application_name
+output "config_map_name" {
+  description = "Name of the application config map"
+  value       = module.deployment.config_map_name
 }
 
 # Monitoring Outputs (conditional based on whether monitoring is enabled)
 output "prometheus_endpoint" {
   description = "Endpoint for Prometheus service"
-  value       = var.enable_monitoring ? module.monitoring[0].prometheus_service_endpoint : null
+  value       = var.environment == "monitoring" ? module.monitoring[0].prometheus_service_endpoint : null
 }
 
 output "grafana_endpoint" {
   description = "Endpoint for Grafana service"
-  value       = var.enable_monitoring ? module.monitoring[0].grafana_service_endpoint : null
+  value       = var.environment == "monitoring" ? module.monitoring[0].grafana_service_endpoint : null
 }
 
 # Environment Information
@@ -91,18 +91,8 @@ output "network_architecture" {
   value       = "This deployment uses a ${var.environment == "prod" ? "higher" : "lower"} network in CIDR range ${var.vpc_cidr}."
 }
 
-# Blue-Green Deployment Status (if applicable)
-output "active_deployment_color" {
-  description = "Currently active deployment color (blue/green) for production"
-  value       = var.environment == "prod" ? data.kubernetes_resource.active_service[0].object.spec.selector.color : "n/a"
-}
-
-data "kubernetes_resource" "active_service" {
-  count = var.environment == "prod" ? 1 : 0
-  api_version = "v1"
-  kind = "Service"
-  metadata {
-    name = "health-api-service"
-    namespace = module.deployment.namespace
-  }
+# Deployment Status
+output "deployment_status" {
+  description = "Current deployment status"
+  value       = "Deployed to ${var.environment} environment"
 }
