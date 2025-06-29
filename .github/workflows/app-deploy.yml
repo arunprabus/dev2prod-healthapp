@@ -12,17 +12,17 @@ on:
         - dev
         - test
         - prod
-  push:
-    branches:
-      - develop
-      - staging
-      - main
-    paths:
-      - '**'
-      - '!infra/**'
-      - '!.github/workflows/infra-deploy.yml'
-      - '!README.md'
-      - '!*.md'
+#  push:
+#    branches:
+#      - develop
+#      - staging
+#      - main
+#    paths:
+#      - '**'
+#      - '!infra/**'
+#      - '!.github/workflows/infra-deploy.yml'
+#      - '!README.md'
+#      - '!*.md'
 
 env:
   AWS_REGION: ap-south-1

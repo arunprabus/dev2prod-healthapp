@@ -168,11 +168,17 @@ ssh-keygen -t rsa -b 4096 -f ~/.ssh/aws-key
 cat ~/.ssh/aws-key.pub
 ```
 
-**Step 2: Configure GitHub Secrets**
-Go to **Settings** → **Secrets and variables** → **Actions** and add:
+**Step 2: Configure GitHub Secrets & Variables**
+Go to **Settings** → **Secrets and variables** → **Actions**:
+
+**Secrets tab:**
 - `AWS_ACCESS_KEY_ID`: Your AWS access key
 - `AWS_SECRET_ACCESS_KEY`: Your AWS secret key  
 - `SSH_PUBLIC_KEY`: Your SSH public key content (from Step 1)
+
+**Variables tab (optional for budget alerts):**
+- `BUDGET_EMAIL`: your-email@domain.com
+- `BUDGET_REGIONS`: us-east-1,ap-south-1
 
 **Step 3: Deploy via GitHub Actions**
 1. Go to **Actions** → **Infrastructure Deployment**
@@ -189,7 +195,15 @@ ssh -i ~/.ssh/aws-key ubuntu@<EC2_PUBLIC_IP>
 kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 ```
 
-**Step 5: Cleanup When Done**
+**Step 5: Setup Cost Protection (Optional)**
+1. Go to **Actions** → **AWS Budget Setup**
+2. **Leave inputs empty** to use GitHub variables OR enter custom values
+3. Click **Run workflow**
+4. You'll get email alerts if any cost > $0.01
+
+*Uses `BUDGET_EMAIL` and `BUDGET_REGIONS` variables if set, otherwise prompts for input*
+
+**Step 6: Cleanup When Done**
 1. Go to **Actions** → **Infrastructure Cleanup**
 2. Select **environment** (dev/test/prod/monitoring/all)
 3. Type **"DESTROY"** in confirmation field
@@ -411,7 +425,7 @@ Green (New) ──┘
 |----------|---------|-------------|
 | `Infrastructure Deployment` | Manual | Deploy K3s infrastructure ($0 cost) |
 | `Infrastructure Cleanup` | Manual | **Destroy all resources** (type "DESTROY" to confirm) |
-| `Manual Rollback` | Manual | Instant rollback to previous version |
+| `AWS Budget Setup` | Manual | **Setup $0 cost alerts** for US & India regions |
 | `Cost Monitor` | Schedule | Monitor AWS costs and usage |
 
 ### Manual Operations
