@@ -53,9 +53,9 @@ jobs:
     - name: Run Cost Check
       id: cost-check
       run: |
-        chmod +x cost-check-fixed.sh
-        chmod +x cost-breakdown.sh
-        ./cost-check-fixed.sh
+        chmod +x scripts/cost-check-fixed.sh
+        chmod +x scripts/cost-breakdown.sh
+        ./scripts/cost-check-fixed.sh
         
         # Extract cost for next job
         if [ -f cost-report.json ]; then
@@ -65,7 +65,7 @@ jobs:
           # Run detailed breakdown if cost > $0.50
           if (( $(echo "$COST > 0.50" | bc -l 2>/dev/null || echo "0") )); then
             echo "💰 Cost detected: \$$COST - Running detailed breakdown..."
-            ./cost-breakdown.sh
+            ./scripts/cost-breakdown.sh
           fi
         fi
 
@@ -102,14 +102,14 @@ jobs:
 
     - name: Run Auto Cleanup
       run: |
-        chmod +x cost-cleanup-auto.sh
+        chmod +x scripts/cost-cleanup-auto.sh
         export BUDGET_EMAIL="${{ github.event.inputs.email || vars.BUDGET_EMAIL || 'admin@example.com' }}"
         
         if [ "${{ github.event.inputs.force_cleanup }}" = "true" ]; then
-          sed -i 's/> 0.50/> 0.00/' cost-cleanup-auto.sh
+          sed -i 's/> 0.50/> 0.00/' scripts/cost-cleanup-auto.sh
         fi
         
-        ./cost-cleanup-auto.sh
+        ./scripts/cost-cleanup-auto.sh
 
   cost-breakdown:
     runs-on: ubuntu-latest
@@ -131,8 +131,8 @@ jobs:
 
     - name: Run Cost Breakdown
       run: |
-        chmod +x cost-breakdown.sh
-        ./cost-breakdown.sh
+        chmod +x scripts/cost-breakdown.sh
+        ./scripts/cost-breakdown.sh
 
   budget-setup:
     runs-on: ubuntu-latest
@@ -151,18 +151,18 @@ jobs:
 
     - name: Setup Budgets
       run: |
-        chmod +x create-budget-cli.sh
+        chmod +x scripts/create-budget-cli.sh
         EMAIL="${{ github.event.inputs.email || vars.BUDGET_EMAIL || 'admin@example.com' }}"
         REGIONS="${{ vars.BUDGET_REGIONS || 'us-east-1,ap-south-1' }}"
         
         # Create regional budgets
         IFS=',' read -ra REGION_ARRAY <<< "$REGIONS"
         for region in "${REGION_ARRAY[@]}"; do
-          ./create-budget-cli.sh "$EMAIL" "1.00" "ZeroCost-${region}-Alert"
+          ./scripts/create-budget-cli.sh "$EMAIL" "1.00" "ZeroCost-${region}-Alert"
         done
         
         # Create overall budget
-        ./create-budget-cli.sh "$EMAIL" "5.00" "ZeroCost-Overall-Alert"
+        ./scripts/create-budget-cli.sh "$EMAIL" "5.00" "ZeroCost-Overall-Alert"
 
   summary:
     runs-on: ubuntu-latest
