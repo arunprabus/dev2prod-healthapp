@@ -13,8 +13,8 @@ variable "subnet_ids" {
   type        = list(string)
 }
 
-variable "eks_cluster_name" {
-  description = "EKS cluster name"
+variable "k3s_instance_ip" {
+  description = "K3s instance public IP"
   type        = string
 }
 
