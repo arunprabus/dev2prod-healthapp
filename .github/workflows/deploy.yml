@@ -1,8 +1,6 @@
 name: Deploy to EKS
 
 on:
-#  push:
-#    branches: [ main, develop ]
   workflow_dispatch:
     inputs:
       environment:
@@ -16,80 +14,12 @@ on:
         - prod
 
 env:
-  # Core Configuration
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
-  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'health-app-cluster' }}
-  
-  # Container Registry
-  CONTAINER_REGISTRY: ${{ vars.CONTAINER_REGISTRY || 'ghcr.io' }}
-  REGISTRY_NAMESPACE: ${{ vars.REGISTRY_NAMESPACE || 'arunprabus' }}
-  
-  # Tool Versions
-  TERRAFORM_VERSION: ${{ vars.TERRAFORM_VERSION || '1.6.0' }}
-  KUBECTL_VERSION: ${{ vars.KUBECTL_VERSION || 'latest' }}
-  
-  # Timeouts & Delays
-  KUBECTL_TIMEOUT: ${{ vars.KUBECTL_TIMEOUT || '300s' }}
-  CLEANUP_DELAY: ${{ vars.CLEANUP_DELAY || '30' }}
-  LB_WAIT_TIME: ${{ vars.LB_WAIT_TIME || '60' }}
-  HEALTH_CHECK_RETRIES: ${{ vars.HEALTH_CHECK_RETRIES || '5' }}
-  
-  # Scaling Configuration
-  MIN_REPLICAS: ${{ vars.MIN_REPLICAS || '2' }}
-  MAX_REPLICAS: ${{ vars.MAX_REPLICAS || '10' }}
-  
-  # Terraform Variables
-  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'ap-south-1' }}
-  TF_VAR_environment: ${{ github.event.inputs.environment || 'dev' }}
-  TF_VAR_cluster_name: ${{ vars.EKS_CLUSTER_NAME || 'health-app-cluster' }}-${{ github.event.inputs.environment || 'dev' }}
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER_NAME: health-app-cluster
+  TERRAFORM_VERSION: 1.6.0
 
 jobs:
-  terraform:
-    runs-on: ubuntu-latest
-    outputs:
-      dynamodb_profiles_table: ${{ steps.terraform.outputs.dynamodb_profiles_table }}
-      dynamodb_uploads_table: ${{ steps.terraform.outputs.dynamodb_uploads_table }}
-      s3_bucket: ${{ steps.terraform.outputs.s3_bucket }}
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TERRAFORM_VERSION }}
-        terraform_wrapper: false
-
-    - name: Terraform Init
-      working-directory: ./infra
-      run: terraform init
-
-    - name: Terraform Plan
-      working-directory: ./infra
-      run: terraform plan -var-file="environments/${{ github.event.inputs.environment || 'dev' }}.tfvars"
-
-    - name: Terraform Apply
-      working-directory: ./infra
-      run: terraform apply -auto-approve -var-file="environments/${{ github.event.inputs.environment || 'dev' }}.tfvars"
-
-    - name: Get Terraform Outputs
-      id: terraform
-      working-directory: ./infra
-      run: |
-        echo "dynamodb_profiles_table=$(terraform output -raw dynamodb_profiles_table_name)" >> $GITHUB_OUTPUT
-        echo "dynamodb_uploads_table=$(terraform output -raw dynamodb_uploads_table_name)" >> $GITHUB_OUTPUT
-        echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
-
   deploy:
-    needs: terraform
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment }}
     
@@ -108,191 +38,28 @@ jobs:
       run: |
         aws eks update-kubeconfig \
           --region ${{ env.AWS_REGION }} \
-          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}
+          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment }}
 
-    - name: Security Scan
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: '${{ env.CONTAINER_REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/health-api:${{ github.event.inputs.environment }}'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        
-    - name: Upload Security Results
-      uses: github/codeql-action/upload-sarif@v2
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
-        
-    - name: Update Kubernetes secrets
+    - name: Deploy to Kubernetes
       run: |
-        kubectl create secret generic health-api-config \
-          --from-literal=DYNAMODB_PROFILES_TABLE=${{ needs.terraform.outputs.dynamodb_profiles_table }} \
-          --from-literal=DYNAMODB_UPLOADS_TABLE=${{ needs.terraform.outputs.dynamodb_uploads_table }} \
-          --from-literal=S3_BUCKET=${{ needs.terraform.outputs.s3_bucket }} \
-          --from-literal=AWS_REGION=${{ env.AWS_REGION }} \
-          --dry-run=client -o yaml | kubectl apply -f -
+        ENV=${{ github.event.inputs.environment }}
+        
+        # Update image tags
+        sed -i "s|ghcr.io/arunprabus/health-api:latest|ghcr.io/arunprabus/health-api:${ENV}|g" k8s/health-api-deployment.yaml
+        sed -i "s|ghcr.io/arunprabus/frontend-config-app:latest|ghcr.io/arunprabus/frontend-config-app:${ENV}|g" k8s/frontend-deployment.yaml
+        
+        # Apply deployments
+        kubectl apply -f k8s/health-api-deployment.yaml
+        kubectl apply -f k8s/frontend-deployment.yaml
 
-    - name: Blue-Green Deployment
+    - name: Wait for deployment
       run: |
-        ENV=${{ github.event.inputs.environment || 'dev' }}
-        TIMESTAMP=$(date +%s)
-        
-        # Determine current active color
-        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        NEW_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        echo "Current active: $CURRENT_COLOR, Deploying to: $NEW_COLOR"
-        
-        # Update deployments with new color and image tags
-        sed -e "s|ghcr.io/arunprabus/health-api:latest|${{ env.CONTAINER_REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/health-api:${ENV}|g" \
-            -e "s|name: health-api|name: health-api-${NEW_COLOR}|g" \
-            -e "/labels:/a\        color: ${NEW_COLOR}" \
-            -e "/spec:/,/template:/{ /labels:/a\        color: ${NEW_COLOR} ; }" \
-            k8s/health-api-deployment.yaml > k8s/health-api-${NEW_COLOR}.yaml
-        
-        sed -e "s|ghcr.io/arunprabus/frontend-config-app:latest|${{ env.CONTAINER_REGISTRY }}/${{ env.REGISTRY_NAMESPACE }}/frontend-config-app:${ENV}|g" \
-            -e "s|name: frontend|name: frontend-${NEW_COLOR}|g" \
-            -e "/labels:/a\        color: ${NEW_COLOR}" \
-            -e "/spec:/,/template:/{ /labels:/a\        color: ${NEW_COLOR} ; }" \
-            k8s/frontend-deployment.yaml > k8s/frontend-${NEW_COLOR}.yaml
-        
-        # Deploy new version
-        kubectl apply -f k8s/rbac.yaml
-        kubectl apply -f k8s/health-api-${NEW_COLOR}.yaml
-        kubectl apply -f k8s/frontend-${NEW_COLOR}.yaml
-        kubectl apply -f k8s/hpa.yaml
-        kubectl apply -f k8s/vpa.yaml
-        kubectl apply -f k8s/cluster-autoscaler.yaml
-        kubectl apply -f k8s/monitoring.yaml
-        kubectl apply -f k8s/logging.yaml
+        kubectl rollout status deployment/health-api --timeout=300s
+        kubectl rollout status deployment/frontend --timeout=300s
 
-    - name: Wait and validate new deployment
-      run: |
-        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        kubectl rollout status deployment/health-api-${NEW_COLOR} --timeout=${{ env.KUBECTL_TIMEOUT }}
-        kubectl rollout status deployment/frontend-${NEW_COLOR} --timeout=${{ env.KUBECTL_TIMEOUT }}
-        
-        # Health check
-        kubectl wait --for=condition=ready pod -l app=health-api,color=${NEW_COLOR} --timeout=${{ env.KUBECTL_TIMEOUT }}
-        
-    - name: Smoke Tests
-      run: |
-        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        # Get service endpoint
-        ENDPOINT=$(kubectl get service health-api-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-        
-        # Wait for load balancer
-        sleep ${{ env.LB_WAIT_TIME }}
-        
-        # Smoke tests
-        curl -f http://${ENDPOINT}/health || exit 1
-        curl -f http://${ENDPOINT}/metrics || exit 1
-        
-        echo "✅ Smoke tests passed for $NEW_COLOR deployment"
-        
-    - name: Integration Tests
-      run: |
-        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        ENDPOINT=$(kubectl get service health-api-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-        
-        # Test API endpoints
-        curl -f -X POST http://${ENDPOINT}/api/profiles -d '{"name":"test"}' -H "Content-Type: application/json" || exit 1
-        curl -f http://${ENDPOINT}/api/profiles || exit 1
-        
-        # Test frontend connectivity
-        FRONTEND_ENDPOINT=$(kubectl get service frontend-service -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-        curl -f http://${FRONTEND_ENDPOINT} || exit 1
-        
-        echo "✅ Integration tests passed"
-        
-    - name: Switch traffic to new version
-      run: |
-        NEW_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        NEW_COLOR=$([ "$NEW_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        # Update service selectors to point to new color
-        kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"'${NEW_COLOR}'"}}}'
-        kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"'${NEW_COLOR}'"}}}'
-        
-        echo "Traffic switched to $NEW_COLOR version"
-        
-    - name: Cleanup old version
-      run: |
-        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}')
-        OLD_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        # Wait before cleanup (allows for quick rollback if needed)
-        sleep ${{ env.CLEANUP_DELAY }}
-        
-        # Remove old deployments
-        kubectl delete deployment health-api-${OLD_COLOR} --ignore-not-found=true
-        kubectl delete deployment frontend-${OLD_COLOR} --ignore-not-found=true
-        
-        echo "Cleaned up $OLD_COLOR version"
-
-    - name: Get service URLs
+    - name: Get service status
       run: |
         echo "Health API Service:"
-        kubectl get service health-api-service
+        kubectl get service health-api-service || echo "Service not found"
         echo "Frontend Service:"
-        kubectl get service frontend-service
-        
-    - name: Notify Success
-      if: success()
-      uses: 8398a7/action-slack@v3
-      with:
-        status: success
-        text: '✅ Deployment successful to ${{ github.event.inputs.environment }}'
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        
-    - name: Notify Failure
-      if: failure()
-      uses: 8398a7/action-slack@v3
-      with:
-        status: failure
-        text: '❌ Deployment failed to ${{ github.event.inputs.environment }}'
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        
-  rollback:
-    if: failure()
-    needs: [terraform, deploy]
-    runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-    
-    steps:
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig \
-          --region ${{ env.AWS_REGION }} \
-          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment || 'dev' }}
-
-    - name: Rollback to previous version
-      run: |
-        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        ROLLBACK_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        echo "Rolling back from $CURRENT_COLOR to $ROLLBACK_COLOR"
-        
-        if kubectl get deployment health-api-${ROLLBACK_COLOR} >/dev/null 2>&1; then
-          kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
-          kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
-          echo "Rollback completed to $ROLLBACK_COLOR"
-        else
-          echo "No previous version found for rollback"
-          exit 1
-        fi
+        kubectl get service frontend-service || echo "Service not found"

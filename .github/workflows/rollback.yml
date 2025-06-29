@@ -1,11 +1,10 @@
 name: Manual Rollback
-name: Manual Rollback
 
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Target Environment'
+        description: 'Environment to rollback'
         required: true
         default: 'prod'
         type: choice
@@ -23,7 +22,8 @@ on:
         - green
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_REGION: ap-south-1
+  EKS_CLUSTER_NAME: health-app-cluster
 
 jobs:
   rollback:
@@ -43,7 +43,9 @@ jobs:
 
     - name: Update kubeconfig
       run: |
-        aws eks update-kubeconfig --region $AWS_REGION --name health-app-${{ github.event.inputs.environment }}-cluster
+        aws eks update-kubeconfig \
+          --region ${{ env.AWS_REGION }} \
+          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment }}
 
     - name: Get current deployment color
       id: current-color
@@ -58,148 +60,28 @@ jobs:
 
         # Update health-api service
         kubectl patch service health-api-service -n health-app-${{ github.event.inputs.environment }} \
-          -p '{"spec":{"selector":{"color":"${{ github.event.inputs.target_color }}"}}}'  
+          -p '{"spec":{"selector":{"color":"${{ github.event.inputs.target_color }}"}}}'
 
         # Update frontend service if it exists
         if kubectl get service frontend-service -n health-app-${{ github.event.inputs.environment }} &>/dev/null; then
           kubectl patch service frontend-service -n health-app-${{ github.event.inputs.environment }} \
-            -p '{"spec":{"selector":{"color":"${{ github.event.inputs.target_color }}"}}}'  
+            -p '{"spec":{"selector":{"color":"${{ github.event.inputs.target_color }}"}}}'
         fi
 
-    - name: Verify health after rollback
+    - name: Verify rollback
       run: |
-        # Wait for pods to be ready
         echo "Waiting for pods to be ready..."
         kubectl wait --for=condition=ready pods -l app=health-api,color=${{ github.event.inputs.target_color }} \
           -n health-app-${{ github.event.inputs.environment }} --timeout=60s || true
 
-        # Check endpoints
-        echo "Checking service endpoints..."
-        kubectl get endpoints health-api-service -n health-app-${{ github.event.inputs.environment }}
-
-        # Get pod status
         echo "Pod status:"
         kubectl get pods -l app=health-api,color=${{ github.event.inputs.target_color }} \
           -n health-app-${{ github.event.inputs.environment }}
 
-    - name: Add rollback summary
+    - name: Rollback summary
       run: |
         echo "## Rollback Summary" >> $GITHUB_STEP_SUMMARY
         echo "* Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
         echo "* Previous color: ${{ steps.current-color.outputs.current_color }}" >> $GITHUB_STEP_SUMMARY
         echo "* New color: ${{ github.event.inputs.target_color }}" >> $GITHUB_STEP_SUMMARY
         echo "* Rollback triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-
-        echo "Current deployment status:" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        kubectl get pods -l app=health-api -n health-app-${{ github.event.inputs.environment }} >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-
-    - name: Notify on Slack
-      uses: slackapi/slack-github-action@v1.25.0
-      if: always()
-      with:
-        payload: |
-          {
-            "text": "Deployment Rollback: ${{ github.event.inputs.environment }} - ${{ steps.current-color.outputs.current_color }} → ${{ github.event.inputs.target_color }}",
-            "blocks": [
-              {
-                "type": "header",
-                "text": {
-                  "type": "plain_text",
-                  "text": "Deployment Rollback ${{ job.status == 'success' ? '✅' : '❌' }}"
-                }
-              },
-              {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Environment:* ${{ github.event.inputs.environment }}"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Rollback:* ${{ steps.current-color.outputs.current_color }} → ${{ github.event.inputs.target_color }}"
-                  }
-                ]
-              },
-              {
-                "type": "section",
-                "fields": [
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Status:* ${{ job.status }}"
-                  },
-                  {
-                    "type": "mrkdwn",
-                    "text": "*Triggered by:* ${{ github.actor }}"
-                  }
-                ]
-              },
-              {
-                "type": "actions",
-                "elements": [
-                  {
-                    "type": "button",
-                    "text": {
-                      "type": "plain_text",
-                      "text": "View Workflow"
-                    },
-                    "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                  }
-                ]
-              }
-            ]
-          }
-      env:
-        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
-on:
-  workflow_dispatch:
-    inputs:
-      environment:
-        description: 'Environment to rollback'
-        required: true
-        type: choice
-        options:
-        - dev
-        - test
-        - prod
-
-env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
-  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || 'health-app-cluster' }}
-
-jobs:
-  rollback:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Update kubeconfig
-      run: |
-        aws eks update-kubeconfig \
-          --region ${{ env.AWS_REGION }} \
-          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment }}
-
-    - name: Execute rollback
-      run: |
-        CURRENT_COLOR=$(kubectl get service health-api-service -o jsonpath='{.spec.selector.color}' 2>/dev/null || echo "blue")
-        ROLLBACK_COLOR=$([ "$CURRENT_COLOR" = "blue" ] && echo "green" || echo "blue")
-        
-        echo "Rolling back from $CURRENT_COLOR to $ROLLBACK_COLOR"
-        
-        if kubectl get deployment health-api-${ROLLBACK_COLOR} >/dev/null 2>&1; then
-          kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
-          kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"'${ROLLBACK_COLOR}'"}}}'
-          echo "✅ Rollback completed to $ROLLBACK_COLOR"
-        else
-          echo "❌ No previous version found"
-          exit 1
-        fi
