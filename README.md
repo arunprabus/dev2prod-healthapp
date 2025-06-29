@@ -259,8 +259,25 @@ terraform plan -var-file="environments/dev.tfvars" -var="ssh_public_key=$(cat ~/
 # Apply (deploy infrastructure)
 terraform apply -var-file="environments/dev.tfvars" -var="ssh_public_key=$(cat ~/.ssh/aws-key.pub)"
 
+# Create budget via CLI (optional)
+cd ..
+chmod +x create-budget-cli.sh
+./create-budget-cli.sh your-email@domain.com 1.00 "Dev-Budget"
+
 # Destroy when done (optional)
+cd infra
 terraform destroy -var-file="environments/dev.tfvars" -var="ssh_public_key=$(cat ~/.ssh/aws-key.pub)"
+```
+
+#### **💰 CLI Budget Creation:**
+```bash
+# Basic usage (default: admin@example.com, $1.00)
+./create-budget-cli.sh
+
+# Custom parameters
+./create-budget-cli.sh your-email@domain.com 5.00 "Custom-Budget"
+
+# Usage: ./create-budget-cli.sh [email] [amount] [budget-name]
 ```
 
 ## ⚙️ Configuration Management

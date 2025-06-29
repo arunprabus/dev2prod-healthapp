@@ -89,6 +89,44 @@ fi
 
 # Show current resource summary
 echo ""
+# 6. Create/Update Budget Alert if cost detected
+if (( $(echo "$TOTAL_COST > 0.10" | bc -l 2>/dev/null || echo "0") )); then
+  echo "🛡️ Creating emergency budget alert..."
+  
+  ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  EMAIL="${BUDGET_EMAIL:-admin@example.com}"
+  
+  aws budgets create-budget \
+    --account-id $ACCOUNT_ID \
+    --budget '{
+      "BudgetName": "Emergency-Cost-Alert",
+      "BudgetLimit": {
+        "Amount": "2.00",
+        "Unit": "USD"
+      },
+      "TimeUnit": "MONTHLY",
+      "BudgetType": "COST"
+    }' \
+    --notifications-with-subscribers "[
+      {
+        \"Notification\": {
+          \"NotificationType\": \"ACTUAL\",
+          \"ComparisonOperator\": \"GREATER_THAN\",
+          \"Threshold\": 50,
+          \"ThresholdType\": \"PERCENTAGE\"
+        },
+        \"Subscribers\": [
+          {
+            \"SubscriptionType\": \"EMAIL\",
+            \"Address\": \"$EMAIL\"
+          }
+        ]
+      }
+    ]" 2>/dev/null || echo "   Budget may already exist"
+  
+  echo "   Emergency budget created with $2 limit"
+fi
+
 echo "📊 Current Resource Summary:"
 echo "NAT Gateways: $(aws ec2 describe-nat-gateways --query 'NatGateways[?State==`available`]' --output text | wc -l)"
 echo "Load Balancers: $(aws elbv2 describe-load-balancers --query 'LoadBalancers[]' --output text 2>/dev/null | wc -l)"

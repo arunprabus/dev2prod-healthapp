@@ -37,6 +37,10 @@ jobs:
     - name: Run Auto Cleanup
       run: |
         chmod +x cost-cleanup-auto.sh
+        chmod +x create-budget-cli.sh
+        
+        # Set budget email from GitHub variable or default
+        export BUDGET_EMAIL="${{ vars.BUDGET_EMAIL || 'admin@example.com' }}"
         
         if [ "${{ github.event.inputs.force_cleanup }}" = "true" ]; then
           echo "🚨 Force cleanup enabled - removing costly resources regardless of cost"
@@ -93,5 +97,6 @@ jobs:
         echo "- Load Balancers: Removed if found" >> $GITHUB_STEP_SUMMARY
         echo "- Unattached Elastic IPs: Released" >> $GITHUB_STEP_SUMMARY
         echo "- Oversized EC2: Stopped if > t2.micro" >> $GITHUB_STEP_SUMMARY
+        echo "- Emergency Budget: Created if cost > \$0.10" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "⏰ **Next check**: Every Monday at 10 AM UTC" >> $GITHUB_STEP_SUMMARY
