@@ -1,25 +1,25 @@
 variable "identifier" {
-  description = "RDS instance identifier"
+  description = "Database identifier"
   type        = string
 }
 
 variable "vpc_id" {
-  description = "ID of the VPC"
+  description = "VPC ID"
   type        = string
 }
 
 variable "private_subnet_ids" {
-  description = "IDs of private subnets"
+  description = "Private subnet IDs"
   type        = list(string)
 }
 
 variable "db_instance_class" {
-  description = "RDS instance class"
+  description = "Database instance class"
   type        = string
 }
 
 variable "db_allocated_storage" {
-  description = "RDS allocated storage in GB"
+  description = "Allocated storage in GB"
   type        = number
 }
 
