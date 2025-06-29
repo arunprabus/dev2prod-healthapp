@@ -433,6 +433,7 @@ Green (New) ──┘
 | `Infrastructure Cleanup` | Manual | **Destroy all resources** (type "DESTROY" to confirm) |
 | `AWS Budget Setup` | Manual | **Setup $0 cost alerts** for US & India regions |
 | `Cost Monitor` | Schedule/Manual | **Monitor weekly costs** (runs Mondays, alerts if > $0) |
+| `Auto Cost Cleanup` | Schedule/Manual | **Auto-remove costly resources** (NAT, LB, EIP) if > $0.50 |
 
 ### Manual Operations
 ```bash
