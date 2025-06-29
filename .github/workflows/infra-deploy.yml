@@ -76,6 +76,7 @@ jobs:
       run: |
         terraform plan \
           -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -out=tfplan
 
     - name: Terraform Apply
@@ -89,6 +90,7 @@ jobs:
       run: |
         terraform destroy \
           -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -auto-approve
 
     - name: Output infrastructure information

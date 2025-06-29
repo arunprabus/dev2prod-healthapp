@@ -154,27 +154,25 @@ The separation of application and infrastructure code allows for:
 
 #### **⚙️ Prerequisites**
 1. **AWS Account** with Free Tier available
-2. **GitHub Secrets** configured:
-   - `AWS_ACCESS_KEY_ID`
-   - `AWS_SECRET_ACCESS_KEY`
-3. **SSH Key Pair** generated
+2. **SSH Key Pair** generated
+3. **GitHub Secrets** configured
 
 #### **🚀 Deployment Steps**
 
-**Step 1: Update SSH Key**
+**Step 1: Generate SSH Key**
 ```bash
 # Generate SSH key if you don't have one
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/aws-key
 
-# Copy your public key
+# Copy your public key content
 cat ~/.ssh/aws-key.pub
 ```
 
-**Step 2: Configure Environment**
-Edit `infra/environments/dev.tfvars` and replace:
-```hcl
-ssh_public_key = "your-actual-ssh-public-key-content-here"
-```
+**Step 2: Configure GitHub Secrets**
+Go to **Settings** → **Secrets and variables** → **Actions** and add:
+- `AWS_ACCESS_KEY_ID`: Your AWS access key
+- `AWS_SECRET_ACCESS_KEY`: Your AWS secret key  
+- `SSH_PUBLIC_KEY`: Your SSH public key content (from Step 1)
 
 **Step 3: Deploy via GitHub Actions**
 1. Go to **Actions** → **Infrastructure Deployment**
@@ -229,13 +227,13 @@ cd dev2prod-healthapp/infra
 terraform init
 
 # Plan deployment (verify $0 cost)
-terraform plan -var-file="environments/dev.tfvars"
+terraform plan -var-file="environments/dev.tfvars" -var="ssh_public_key=$(cat ~/.ssh/aws-key.pub)"
 
 # Apply (deploy infrastructure)
-terraform apply -var-file="environments/dev.tfvars"
+terraform apply -var-file="environments/dev.tfvars" -var="ssh_public_key=$(cat ~/.ssh/aws-key.pub)"
 
 # Destroy when done (optional)
-terraform destroy -var-file="environments/dev.tfvars"
+terraform destroy -var-file="environments/dev.tfvars" -var="ssh_public_key=$(cat ~/.ssh/aws-key.pub)"
 ```
 
 ## ⚙️ Configuration Management

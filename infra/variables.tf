@@ -46,7 +46,7 @@ variable "k3s_instance_type" {
 variable "ssh_public_key" {
   description = "SSH public key for EC2 access"
   type        = string
-  default     = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7S6uO6kYMp3biTguvZzpD6/example-key"
+  sensitive   = true
 }
 
 variable "k3s_endpoint" {

@@ -9,7 +9,7 @@ private_subnet_cidrs = ["10.3.1.0/24", "10.3.2.0/24"]
 
 # K3s Configuration (Minimal)
 k3s_instance_type = "t3.small"
-ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7S6uO6kYMp3biTguvZzpD6/example-key"
+# ssh_public_key will be passed from GitHub secret
 
 # Database Configuration (Minimal)
 db_instance_class = "db.t3.small"
