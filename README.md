@@ -203,7 +203,13 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 
 *Uses `BUDGET_EMAIL` and `BUDGET_REGIONS` variables if set, otherwise prompts for input*
 
-**Step 6: Cleanup When Done**
+**Step 6: Monitor Costs (Automatic)**
+- **Cost Monitor** workflow runs every Monday at 9 AM UTC
+- Checks last 7 days of spending
+- Alerts if any cost > $0 (expected: $0 Free Tier)
+- Manual run: **Actions** → **Cost Monitor** → **Run workflow**
+
+**Step 7: Cleanup When Done**
 1. Go to **Actions** → **Infrastructure Cleanup**
 2. Select **environment** (dev/test/prod/monitoring/all)
 3. Type **"DESTROY"** in confirmation field
@@ -426,7 +432,7 @@ Green (New) ──┘
 | `Infrastructure Deployment` | Manual | Deploy K3s infrastructure ($0 cost) |
 | `Infrastructure Cleanup` | Manual | **Destroy all resources** (type "DESTROY" to confirm) |
 | `AWS Budget Setup` | Manual | **Setup $0 cost alerts** for US & India regions |
-| `Cost Monitor` | Schedule | Monitor AWS costs and usage |
+| `Cost Monitor` | Schedule/Manual | **Monitor weekly costs** (runs Mondays, alerts if > $0) |
 
 ### Manual Operations
 ```bash
