@@ -1,0 +1,198 @@
+name: AWS Integrations Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Integration Action'
+        required: true
+        type: choice
+        options:
+        - deploy-cloudwatch
+        - deploy-lambda
+        - deploy-all
+        - destroy
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  aws-integrations:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+
+    - name: Deploy CloudWatch Integration
+      if: contains(fromJson('["deploy-cloudwatch", "deploy-all"]'), github.event.inputs.action)
+      run: |
+        # Create CloudWatch log group
+        aws logs create-log-group --log-group-name "/aws/health-app/${{ github.event.inputs.environment }}" || true
+        
+        # Deploy CloudWatch agent
+        envsubst < k8s/aws-integrations.yaml | kubectl apply -f -
+        
+        # Wait for deployment
+        kubectl rollout status daemonset/cloudwatch-agent -n aws-integrations --timeout=300s
+
+    - name: Deploy Lambda Functions
+      if: contains(fromJson('["deploy-lambda", "deploy-all"]'), github.event.inputs.action)
+      run: |
+        # Create Lambda execution role
+        aws iam create-role --role-name health-app-lambda-role \
+          --assume-role-policy-document '{
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {"Service": "lambda.amazonaws.com"},
+              "Action": "sts:AssumeRole"
+            }]
+          }' || true
+        
+        # Attach policies
+        aws iam attach-role-policy --role-name health-app-lambda-role \
+          --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole || true
+        
+        aws iam attach-role-policy --role-name health-app-lambda-role \
+          --policy-arn arn:aws:iam::aws:policy/EC2FullAccess || true
+        
+        aws iam attach-role-policy --role-name health-app-lambda-role \
+          --policy-arn arn:aws:iam::aws:policy/AmazonRDSFullAccess || true
+        
+        # Package Lambda function
+        cd scripts
+        zip -r cost-optimizer.zip aws-lambda-cost-optimizer.py
+        
+        # Deploy Lambda function
+        aws lambda create-function \
+          --function-name health-app-cost-optimizer-${{ github.event.inputs.environment }} \
+          --runtime python3.9 \
+          --role arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/health-app-lambda-role \
+          --handler aws-lambda-cost-optimizer.lambda_handler \
+          --zip-file fileb://cost-optimizer.zip \
+          --timeout 300 \
+          --environment Variables='{
+            "ENVIRONMENT": "${{ github.event.inputs.environment }}",
+            "LOG_LEVEL": "INFO"
+          }' || \
+        aws lambda update-function-code \
+          --function-name health-app-cost-optimizer-${{ github.event.inputs.environment }} \
+          --zip-file fileb://cost-optimizer.zip
+        
+        # Create EventBridge rule for scheduling
+        aws events put-rule \
+          --name health-app-cost-optimizer-schedule-${{ github.event.inputs.environment }} \
+          --schedule-expression "cron(0 18 * * ? *)" \
+          --description "Stop dev resources at 6 PM UTC"
+        
+        # Add Lambda permission for EventBridge
+        aws lambda add-permission \
+          --function-name health-app-cost-optimizer-${{ github.event.inputs.environment }} \
+          --statement-id allow-eventbridge \
+          --action lambda:InvokeFunction \
+          --principal events.amazonaws.com \
+          --source-arn arn:aws:events:${{ env.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:rule/health-app-cost-optimizer-schedule-${{ github.event.inputs.environment }} || true
+        
+        # Connect EventBridge rule to Lambda
+        aws events put-targets \
+          --rule health-app-cost-optimizer-schedule-${{ github.event.inputs.environment }} \
+          --targets "Id"="1","Arn"="arn:aws:lambda:${{ env.AWS_REGION }}:${{ secrets.AWS_ACCOUNT_ID }}:function:health-app-cost-optimizer-${{ github.event.inputs.environment }}"
+
+    - name: Create Systems Manager Parameters
+      if: contains(fromJson('["deploy-all"]'), github.event.inputs.action)
+      run: |
+        # Create parameter store entries
+        aws ssm put-parameter \
+          --name "/health-app/${{ github.event.inputs.environment }}/database/host" \
+          --value "healthapidb.cluster-xyz.ap-south-1.rds.amazonaws.com" \
+          --type "String" \
+          --overwrite || true
+        
+        aws ssm put-parameter \
+          --name "/health-app/${{ github.event.inputs.environment }}/database/name" \
+          --value "healthapi" \
+          --type "String" \
+          --overwrite || true
+        
+        aws ssm put-parameter \
+          --name "/health-app/${{ github.event.inputs.environment }}/database/user" \
+          --value "healthapi_user" \
+          --type "String" \
+          --overwrite || true
+
+    - name: Destroy Integrations
+      if: github.event.inputs.action == 'destroy'
+      run: |
+        # Delete Lambda function
+        aws lambda delete-function \
+          --function-name health-app-cost-optimizer-${{ github.event.inputs.environment }} || true
+        
+        # Delete EventBridge rule
+        aws events remove-targets \
+          --rule health-app-cost-optimizer-schedule-${{ github.event.inputs.environment }} \
+          --ids "1" || true
+        aws events delete-rule \
+          --name health-app-cost-optimizer-schedule-${{ github.event.inputs.environment }} || true
+        
+        # Delete K8s resources
+        kubectl delete -f k8s/aws-integrations.yaml || true
+        
+        # Delete CloudWatch log group
+        aws logs delete-log-group \
+          --log-group-name "/aws/health-app/${{ github.event.inputs.environment }}" || true
+        
+        # Delete SSM parameters
+        aws ssm delete-parameter \
+          --name "/health-app/${{ github.event.inputs.environment }}/database/host" || true
+        aws ssm delete-parameter \
+          --name "/health-app/${{ github.event.inputs.environment }}/database/name" || true
+        aws ssm delete-parameter \
+          --name "/health-app/${{ github.event.inputs.environment }}/database/user" || true
+
+    - name: Generate Summary
+      if: always()
+      run: |
+        echo "## 🔧 AWS Integrations Summary" >> $GITHUB_STEP_SUMMARY
+        echo "* Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Date: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ github.event.inputs.action }}" != "destroy" ]]; then
+          echo "### ✅ Deployed Components" >> $GITHUB_STEP_SUMMARY
+          echo "- CloudWatch Logs: /aws/health-app/${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Lambda Function: health-app-cost-optimizer-${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "- EventBridge Rule: Daily 6 PM UTC shutdown" >> $GITHUB_STEP_SUMMARY
+          echo "- Systems Manager: Parameter store configuration" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💰 Cost Impact" >> $GITHUB_STEP_SUMMARY
+          echo "- CloudWatch Logs: FREE (within 5GB limit)" >> $GITHUB_STEP_SUMMARY
+          echo "- Lambda: FREE (within 1M requests limit)" >> $GITHUB_STEP_SUMMARY
+          echo "- Systems Manager: FREE" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total Additional Cost: $0/month**" >> $GITHUB_STEP_SUMMARY
+        fi

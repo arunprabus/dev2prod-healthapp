@@ -310,7 +310,17 @@ aws lambda create-function --function-name health-app-cost-optimizer \
   --zip-file fileb://scripts/aws-lambda-cost-optimizer.zip
 ```
 
-**Step 4: Deploy via GitHub Actions**
+**Step 4: Deploy AWS Integrations**
+```bash
+# Deploy FREE AWS integrations
+Actions → AWS Integrations Deployment → action: "deploy-all" → environment: "dev"
+
+# Test integrations
+chmod +x scripts/test-aws-integrations.sh
+./scripts/test-aws-integrations.sh dev
+```
+
+**Step 5: Deploy via GitHub Actions**
 1. Go to **Actions** → **Infrastructure**
 2. Select **action**: `deploy`
 3. Select **environment**: `dev`
