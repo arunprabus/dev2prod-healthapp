@@ -1,0 +1,21 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "budgets:*",
+                "ce:GetCostAndUsage",
+                "ce:GetUsageReport",
+                "ce:GetDimensionValues",
+                "ce:GetReservationCoverage",
+                "ce:GetReservationPurchaseRecommendation",
+                "ce:GetReservationUtilization",
+                "ce:GetRightsizingRecommendation",
+                "ce:ListCostCategoryDefinitions",
+                "ce:DescribeCostCategoryDefinition"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
