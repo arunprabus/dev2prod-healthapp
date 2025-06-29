@@ -1,8 +1,16 @@
-name: Infrastructure Deployment
+name: Infrastructure
 
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: 'Infrastructure Action'
+        required: true
+        type: choice
+        options:
+        - deploy
+        - destroy
+        - plan
       environment:
         description: 'Target Environment'
         required: true
@@ -12,15 +20,12 @@ on:
         - dev
         - test
         - prod
-      terraform_action:
-        description: 'Terraform Action'
-        required: true
-        default: 'apply'
-        type: choice
-        options:
-        - plan
-        - apply
-        - destroy
+        - monitoring
+        - all
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm deletion (for destroy action)'
+        required: false
+        type: string
 
 env:
   AWS_REGION: ap-south-1
@@ -28,10 +33,12 @@ env:
   TF_STATE_BUCKET: "health-app-terraform-state"
 
 jobs:
-  terraform:
+  infrastructure:
     runs-on: ubuntu-latest
-    environment: ${{ github.event.inputs.environment }}
-
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["dev", "test", "prod", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -48,14 +55,12 @@ jobs:
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-    - name: Create Terraform state bucket if it doesn't exist
+    - name: Create Terraform state bucket
+      if: github.event.inputs.action != 'destroy'
       run: |
         if ! aws s3api head-bucket --bucket $TF_STATE_BUCKET 2>/dev/null; then
-          echo "Creating Terraform state bucket: $TF_STATE_BUCKET"
           aws s3 mb s3://$TF_STATE_BUCKET --region $AWS_REGION
           aws s3api put-bucket-versioning --bucket $TF_STATE_BUCKET --versioning-configuration Status=Enabled
-        else
-          echo "Terraform state bucket already exists"
         fi
 
     - name: Terraform Init
@@ -63,7 +68,7 @@ jobs:
       run: |
         terraform init \
           -backend-config="bucket=$TF_STATE_BUCKET" \
-          -backend-config="key=health-app-${{ github.event.inputs.environment }}.tfstate" \
+          -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
           -backend-config="region=$AWS_REGION"
 
     - name: Terraform Validate
@@ -72,32 +77,38 @@ jobs:
 
     - name: Terraform Plan
       working-directory: infra
-      id: plan
+      if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
         terraform plan \
-          -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+          -var-file="environments/${{ matrix.env }}.tfvars" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -out=tfplan
 
     - name: Terraform Apply
       working-directory: infra
-      if: github.event.inputs.terraform_action == 'apply'
+      if: github.event.inputs.action == 'deploy'
       run: terraform apply -auto-approve tfplan
 
     - name: Terraform Destroy
       working-directory: infra
-      if: github.event.inputs.terraform_action == 'destroy'
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
       run: |
         terraform destroy \
-          -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+          -var-file="environments/${{ matrix.env }}.tfvars" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -auto-approve
 
-    - name: Output infrastructure information
-      if: github.event.inputs.terraform_action == 'apply'
-      working-directory: infra
+    - name: Destroy Confirmation Check
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy != 'DESTROY'
       run: |
-        echo "## Infrastructure Deployed - ${{ github.event.inputs.environment }} Environment" >> $GITHUB_STEP_SUMMARY
-        echo "* Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-        echo "* Action: ${{ github.event.inputs.terraform_action }}" >> $GITHUB_STEP_SUMMARY
+        echo "❌ Destroy cancelled - must type 'DESTROY' to confirm"
+        exit 1
+
+    - name: Output Summary
+      if: always()
+      run: |
+        echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
         echo "* Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

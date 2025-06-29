@@ -181,9 +181,9 @@ Go to **Settings** → **Secrets and variables** → **Actions**:
 - `BUDGET_REGIONS`: us-east-1,ap-south-1
 
 **Step 3: Deploy via GitHub Actions**
-1. Go to **Actions** → **Infrastructure Deployment**
-2. Select **environment**: `dev`
-3. Select **terraform_action**: `apply`
+1. Go to **Actions** → **Infrastructure**
+2. Select **action**: `deploy`
+3. Select **environment**: `dev`
 4. Click **Run workflow**
 
 **Step 4: Access Your Infrastructure**
@@ -196,25 +196,25 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 ```
 
 **Step 5: Setup Cost Protection (Optional)**
-1. Go to **Actions** → **AWS Budget Setup**
-2. **Leave inputs empty** to use GitHub variables OR enter custom values
-3. Click **Run workflow**
-4. You'll get email alerts if any cost > $0.01
-
-*Uses `BUDGET_EMAIL` and `BUDGET_REGIONS` variables if set, otherwise prompts for input*
+1. Go to **Actions** → **Cost Management**
+2. Select **action**: `budget-setup`
+3. **Leave email empty** to use GitHub variables OR enter custom email
+4. Click **Run workflow**
+5. You'll get email alerts if any cost > $0.01
 
 **Step 6: Monitor Costs (Automatic)**
-- **Cost Monitor** workflow runs every Monday at 9 AM UTC
+- **Cost Management** workflow runs every Monday (9 AM monitor, 10 AM cleanup)
 - Checks last 7 days of spending
-- Alerts if any cost > $0 (expected: $0 Free Tier)
-- Manual run: **Actions** → **Cost Monitor** → **Run workflow**
+- Auto-removes costly resources if > $0.50
+- Manual run: **Actions** → **Cost Management** → Select action
 
 **Step 7: Cleanup When Done**
-1. Go to **Actions** → **Infrastructure Cleanup**
-2. Select **environment** (dev/test/prod/monitoring/all)
-3. Type **"DESTROY"** in confirmation field
-4. Click **Run workflow**
-5. All resources will be deleted (cost returns to $0)
+1. Go to **Actions** → **Infrastructure**
+2. Select **action**: `destroy`
+3. Select **environment** (dev/test/prod/monitoring/all)
+4. Type **"DESTROY"** in confirmation field
+5. Click **Run workflow**
+6. All resources will be deleted (cost returns to $0)
 
 #### **💰 Cost Verification**
 | Resource | Usage | Free Tier | Status |
@@ -234,11 +234,11 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 
 #### **🔄 Multi-Environment Deployment**
 ```bash
-# Deploy Test Environment
-Actions → Infrastructure Deployment → environment: "test" → apply
+# Deploy Single Environment
+Actions → Infrastructure → action: "deploy" → environment: "test"
 
-# Deploy Production Environment  
-Actions → Infrastructure Deployment → environment: "prod" → apply
+# Deploy All Environments at Once
+Actions → Infrastructure → action: "deploy" → environment: "all"
 
 # Each environment: $0/month
 # Total all environments: $0/month
@@ -446,11 +446,19 @@ Green (New) ──┘
 ### GitHub Actions Workflows
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| `Infrastructure Deployment` | Manual | Deploy K3s infrastructure ($0 cost) |
-| `Infrastructure Cleanup` | Manual | **Destroy all resources** (type "DESTROY" to confirm) |
-| `AWS Budget Setup` | Manual | **Setup $0 cost alerts** for US & India regions |
-| `Cost Monitor` | Schedule/Manual | **Monitor weekly costs** (runs Mondays, alerts if > $0) |
-| `Auto Cost Cleanup` | Schedule/Manual | **Auto-remove costly resources** (NAT, LB, EIP) if > $0.50 |
+| `Infrastructure` | Manual | **Deploy/Destroy/Plan** - All infrastructure operations |
+| `Cost Management` | Schedule/Manual | **Monitor + Cleanup + Budget** - Complete cost protection |
+
+### **Infrastructure Workflow Actions:**
+- **deploy**: Create/update infrastructure
+- **destroy**: Delete all resources (requires "DESTROY" confirmation)
+- **plan**: Preview changes without applying
+
+### **Cost Management Workflow Actions:**
+- **monitor**: Check weekly costs
+- **cleanup**: Remove expensive resources
+- **budget-setup**: Create cost alerts
+- **all**: Run monitor + cleanup + budget setup
 
 ### Manual Operations
 ```bash
@@ -458,57 +466,71 @@ Green (New) ──┘
 kubectl get deployments
 kubectl get services
 
-# View current active color
-kubectl get service health-api-service -o jsonpath='{.spec.selector.color}'
+# Plan infrastructure changes
+Actions → Infrastructure → action: "plan" → environment: "dev"
+
+# Monitor costs manually
+Actions → Cost Management → action: "monitor"
 ```
 
-## 🚨 Rollback Procedures
+## 🚨 Emergency Procedures
 
-### 1. GitHub Actions Rollback (Recommended)
-1. Go to **Actions** → **Manual Rollback**
-2. Select environment (dev/test/prod)
-3. Click **Run workflow**
-
-### 2. Emergency Production Rollback (Fastest)
+### 1. Infrastructure Rollback
 ```bash
-aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-prod
-kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
-kubectl patch service frontend-service -p '{"spec":{"selector":{"color":"blue"}}}'
+# Destroy problematic environment
+Actions → Infrastructure → action: "destroy" → environment: "dev" → confirm: "DESTROY"
+
+# Redeploy clean environment
+Actions → Infrastructure → action: "deploy" → environment: "dev"
 ```
 
-### 3. Script-based Rollback
+### 2. Cost Emergency
 ```bash
-chmod +x scripts/rollback.sh
-./scripts/rollback.sh prod    # Production
-./scripts/rollback.sh test    # Test
-./scripts/rollback.sh dev     # Development
+# Force cleanup regardless of cost threshold
+Actions → Cost Management → action: "cleanup" → force_cleanup: true
+
+# Monitor current costs
+Actions → Cost Management → action: "monitor"
 ```
 
-### 4. Environment-Specific Commands
+### 3. Manual K3s Access
 ```bash
-# Dev Environment
-aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-dev
-kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
+# SSH to K3s node
+ssh -i ~/.ssh/aws-key ubuntu@<EC2_PUBLIC_IP>
 
-# Test Environment
-aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-test
-kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
-
-# Production Environment
-aws eks update-kubeconfig --region ap-south-1 --name health-app-cluster-prod
-kubectl patch service health-api-service -p '{"spec":{"selector":{"color":"blue"}}}'
+# Check cluster status
+sudo k3s kubectl get nodes
+sudo k3s kubectl get pods --all-namespaces
 ```
 
-> ⚡ **Rollback is instant** - switches traffic between blue/green versions with zero downtime
+> ⚡ **Quick Recovery** - destroy and redeploy takes ~5 minutes at $0 cost
 
 ---
 
 ## 💸 Cost Control
 
+### **Automated (Recommended)**
 ```bash
-make stop-all     # Stop all EC2 (save costs)
-make start-all    # Restart EC2 instances
-make destroy-all  # Tear everything down
+# Weekly automatic monitoring + cleanup
+Runs every Monday: 9 AM monitor, 10 AM cleanup
+
+# Manual cost check
+Actions → Cost Management → action: "monitor"
+
+# Force cleanup if needed
+Actions → Cost Management → action: "cleanup" → force_cleanup: true
+```
+
+### **Manual Infrastructure Control**
+```bash
+# Stop specific environment
+Actions → Infrastructure → action: "destroy" → environment: "dev"
+
+# Stop all environments
+Actions → Infrastructure → action: "destroy" → environment: "all"
+
+# Restart when needed
+Actions → Infrastructure → action: "deploy" → environment: "dev"
 ```
 
 ---
