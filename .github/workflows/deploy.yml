@@ -15,7 +15,7 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-  EKS_CLUSTER_NAME: health-app-cluster
+  K8S_CLUSTER_NAME: health-app-cluster
   TERRAFORM_VERSION: 1.6.0
 
 jobs:
@@ -34,11 +34,12 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    - name: Update kubeconfig
+    - name: Setup kubectl
       run: |
-        aws eks update-kubeconfig \
-          --region ${{ env.AWS_REGION }} \
-          --name ${{ env.EKS_CLUSTER_NAME }}-${{ github.event.inputs.environment }}
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
 
     - name: Deploy to Kubernetes
       run: |

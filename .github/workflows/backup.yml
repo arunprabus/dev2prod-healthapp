@@ -28,6 +28,8 @@ jobs:
 
     - name: Backup Kubernetes Configs
       run: |
-        aws eks update-kubeconfig --region ${{ vars.AWS_REGION || 'ap-south-1' }} --name ${{ vars.EKS_CLUSTER_NAME || 'health-app-cluster' }}-prod
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
         kubectl get all -o yaml > k8s-backup-$(date +%Y%m%d).yaml
         aws s3 cp k8s-backup-$(date +%Y%m%d).yaml s3://health-app-backups/

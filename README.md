@@ -1,17 +1,36 @@
 # 🏥 Health App Infrastructure Repository
 
-## Production-Ready Infrastructure with Blue-Green Deployment
+## Production-Ready K8s Infrastructure with Complete DevOps Pipeline
 
-This repository contains the infrastructure code for the Health App platform. The application code has been moved to separate repositories to follow separation of concerns.
+This repository contains the complete infrastructure and deployment pipeline for the Health App platform, configured for **Kubernetes (K8s) instead of EKS** for cost-effective, production-ready deployments.
+
+## 🚀 **Key Features**
+
+- ✅ **K8s Native Deployment** - Direct Kubernetes without EKS overhead
+- ✅ **Multi-Environment Support** - dev/test/prod isolation
+- ✅ **Auto-Scaling & Monitoring** - HPA, health checks, Prometheus
+- ✅ **Cost Optimization** - Resource scheduling, auto-shutdown
+- ✅ **Complete CI/CD** - GitHub Actions automation
+- ✅ **Infrastructure as Code** - Terraform + K8s manifests
 
 ## Repository Structure
 
 - `infra/`: Infrastructure as Code (IaC) using Terraform
-  - `modules/`: Reusable Terraform modules
+  - `modules/`: Reusable Terraform modules (VPC, K8s, RDS)
   - `environments/`: Environment-specific configurations
-- `.github/workflows/`: CI/CD pipelines
-  - `infra-deploy.yml`: Infrastructure deployment pipeline
-  - `app-deploy.yml`: Application deployment pipeline (triggers deployments to infrastructure)
+- `.github/workflows/`: Complete CI/CD pipeline
+  - `infrastructure.yml`: Infrastructure deployment
+  - `app-deploy.yml`: Application deployment
+  - `k8s-operations.yml`: K8s management & scaling
+  - `monitoring.yml`: Health checks & monitoring
+  - `resource-cleanup.yml`: Cost optimization
+- `k8s/`: Kubernetes manifests
+  - `health-api-complete.yaml`: Complete app deployment
+  - `monitoring-stack.yaml`: Prometheus + Grafana
+- `scripts/`: Automation scripts
+  - `k8s-health-check.sh`: Health monitoring
+  - `k8s-auto-scale.sh`: Auto-scaling management
+  - `rds-monitor.sh`: Database monitoring
 
 ## Related Repositories
 
@@ -22,11 +41,13 @@ This repository contains the infrastructure code for the Health App platform. Th
 
 The infrastructure code manages the following resources:
 
-- **VPC and networking components** (isolated per environment)
-- **K3s clusters** for cost-effective Kubernetes (FREE TIER)
-- **RDS database instances** (FREE TIER eligible)
-- **Multi-environment setup** (dev: 10.0.0.0/16, test: 10.2.0.0/16, prod: 10.1.0.0/16)
-- **Deployment configurations** via Kubernetes manifests
+- **VPC and networking** (isolated per environment)
+- **K8s clusters** on EC2 (cost-effective alternative to EKS)
+- **RDS database instances** with automated monitoring
+- **Multi-environment setup** (dev/test/prod namespaces)
+- **Auto-scaling** (HPA + resource scheduling)
+- **Monitoring stack** (Prometheus + Grafana)
+- **Cost optimization** (automated cleanup + scheduling)
 
 ## Deployment Strategy
 

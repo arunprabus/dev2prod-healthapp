@@ -94,20 +94,22 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Update Kubernetes configuration
+    - name: Setup kubectl
       run: |
-        aws eks update-kubeconfig --name health-app-${{ needs.determine-environment.outputs.environment }}-cluster --region ${{ env.AWS_REGION }}
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
 
-    - name: Deploy to ArgoCD
+    - name: Configure K8s access
       run: |
-        # Update image tag in ArgoCD application
-        kubectl patch application health-api-${{ needs.determine-environment.outputs.environment }} \
-          -n argocd \
-          --type=merge \
-          -p '{"spec":{"source":{"targetRevision":"${{ github.sha }}"}}}'        
+        # Get K8s cluster endpoint from Terraform output
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+        kubectl config use-context health-app-${{ needs.determine-environment.outputs.environment }}
 
-        # Wait for sync to complete
-        kubectl wait application health-api-${{ needs.determine-environment.outputs.environment }} \
-          -n argocd \
-          --for=condition=Healthy \
-          --timeout=5m
+    - name: Deploy to K8s
+      run: |
+        # Update image in deployment
+        kubectl set image deployment/health-api health-api=${{ steps.login-ecr.outputs.registry }}/health-api:${{ needs.determine-environment.outputs.environment }}-${{ github.sha }} -n health-app-${{ needs.determine-environment.outputs.environment }}
+        
+        # Wait for rollout
+        kubectl rollout status deployment/health-api -n health-app-${{ needs.determine-environment.outputs.environment }} --timeout=300s

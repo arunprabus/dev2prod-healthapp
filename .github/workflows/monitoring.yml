@@ -23,10 +23,26 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    - name: Setup kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+
     - name: Run Infrastructure Monitoring
       run: |
+        # RDS Monitoring
         chmod +x scripts/rds-monitor.sh
         ./scripts/rds-monitor.sh
+        
+        # K8s Health Check
+        chmod +x scripts/k8s-health-check.sh
+        ./scripts/k8s-health-check.sh health-app-dev
+        
+        # Auto-scaling check
+        chmod +x scripts/k8s-auto-scale.sh
+        ./scripts/k8s-auto-scale.sh schedule health-app-dev health-api
 
     - name: Upload Monitoring Logs
       if: always()
