@@ -17,7 +17,7 @@ provider "aws" {
 }
 
 provider "kubernetes" {
-  host                   = "https://${module.k3s.instance_public_ip}:6443"
+  host                   = var.k3s_endpoint != "" ? var.k3s_endpoint : "https://127.0.0.1:6443"
   insecure               = true
   config_path            = null
 }

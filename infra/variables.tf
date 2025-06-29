@@ -49,6 +49,12 @@ variable "ssh_public_key" {
   default     = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7S6uO6kYMp3biTguvZzpD6/example-key"
 }
 
+variable "k3s_endpoint" {
+  description = "K3s cluster endpoint for Kubernetes provider"
+  type        = string
+  default     = ""
+}
+
 # Database Configuration
 variable "db_instance_class" {
   description = "Database instance class"
