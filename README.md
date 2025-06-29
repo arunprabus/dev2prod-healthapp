@@ -192,16 +192,125 @@ cat ~/.ssh/aws-key.pub
 **Step 2: Configure GitHub Secrets & Variables**
 Go to **Settings** → **Secrets and variables** → **Actions**:
 
-**Secrets tab:**
-- `AWS_ACCESS_KEY_ID`: Your AWS access key
-- `AWS_SECRET_ACCESS_KEY`: Your AWS secret key  
-- `SSH_PUBLIC_KEY`: Your SSH public key content (from Step 1)
+**🔐 Secrets tab (Required):**
+```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."
+AWS_SECRET_ACCESS_KEY: "xyz123..."
+KUBECONFIG: "Base64 encoded kubeconfig file"
+SSH_PUBLIC_KEY: "ssh-rsa AAAAB3..."
+TF_STATE_BUCKET: "health-app-terraform-state"
+```
 
-**Variables tab (optional for budget alerts):**
-- `BUDGET_EMAIL`: your-email@domain.com
-- `BUDGET_REGIONS`: us-east-1,ap-south-1
+**⚙️ Variables tab (K8s Configuration):**
+```yaml
+AWS_REGION: "ap-south-1"
+K8S_CLUSTER_NAME: "health-app-cluster"
+CONTAINER_REGISTRY: "your-account.dkr.ecr.ap-south-1.amazonaws.com"
+REGISTRY_NAMESPACE: "health-app"
+MIN_REPLICAS: "1"
+MAX_REPLICAS: "5"
+KUBECTL_TIMEOUT: "300s"
+BUDGET_EMAIL: "your-email@domain.com"
+BUDGET_REGIONS: "us-east-1,ap-south-1"
+```
 
-**Step 3: Deploy via GitHub Actions**
+## 🏷️ **Tagging & Naming Standards**
+
+### **Industry Standard Tags**
+```yaml
+# Required Tags (Cost & Operations)
+Project: "health-app"
+Environment: "dev|test|prod"
+Owner: "devops-team"
+CostCenter: "engineering"
+ManagedBy: "terraform"
+Application: "health-api"
+BackupRequired: "true"
+
+# Compliance & Security
+DataClassification: "internal"
+ComplianceScope: "hipaa"
+MonitoringLevel: "medium"
+Schedule: "business-hours"
+AutoShutdown: "enabled"
+```
+
+### **Resource Naming Convention**
+```yaml
+# Format: {project}-{component}-{environment}
+AWS Resources:
+  VPC: "health-app-vpc-dev"
+  EC2: "health-app-k8s-master-dev"
+  RDS: "health-app-db-dev"
+  S3: "health-app-terraform-state-dev"
+
+K8s Resources:
+  Namespace: "health-app-dev"
+  Deployment: "health-api-backend-dev"
+  Service: "health-api-service-dev"
+```
+
+### **Benefits**
+- 💰 **Cost Tracking**: Automated cost allocation by project/team
+- 🔄 **Automation**: Auto-shutdown, backup policies
+- 🛡️ **Compliance**: HIPAA, GDPR compliance tracking
+- 📊 **Operations**: Resource lifecycle management
+
+## 🔧 **AWS Technology Integrations**
+
+### **FREE Tier Enhancements ($0/month)**
+```yaml
+# Observability & Monitoring
+CloudWatch Logs: "Centralized application logging"
+CloudWatch Metrics: "Custom metrics collection"
+CloudWatch Alarms: "Automated alerting"
+Systems Manager: "Enhanced secrets management"
+CloudTrail: "Audit logging and compliance"
+Lambda Functions: "Cost optimization automation"
+```
+
+### **Low-Cost Additions (~$25/month)**
+```yaml
+# Advanced Features
+X-Ray: "$5/month - Distributed tracing"
+AWS Config: "$10/month - Compliance monitoring"
+Secrets Manager: "$5/month - Advanced secrets"
+EventBridge: "$5/month - Event processing"
+```
+
+### **Splunk Integration Options**
+```yaml
+# Enterprise Logging
+Splunk Universal Forwarder: "$150+/month - Direct integration"
+Splunk Connect for K8s: "Native K8s integration"
+Kinesis → Splunk: "Cost-effective pipeline"
+ELK Stack Alternative: "$0/month - Self-hosted"
+```
+
+### **Automated Cost Optimization**
+- 🕘 **Business Hours**: Auto-start at 9 AM UTC
+- 🌙 **After Hours**: Auto-stop at 6 PM UTC
+- 🏷️ **Tag-based Control**: Environment and AutoShutdown tags
+- 🤖 **Lambda Functions**: Serverless automation
+
+### **Implementation Phases**
+- **Phase 1 (FREE)**: CloudWatch + Lambda automation
+- **Phase 2 ($25/month)**: X-Ray + Config + advanced monitoring
+- **Phase 3 ($100+/month)**: Splunk + enterprise security
+
+**Step 3: Deploy AWS Integrations (Optional)**
+```bash
+# Deploy AWS integrations
+kubectl apply -f k8s/aws-integrations.yaml
+
+# Deploy Lambda cost optimizer
+aws lambda create-function --function-name health-app-cost-optimizer \
+  --runtime python3.9 --role arn:aws:iam::ACCOUNT:role/lambda-role \
+  --handler lambda_function.lambda_handler \
+  --zip-file fileb://scripts/aws-lambda-cost-optimizer.zip
+```
+
+**Step 4: Deploy via GitHub Actions**
 1. Go to **Actions** → **Infrastructure**
 2. Select **action**: `deploy`
 3. Select **environment**: `dev`

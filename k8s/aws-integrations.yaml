@@ -1,0 +1,291 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws-integrations
+  labels:
+    app.kubernetes.io/name: aws-integrations
+    app.kubernetes.io/managed-by: terraform
+---
+# CloudWatch Agent DaemonSet
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: cloudwatch-agent
+  namespace: aws-integrations
+  labels:
+    app: cloudwatch-agent
+spec:
+  selector:
+    matchLabels:
+      app: cloudwatch-agent
+  template:
+    metadata:
+      labels:
+        app: cloudwatch-agent
+    spec:
+      serviceAccountName: cloudwatch-agent
+      containers:
+      - name: cloudwatch-agent
+        image: amazon/cloudwatch-agent:latest
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        env:
+        - name: CW_CONFIG_CONTENT
+          valueFrom:
+            configMapKeyRef:
+              name: cloudwatch-config
+              key: cwagentconfig.json
+        volumeMounts:
+        - name: cwagentconfig
+          mountPath: /etc/cwagentconfig
+        - name: rootfs
+          mountPath: /rootfs
+          readOnly: true
+        - name: dockersock
+          mountPath: /var/run/docker.sock
+          readOnly: true
+        - name: varlibdocker
+          mountPath: /var/lib/docker
+          readOnly: true
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+      volumes:
+      - name: cwagentconfig
+        configMap:
+          name: cloudwatch-config
+      - name: rootfs
+        hostPath:
+          path: /
+      - name: dockersock
+        hostPath:
+          path: /var/run/docker.sock
+      - name: varlibdocker
+        hostPath:
+          path: /var/lib/docker
+      - name: varlog
+        hostPath:
+          path: /var/log
+---
+# CloudWatch Agent ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudwatch-config
+  namespace: aws-integrations
+data:
+  cwagentconfig.json: |
+    {
+      "logs": {
+        "logs_collected": {
+          "kubernetes": {
+            "cluster_name": "health-app-cluster-dev",
+            "log_group_name": "/aws/containerinsights/health-app/application",
+            "log_stream_name": "{pod_name}",
+            "log_retention_in_days": 7
+          }
+        }
+      },
+      "metrics": {
+        "namespace": "HealthApp/K8s",
+        "metrics_collected": {
+          "cpu": {
+            "measurement": ["cpu_usage_idle", "cpu_usage_iowait"],
+            "metrics_collection_interval": 60
+          },
+          "disk": {
+            "measurement": ["used_percent"],
+            "metrics_collection_interval": 60,
+            "resources": ["*"]
+          },
+          "mem": {
+            "measurement": ["mem_used_percent"],
+            "metrics_collection_interval": 60
+          }
+        }
+      }
+    }
+---
+# CloudWatch Agent ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudwatch-agent
+  namespace: aws-integrations
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/CloudWatchAgentServerRole
+---
+# Fluent Bit for Log Forwarding
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluent-bit
+  namespace: aws-integrations
+  labels:
+    app: fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: fluent-bit
+  template:
+    metadata:
+      labels:
+        app: fluent-bit
+    spec:
+      serviceAccountName: fluent-bit
+      containers:
+      - name: fluent-bit
+        image: fluent/fluent-bit:latest
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        volumeMounts:
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc
+        - name: varlog
+          mountPath: /var/log
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+      volumes:
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+---
+# Fluent Bit ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: aws-integrations
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush         1
+        Log_Level     info
+        Daemon        off
+        Parsers_File  parsers.conf
+        HTTP_Server   On
+        HTTP_Listen   0.0.0.0
+        HTTP_Port     2020
+
+    [INPUT]
+        Name              tail
+        Tag               kube.*
+        Path              /var/log/containers/*.log
+        Parser            docker
+        DB                /var/log/flb_kube.db
+        Mem_Buf_Limit     50MB
+        Skip_Long_Lines   On
+        Refresh_Interval  10
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Kube_CA_File        /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        Kube_Token_File     /var/run/secrets/kubernetes.io/serviceaccount/token
+        Merge_Log           On
+        K8S-Logging.Parser  On
+        K8S-Logging.Exclude Off
+
+    [OUTPUT]
+        Name                cloudwatch_logs
+        Match               kube.*
+        region              ap-south-1
+        log_group_name      /aws/containerinsights/health-app/application
+        log_stream_prefix   fluent-bit-
+        auto_create_group   true
+
+  parsers.conf: |
+    [PARSER]
+        Name   docker
+        Format json
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+        Time_Keep On
+---
+# Fluent Bit ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluent-bit
+  namespace: aws-integrations
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/FluentBitRole
+---
+# X-Ray Daemon
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: xray-daemon
+  namespace: aws-integrations
+  labels:
+    app: xray-daemon
+spec:
+  selector:
+    matchLabels:
+      app: xray-daemon
+  template:
+    metadata:
+      labels:
+        app: xray-daemon
+    spec:
+      serviceAccountName: xray-daemon
+      containers:
+      - name: xray-daemon
+        image: amazon/aws-xray-daemon:latest
+        command: ["/usr/bin/xray", "-o", "-b", "0.0.0.0:2000"]
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "25m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        ports:
+        - containerPort: 2000
+          protocol: UDP
+        env:
+        - name: AWS_REGION
+          value: ap-south-1
+---
+# X-Ray Daemon ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: xray-daemon
+  namespace: aws-integrations
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/XRayDaemonRole
+---
+# X-Ray Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: xray-daemon-service
+  namespace: aws-integrations
+spec:
+  selector:
+    app: xray-daemon
+  ports:
+  - port: 2000
+    protocol: UDP
+    targetPort: 2000
+  type: ClusterIP

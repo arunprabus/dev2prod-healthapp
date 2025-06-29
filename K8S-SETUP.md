@@ -78,20 +78,33 @@ Schedule: Every 6 hours
 
 ## 📋 **Setup Requirements**
 
-### **GitHub Secrets**
+### **🔐 GitHub Secrets (Required)**
 ```yaml
-AWS_ACCESS_KEY_ID: "Your AWS access key"
-AWS_SECRET_ACCESS_KEY: "Your AWS secret key"
+# Repository Settings → Secrets and variables → Actions → Secrets
+AWS_ACCESS_KEY_ID: "AKIA..."
+AWS_SECRET_ACCESS_KEY: "xyz123..."
 KUBECONFIG: "Base64 encoded kubeconfig file"
-SSH_PUBLIC_KEY: "Your SSH public key"
-TF_STATE_BUCKET: "Terraform state bucket name"
+SSH_PUBLIC_KEY: "ssh-rsa AAAAB3..."
+TF_STATE_BUCKET: "health-app-terraform-state"
+SLACK_WEBHOOK_URL: "https://hooks.slack.com/..." # Optional
 ```
 
-### **GitHub Variables (Optional)**
+### **⚙️ GitHub Variables (K8s Configuration)**
 ```yaml
+# Repository Settings → Secrets and variables → Actions → Variables
 AWS_REGION: "ap-south-1"
 K8S_CLUSTER_NAME: "health-app-cluster"
-CONTAINER_REGISTRY: "your-account.dkr.ecr.region.amazonaws.com"
+CONTAINER_REGISTRY: "your-account.dkr.ecr.ap-south-1.amazonaws.com"
+REGISTRY_NAMESPACE: "health-app"
+TERRAFORM_VERSION: "1.6.0"
+KUBECTL_TIMEOUT: "300s"
+MIN_REPLICAS: "1"
+MAX_REPLICAS: "5"
+CLEANUP_DELAY: "30"
+LB_WAIT_TIME: "60"
+HEALTH_CHECK_RETRIES: "5"
+BUDGET_EMAIL: "your-email@domain.com"
+BUDGET_REGIONS: "us-east-1,ap-south-1"
 ```
 
 ## 🚀 **Quick Start Commands**

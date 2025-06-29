@@ -2,16 +2,40 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: health-app-dev
+  labels:
+    app.kubernetes.io/name: health-app
+    app.kubernetes.io/instance: health-app-dev
+    app.kubernetes.io/managed-by: terraform
+    environment: dev
+    project: health-app
+    team: devops-team
+    cost-center: engineering
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: health-app-test
+  labels:
+    app.kubernetes.io/name: health-app
+    app.kubernetes.io/instance: health-app-test
+    app.kubernetes.io/managed-by: terraform
+    environment: test
+    project: health-app
+    team: devops-team
+    cost-center: engineering
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: health-app-prod
+  labels:
+    app.kubernetes.io/name: health-app
+    app.kubernetes.io/instance: health-app-prod
+    app.kubernetes.io/managed-by: terraform
+    environment: prod
+    project: health-app
+    team: devops-team
+    cost-center: engineering
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -38,21 +62,39 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: health-api
+  name: health-api-backend-dev
   namespace: health-app-dev
   labels:
+    # Standard K8s labels
+    app.kubernetes.io/name: health-api
+    app.kubernetes.io/instance: health-api-dev
+    app.kubernetes.io/version: "1.0.0"
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: health-app
+    app.kubernetes.io/managed-by: terraform
+    # Custom labels
     app: health-api
-    version: v1
+    component: backend
+    environment: dev
+    project: health-app
+    team: devops-team
+    cost-center: engineering
 spec:
   replicas: 2
   selector:
     matchLabels:
       app: health-api
+      component: backend
+      environment: dev
   template:
     metadata:
       labels:
         app: health-api
-        version: v1
+        component: backend
+        environment: dev
+        version: "1.0.0"
+        project: health-app
+        team: devops-team
     spec:
       containers:
       - name: health-api
