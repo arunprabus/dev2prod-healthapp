@@ -1,126 +1,118 @@
-# Infrastructure Management
-# Health App Infrastructure
+# Infrastructure Setup Guide
 
-This directory contains the Terraform configuration for the Health App infrastructure across multiple environments.
+## 🎯 Choose Your Learning Path
 
-## Architecture
-
-The infrastructure follows a modular design with the following components:
-
-- **VPC**: Network infrastructure with public and private subnets
-- **EKS**: Kubernetes clusters for container orchestration
-- **RDS**: Database instances for application data
-- **Monitoring**: Prometheus, Grafana, and centralized logging (optional)
-- **Deployment**: Kubernetes and ArgoCD configurations
-
-## Environment Configurations
-
-Each environment has its own configuration file in the `environments` directory:
-
-- `dev.tfvars`: Development environment
-- `test.tfvars`: Testing/QA environment
-- `prod.tfvars`: Production environment
-
-## Deployment
-
-### Prerequisites
-
-- Terraform 1.6.0 or later
-- AWS CLI configured with appropriate credentials
-- kubectl
-
-### Deployment Steps
-
-1. Initialize Terraform:
+### 🆓 Option 1: Free Tier Setup (Recommended for Beginners)
+**Cost: $0/month** - Perfect for learning Kubernetes fundamentals
 
 ```bash
-terraform init \
-  -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=health-app-[env].tfstate" \
-  -backend-config="region=ap-south-1"
+cd envs/free-tier
+make init-free && make apply-free
 ```
 
-2. Apply the configuration:
+**What you get:**
+- K3s Kubernetes cluster on EC2 t2.micro
+- RDS MySQL database (db.t3.micro)
+- Complete VPC networking
+- 100% within AWS free tier
+
+### 💼 Option 2: Production EKS Setup
+**Cost: $73/month per environment** - Enterprise-grade setup
 
 ```bash
-terraform apply -var-file="environments/[env].tfvars"
+# Single environment
+cd envs/dev
+make init-dev && make apply-dev
+
+# All environments (dev/qa/prod)
+make init-dev && make apply-dev
+make init-qa && make apply-qa  
+make init-prod && make apply-prod
 ```
 
-Where `[env]` is one of: `dev`, `test`, or `prod`.
+**What you get:**
+- Managed EKS clusters
+- Blue-green deployments
+- Multi-environment isolation
+- Production-ready architecture
 
-## Outputs
+## 📊 Feature Comparison
 
-After successful deployment, Terraform will output important information including:
+| Feature | Free Tier (K3s) | Production (EKS) |
+|---------|-----------------|------------------|
+| **Cost** | $0/month | $73/month per env |
+| **Kubernetes** | ✅ K3s | ✅ Managed EKS |
+| **Database** | ✅ RDS MySQL | ✅ RDS MySQL |
+| **Networking** | ✅ VPC | ✅ VPC |
+| **Auto-scaling** | ❌ Manual | ✅ HPA/VPA |
+| **Blue-Green** | ❌ Basic | ✅ Advanced |
+| **Multi-env** | ❌ Single | ✅ Dev/QA/Prod |
+| **Learning Value** | High | Very High |
 
-- VPC and subnet IDs
-- EKS cluster endpoint and credentials
-- RDS database endpoint
-- Kubernetes namespace
-- Monitoring endpoints (if enabled)
+## 🚀 Quick Commands
 
-## Network Architecture
-
-The infrastructure uses a multi-VPC architecture:
-
-- **Lower Network (10.0.0.0/16)**: Dev and Test environments
-- **Higher Network (10.1.0.0/16)**: Production environment
-- **Monitoring Network (10.3.0.0/16)**: Centralized monitoring (optional)
-
-## Blue-Green Deployment
-
-The production environment is configured for blue-green deployments with zero downtime. The active deployment color is available as an output variable.
-
-## Security
-
-- EKS clusters use IAM roles for service accounts
-- RDS instances use security groups to limit access
-- Network isolation between environments
-- RBAC configured for Kubernetes resources
-
-## Modules
-
-- `vpc`: Network configuration
-- `eks`: Kubernetes cluster configuration
-- `rds`: Database configuration
-- `deployment`: Application deployment configuration
-- `monitoring`: Monitoring and logging configuration
-- `vpc_peering`: VPC peering configuration for cross-VPC communication
-
-## Maintenance
-
-To update the infrastructure:
-
-1. Modify the appropriate module or variable
-2. Run `terraform plan -var-file="environments/[env].tfvars"` to preview changes
-3. Run `terraform apply -var-file="environments/[env].tfvars"` to apply changes
-
-To destroy the infrastructure (use with caution):
-
+### Free Tier Commands
 ```bash
-terraform destroy -var-file="environments/[env].tfvars"
+make init-free     # Initialize free tier
+make apply-free    # Deploy (100% FREE)
+make destroy-free  # Clean up
 ```
-This directory contains Terraform configurations for managing AWS infrastructure across three environments:
 
-## Network Architecture
-- **Dev & Test**: Shared network (10.0.0.0/16)
-- **Prod**: Isolated network (10.1.0.0/16)
-
-## Environments
-- **dev**: Development environment
-- **test**: Testing environment  
-- **prod**: Production environment
-
-## Usage
+### EKS Commands
 ```bash
-# Deploy all environments
-make infra-up-all
-
-# Deploy specific environment
-make infra-up ENV=dev
-
-# Destroy all environments
-make infra-down-all
-
-# Destroy specific environment
-make infra-down ENV=prod
+make init-dev && make apply-dev      # Dev environment
+make init-qa && make apply-qa        # QA environment  
+make init-prod && make apply-prod    # Prod environment
 ```
+
+## 📁 Directory Structure
+
+```
+infra/
+├── envs/
+│   ├── free-tier/    # 🆓 K3s setup ($0/month)
+│   ├── dev/          # 💼 EKS dev ($73/month)
+│   ├── qa/           # 💼 EKS qa ($73/month)
+│   └── prod/         # 💼 EKS prod ($73/month)
+├── modules/
+│   ├── k3s/          # K3s on EC2 module
+│   ├── eks/          # EKS module
+│   ├── vpc/          # VPC module
+│   └── rds/          # RDS module
+└── backend-configs/  # Terraform state configs
+```
+
+## 💡 Recommendations
+
+### For AWS Beginners
+1. **Start with free-tier**: Learn fundamentals without cost
+2. **Master basics**: VPC, EC2, RDS, Security Groups
+3. **Understand Kubernetes**: Pods, services, deployments
+4. **Then upgrade**: Move to EKS when ready
+
+### For Production Learning
+1. **Use single EKS environment**: Start with dev only
+2. **Learn blue-green deployments**: Zero-downtime updates
+3. **Master auto-scaling**: HPA, VPA, cluster scaling
+4. **Add environments**: Expand to QA and prod
+
+## 🔧 Prerequisites
+
+### Free Tier Setup
+- AWS CLI configured
+- SSH key pair generated
+- Basic Terraform knowledge
+
+### EKS Setup
+- AWS CLI configured
+- GitHub repository secrets
+- Docker images ready
+- Advanced Terraform knowledge
+
+## 📚 Learning Resources
+
+- [Free Tier Setup Guide](envs/free-tier/README.md)
+- [Cost Warning Guide](envs/COST-WARNING.md)
+- [Free Tier Features](FREE-TIER-GUIDE.md)
+
+**Start free, learn fundamentals, then scale to production!**

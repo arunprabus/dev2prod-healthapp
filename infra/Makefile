@@ -48,6 +48,19 @@ apply-prod: ## Apply prod environment
 destroy-prod: ## Destroy prod environment
 	@cd envs/prod && terraform destroy
 
+# Free Tier Environment (K3s instead of EKS)
+init-free: ## Initialize free-tier environment (100% FREE)
+	@cd envs/free-tier && terraform init -backend-config=../../backend-configs/free-tier.tfbackend
+
+plan-free: ## Plan free-tier environment
+	@cd envs/free-tier && terraform plan
+
+apply-free: ## Apply free-tier environment (100% FREE)
+	@cd envs/free-tier && terraform apply
+
+destroy-free: ## Destroy free-tier environment
+	@cd envs/free-tier && terraform destroy
+
 # Generic commands
 init: ## Initialize environment (ENV=dev|qa|prod)
 	@cd envs/$(ENV) && terraform init -backend-config=../../backend-configs/$(ENV).tfbackend

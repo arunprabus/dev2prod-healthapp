@@ -118,42 +118,61 @@ The separation of application and infrastructure code allows for:
 
 ---
 
-## 💰 Free Tier Resource Usage
+## 💰 Cost Comparison
 
-| Resource        | Quantity | Free Tier | Cost |
-|----------------|----------|-----------|------|
-| EC2 t2.micro    | 3        | 750 hrs   | ₹0   |
-| RDS db.t3.micro | 3        | 750 hrs   | ₹0   |
-| VPCs            | 2        | Unlimited | ₹0   |
-| EBS             | 60GB     | 30GB Free | ₹0\* |
+### 🆓 Free Tier Setup (K3s)
+| Resource | Quantity | Free Tier | Monthly Cost |
+|----------|----------|-----------|-------------|
+| EC2 t2.micro | 1 | 750 hrs | **$0** |
+| RDS db.t3.micro | 1 | 750 hrs | **$0** |
+| VPC + Networking | 1 | Unlimited | **$0** |
+| **Total** | | | **$0/month** |
 
-\*Assuming 32 hrs/month usage
+### 💰 EKS Setup (Production)
+| Resource | Quantity | Free Tier | Monthly Cost |
+|----------|----------|-----------|-------------|
+| EKS Control Plane | 1 | ❌ Not Free | **$73** |
+| EC2 t2.micro | 1 | 750 hrs | $0 |
+| RDS db.t3.micro | 1 | 750 hrs | $0 |
+| **Total** | | | **$73/month** |
+
+### 📈 Multi-Environment EKS
+| Environment | EKS Cost | EC2 Cost | RDS Cost | Total |
+|-------------|----------|----------|----------|-------|
+| Dev | $73 | $0 | $0 | $73 |
+| QA | $73 | $0 | $0 | $73 |
+| Prod | $73 | $0 | $0 | $73 |
+| **Total** | **$219** | **$0** | **$0** | **$219/month** |
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- AWS CLI configured
-- GitHub environments and variables configured
-- GitHub repository secrets configured
-- Docker images pushed to container registry
-
+### 🆓 Option 1: Free Tier Setup (Recommended for Learning)
 ```bash
 # 1. Clone repository
 git clone https://github.com/your-organization/health-app-infra.git
-cd health-app-infra
+cd health-app-infra/infra
 
-# 2. Configure GitHub Environments & Variables
-# See ENVIRONMENT-SETUP.md for detailed configuration
+# 2. Edit SSH key in envs/free-tier/variables.tf
+# 3. Deploy 100% FREE Kubernetes cluster
+make init-free && make apply-free
 
-# 3. Configure GitHub Secrets
-# AWS_ACCESS_KEY_ID
-# AWS_SECRET_ACCESS_KEY
-# SLACK_WEBHOOK_URL
+# 4. Connect to your cluster
+ssh -i ~/.ssh/your-key ubuntu@<MASTER_IP>
 
-# 4. Deploy via GitHub Actions
-# Go to Actions → Deploy to EKS → Run workflow
+# Cost: $0/month (uses K3s on EC2 t2.micro + RDS db.t3.micro)
+```
+
+### 💰 Option 2: Production EKS Setup (~$73/month)
+```bash
+# Prerequisites: AWS CLI, GitHub secrets configured
+
+# 1. Configure GitHub Environments & Variables
+# 2. Configure GitHub Secrets (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+# 3. Deploy via GitHub Actions → Deploy to EKS → Run workflow
+
+# Cost: $73/month per environment (EKS control plane)
 ```
 
 ## ⚙️ Configuration Management
@@ -406,7 +425,16 @@ make destroy-all  # Tear everything down
 │   └── infra-shutdown.yml # Cost management
 ├── infra/                # Terraform infrastructure
 │   ├── modules/          # Reusable modules
-│   └── environments/     # Environment configs
+│   │   ├── eks/          # EKS module ($73/month)
+│   │   ├── k3s/          # K3s module (FREE)
+│   │   ├── vpc/          # VPC module
+│   │   └── rds/          # RDS module
+│   ├── envs/             # Environment-specific configs
+│   │   ├── dev/          # EKS dev environment
+│   │   ├── qa/           # EKS qa environment
+│   │   ├── prod/         # EKS prod environment
+│   │   └── free-tier/    # K3s FREE environment
+│   └── backend-configs/  # Terraform state configs
 ├── k8s/                  # Kubernetes manifests
 │   ├── health-api-deployment.yaml
 │   ├── frontend-deployment.yaml
@@ -469,6 +497,15 @@ kubectl apply -f k8s/argocd-app.yaml
 
 ## 🧪 Learning Highlights
 
+### 🆓 Free Tier Learning (K3s Setup)
+- 🔄 **Kubernetes Fundamentals**: Pods, services, deployments
+- 💻 **EC2 Management**: SSH, user-data, security groups
+- 🗾 **Database Integration**: RDS connection from K3s
+- 🔐 **Networking**: VPC, subnets, security groups
+- 🛠️ **Infrastructure as Code**: Terraform modules
+- 💰 **Cost Optimization**: 100% free tier usage
+
+### 💼 Production Learning (EKS Setup)
 - 🔄 **Blue-Green Deployment**: Zero-downtime deployments
 - ⚙️ **EKS Management**: Production Kubernetes
 - 🗄️ **DynamoDB + S3**: Serverless data layer
