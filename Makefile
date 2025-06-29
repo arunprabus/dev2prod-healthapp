@@ -96,6 +96,18 @@ k8s-status: ## Show Kubernetes cluster status
 	@kubectl get pods --all-namespaces
 
 # Cost Management
+cost-check: ## Check current AWS costs
+	@echo "💰 Checking current costs..."
+	@bash scripts/cost-breakdown.sh
+
+cost-cleanup: ## Run automated cost cleanup
+	@echo "🧹 Running cost cleanup..."
+	@bash scripts/cost-cleanup-auto.sh
+
+rds-monitor: ## Monitor RDS runtime and auto-stop at 120h
+	@echo "📊 Monitoring RDS runtime..."
+	@bash scripts/rds-monitor.sh
+
 shutdown-all: ## 🚨 DESTROY ALL ENVIRONMENTS (Cost Saving)
 	@echo "⚠️  WARNING: This will destroy ALL environments!"
 	@echo "💰 This action saves costs by destroying all AWS resources"
