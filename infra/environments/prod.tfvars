@@ -9,6 +9,7 @@ private_subnet_cidrs = ["10.1.1.0/24", "10.1.2.0/24", "10.1.3.0/24"]
 
 # K3s Configuration (Production)
 k3s_instance_type = "t3.medium"
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7S6uO6kYMp3biTguvZzpD6/example-key"
 
 # Database Configuration (Production)
 db_instance_class = "db.t3.medium"

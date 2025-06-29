@@ -23,6 +23,12 @@ variable "environment" {
   type        = string
 }
 
+variable "k3s_instance_type" {
+  description = "Instance type for K3s node"
+  type        = string
+  default     = "t2.micro"
+}
+
 variable "ssh_public_key" {
   description = "SSH public key content"
   type        = string

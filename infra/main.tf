@@ -81,13 +81,14 @@ module "vpc" {
 module "k3s" {
   source = "./modules/k3s"
 
-  name_prefix    = local.name_prefix
-  vpc_id         = module.vpc.vpc_id
-  vpc_cidr       = module.vpc.vpc_cidr_block
-  subnet_id      = module.vpc.public_subnet_ids[0]
-  environment    = var.environment
-  ssh_public_key = var.ssh_public_key
-  tags           = local.tags
+  name_prefix       = local.name_prefix
+  vpc_id            = module.vpc.vpc_id
+  vpc_cidr          = module.vpc.vpc_cidr_block
+  subnet_id         = module.vpc.public_subnet_ids[0]
+  k3s_instance_type = var.k3s_instance_type
+  environment       = var.environment
+  ssh_public_key    = var.ssh_public_key
+  tags              = local.tags
 }
 
 module "rds" {

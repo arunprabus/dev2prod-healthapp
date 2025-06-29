@@ -64,7 +64,7 @@ resource "aws_key_pair" "main" {
 # K3s master node
 resource "aws_instance" "k3s" {
   ami                    = "ami-0f58b397bc5c1f2e8" # Ubuntu 22.04 LTS
-  instance_type          = "t2.micro"              # FREE TIER
+  instance_type          = var.k3s_instance_type
   key_name              = aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
   subnet_id             = var.subnet_id

@@ -11,8 +11,8 @@ resource "kubernetes_namespace" "logging" {
   }
 }
 
-resource "aws_cloudwatch_log_group" "eks_logs" {
-  name              = "/aws/eks/${var.eks_cluster_name}/cluster"
+resource "aws_cloudwatch_log_group" "k3s_logs" {
+  name              = "/aws/k3s/${var.environment}/cluster"
   retention_in_days = 7
 
   tags = var.tags
@@ -33,9 +33,10 @@ resource "kubernetes_service" "prometheus_service" {
     port {
       port        = 9090
       target_port = 9090
+      node_port   = 30090
     }
     
-    type = "LoadBalancer"
+    type = "NodePort"
   }
 }
 
@@ -53,9 +54,10 @@ resource "kubernetes_service" "grafana_service" {
     port {
       port        = 3000
       target_port = 3000
+      node_port   = 30300
     }
     
-    type = "LoadBalancer"
+    type = "NodePort"
   }
 }
 
@@ -73,8 +75,9 @@ resource "kubernetes_service" "alertmanager_service" {
     port {
       port        = 9093
       target_port = 9093
+      node_port   = 30093
     }
     
-    type = "LoadBalancer"
+    type = "NodePort"
   }
 }
