@@ -45,9 +45,8 @@ resource "aws_db_instance" "health_db" {
   instance_class = var.db_instance_class
   
   allocated_storage     = var.db_allocated_storage
-  max_allocated_storage = var.db_allocated_storage * 2
   storage_type          = "gp2"
-  storage_encrypted     = true
+  storage_encrypted     = false  # Free tier doesn't support encryption
   
   db_name  = "healthapp"
   username = "admin"
@@ -57,9 +56,7 @@ resource "aws_db_instance" "health_db" {
   db_subnet_group_name   = aws_db_subnet_group.health_db.name
   parameter_group_name   = aws_db_parameter_group.health_db.name
   
-  backup_retention_period = 7
-  backup_window          = "03:00-04:00"
-  maintenance_window     = "sun:04:00-sun:05:00"
+  backup_retention_period = 0  # No backups for free tier
   
   skip_final_snapshot = true
   deletion_protection = false
