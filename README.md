@@ -22,10 +22,11 @@ This repository contains the infrastructure code for the Health App platform. Th
 
 The infrastructure code manages the following resources:
 
-- VPC and networking components
-- EKS clusters for different environments
-- RDS database instances
-- Deployment configurations via ArgoCD
+- **VPC and networking components** (isolated per environment)
+- **K3s clusters** for cost-effective Kubernetes (FREE TIER)
+- **RDS database instances** (FREE TIER eligible)
+- **Multi-environment setup** (dev: 10.0.0.0/16, test: 10.2.0.0/16, prod: 10.1.0.0/16)
+- **Deployment configurations** via Kubernetes manifests
 
 ## Deployment Strategy
 
@@ -120,7 +121,7 @@ The separation of application and infrastructure code allows for:
 
 ## 💰 Cost Comparison
 
-### 🆓 Free Tier Setup (K3s)
+### 🆓 **Current Setup (K3s - Cost Optimized)**
 | Resource | Quantity | Free Tier | Monthly Cost |
 |----------|----------|-----------|-------------|
 | EC2 t2.micro | 1 | 750 hrs | **$0** |
@@ -128,51 +129,46 @@ The separation of application and infrastructure code allows for:
 | VPC + Networking | 1 | Unlimited | **$0** |
 | **Total** | | | **$0/month** |
 
-### 💰 EKS Setup (Production)
+### 💰 Alternative: EKS Setup (Production)
 | Resource | Quantity | Free Tier | Monthly Cost |
 |----------|----------|-----------|-------------|
 | EKS Control Plane | 1 | ❌ Not Free | **$73** |
+| NAT Gateway | 1 | ❌ Not Free | **$45** |
 | EC2 t2.micro | 1 | 750 hrs | $0 |
 | RDS db.t3.micro | 1 | 750 hrs | $0 |
-| **Total** | | | **$73/month** |
+| **Total** | | | **$118/month** |
 
-### 📈 Multi-Environment EKS
-| Environment | EKS Cost | EC2 Cost | RDS Cost | Total |
-|-------------|----------|----------|----------|-------|
-| Dev | $73 | $0 | $0 | $73 |
-| QA | $73 | $0 | $0 | $73 |
-| Prod | $73 | $0 | $0 | $73 |
-| **Total** | **$219** | **$0** | **$0** | **$219/month** |
+### 📊 **Cost Savings Achieved: 95%+**
+| Setup | Monthly Cost | Savings |
+|-------|-------------|----------|
+| **K3s (Current)** | **$0** | **Baseline** |
+| EKS Alternative | $118 | -$118/month |
+| **Multi-Env K3s** | **$0** | **vs $354/month** |
 
 ---
 
 ## 🚀 Quick Start
 
-### 🆓 Option 1: Free Tier Setup (Recommended for Learning)
+### 🆓 **Current Setup: K3s (Cost Optimized)**
 ```bash
 # 1. Clone repository
-git clone https://github.com/your-organization/health-app-infra.git
-cd health-app-infra/infra
+git clone https://github.com/arunprabus/dev2prod-healthapp.git
+cd dev2prod-healthapp
 
-# 2. Edit SSH key in envs/free-tier/variables.tf
-# 3. Deploy 100% FREE Kubernetes cluster
-make init-free && make apply-free
+# 2. Configure GitHub Secrets (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
+# 3. Deploy via GitHub Actions → Infrastructure Deployment → Run workflow
+# 4. Select environment: dev/test/prod and action: apply
 
-# 4. Connect to your cluster
-ssh -i ~/.ssh/your-key ubuntu@<MASTER_IP>
-
-# Cost: $0/month (uses K3s on EC2 t2.micro + RDS db.t3.micro)
+# Cost: $0/month (K3s on t2.micro + RDS db.t3.micro)
 ```
 
-### 💰 Option 2: Production EKS Setup (~$73/month)
+### 💰 **Alternative: EKS Setup** (if needed)
 ```bash
-# Prerequisites: AWS CLI, GitHub secrets configured
+# Switch to EKS modules in main.tf
+# Uncomment EKS module, comment K3s module
+# Deploy via same GitHub Actions workflow
 
-# 1. Configure GitHub Environments & Variables
-# 2. Configure GitHub Secrets (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-# 3. Deploy via GitHub Actions → Deploy to EKS → Run workflow
-
-# Cost: $73/month per environment (EKS control plane)
+# Cost: ~$118/month per environment (EKS + NAT Gateway)
 ```
 
 ## ⚙️ Configuration Management

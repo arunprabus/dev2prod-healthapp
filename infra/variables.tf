@@ -36,29 +36,11 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.1.0/24", "10.0.2.0/24"]
 }
 
-# EKS Configuration
-variable "node_desired_size" {
-  description = "Desired number of worker nodes"
-  type        = number
-  default     = 2
-}
-
-variable "node_max_size" {
-  description = "Maximum number of worker nodes"
-  type        = number
-  default     = 3
-}
-
-variable "node_min_size" {
-  description = "Minimum number of worker nodes"
-  type        = number
-  default     = 1
-}
-
-variable "node_instance_types" {
-  description = "Instance types for worker nodes"
-  type        = list(string)
-  default     = ["t3.medium"]
+# K3s Configuration
+variable "k3s_instance_type" {
+  description = "Instance type for K3s node"
+  type        = string
+  default     = "t2.micro"
 }
 
 # Database Configuration

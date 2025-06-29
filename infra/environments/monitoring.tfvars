@@ -7,11 +7,8 @@ availability_zones = ["ap-south-1a", "ap-south-1b"]
 public_subnet_cidrs = ["10.3.101.0/24", "10.3.102.0/24"]
 private_subnet_cidrs = ["10.3.1.0/24", "10.3.2.0/24"]
 
-# EKS Configuration (Minimal)
-node_desired_size = 1
-node_max_size = 2
-node_min_size = 1
-node_instance_types = ["t3.small"]
+# K3s Configuration (Minimal)
+k3s_instance_type = "t3.small"
 
 # Database Configuration (Minimal)
 db_instance_class = "db.t3.small"

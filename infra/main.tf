@@ -17,13 +17,9 @@ provider "aws" {
 }
 
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-    command     = "aws"
-  }
+  host                   = "https://${module.k3s.instance_public_ip}:6443"
+  insecure               = true
+  config_path            = null
 }
 
 locals {
@@ -82,19 +78,14 @@ module "vpc" {
   tags                 = local.tags
 }
 
-module "eks" {
-  source = "./modules/eks"
+module "k3s" {
+  source = "./modules/k3s"
 
-  cluster_name       = "${local.name_prefix}-cluster"
-  vpc_id            = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  public_subnet_ids  = module.vpc.public_subnet_ids
-  node_desired_size  = var.node_desired_size
-  node_max_size      = var.node_max_size
-  node_min_size      = var.node_min_size
-  node_instance_types = var.node_instance_types
-  environment        = var.environment
-  tags               = local.tags
+  name_prefix = local.name_prefix
+  vpc_id      = module.vpc.vpc_id
+  subnet_id   = module.vpc.public_subnet_ids[0]
+  environment = var.environment
+  tags        = local.tags
 }
 
 module "rds" {
@@ -114,10 +105,10 @@ module "deployment" {
   source = "./modules/deployment"
 
   environment     = var.environment
-  eks_cluster_name = module.eks.cluster_name
+  k3s_instance_ip = module.k3s.instance_public_ip
   health_api_image = var.health_api_image
 
-  depends_on = [module.eks]
+  depends_on = [module.k3s]
 }
 
 # Deploy monitoring tools (only for monitoring environment)
@@ -127,11 +118,11 @@ module "monitoring" {
 
   environment     = var.environment
   vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.private_subnet_ids
-  eks_cluster_name = module.eks.cluster_name
+  subnet_ids      = module.vpc.public_subnet_ids
+  k3s_instance_ip = module.k3s.instance_public_ip
   tags            = local.tags
 
-  depends_on = [module.eks]
+  depends_on = [module.k3s]
 }
 
 # Create VPC peering connections for monitoring environment

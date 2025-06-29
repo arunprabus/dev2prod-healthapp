@@ -19,26 +19,20 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-# EKS Outputs
-output "eks_cluster_id" {
-  description = "ID of the EKS cluster"
-  value       = module.eks.cluster_id
+# K3s Outputs
+output "k3s_instance_ip" {
+  description = "Public IP of the K3s instance"
+  value       = module.k3s.instance_public_ip
 }
 
-output "eks_cluster_name" {
-  description = "Name of the EKS cluster"
-  value       = module.eks.cluster_name
+output "k3s_cluster_endpoint" {
+  description = "Endpoint for the K3s cluster API server"
+  value       = module.k3s.cluster_endpoint
 }
 
-output "eks_cluster_endpoint" {
-  description = "Endpoint for the EKS cluster API server"
-  value       = module.eks.cluster_endpoint
-}
-
-output "eks_cluster_ca_certificate" {
-  description = "Certificate authority data for the EKS cluster"
-  value       = module.eks.cluster_ca_certificate
-  sensitive   = true
+output "k3s_ssh_command" {
+  description = "SSH command to connect to K3s instance"
+  value       = module.k3s.ssh_command
 }
 
 # RDS Outputs
