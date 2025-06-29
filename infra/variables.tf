@@ -43,6 +43,12 @@ variable "k3s_instance_type" {
   default     = "t2.micro"
 }
 
+variable "ssh_public_key" {
+  description = "SSH public key for EC2 access"
+  type        = string
+  default     = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC7S6uO6kYMp3biTguvZzpD6/example-key"
+}
+
 # Database Configuration
 variable "db_instance_class" {
   description = "Database instance class"

@@ -8,6 +8,11 @@ variable "vpc_id" {
   type        = string
 }
 
+variable "vpc_cidr" {
+  description = "VPC CIDR block"
+  type        = string
+}
+
 variable "subnet_id" {
   description = "Public subnet ID for K3s instance"
   type        = string
@@ -15,6 +20,11 @@ variable "subnet_id" {
 
 variable "environment" {
   description = "Environment name"
+  type        = string
+}
+
+variable "ssh_public_key" {
+  description = "SSH public key content"
   type        = string
 }
 
