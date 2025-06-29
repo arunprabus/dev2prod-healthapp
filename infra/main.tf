@@ -36,6 +36,7 @@ locals {
 
   # Define VPC identifiers for environments
   lower_env_vpc_name = "health-app-dev-vpc"
+  test_env_vpc_name = "health-app-test-vpc"
   higher_env_vpc_name = "health-app-prod-vpc"
 }
 
