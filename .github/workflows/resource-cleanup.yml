@@ -11,6 +11,29 @@ on:
         - audit
         - cleanup-dry-run
         - cleanup-execute
+      region:
+        description: 'Target Region (or all-regions)'
+        required: true
+        default: 'us-east-1'
+        type: choice
+        options:
+        - us-east-1
+        - us-east-2
+        - us-west-1
+        - us-west-2
+        - ap-southeast-1
+        - ap-southeast-2
+        - ap-northeast-1
+        - ap-northeast-2
+        - eu-west-1
+        - eu-west-2
+        - eu-central-1
+        - ca-central-1
+        - sa-east-1
+        - ap-east-1
+        - me-south-1
+        - af-south-1
+        - all-regions
       confirm_cleanup:
         description: 'Type "CLEANUP" to confirm resource deletion'
         required: false
@@ -41,19 +64,34 @@ jobs:
       if: github.event.inputs.action == 'audit'
       run: |
         chmod +x scripts/aws-resource-audit.sh
-        ./scripts/aws-resource-audit.sh
+        if [[ "${{ github.event.inputs.region }}" == "all-regions" ]]; then
+          ./scripts/aws-resource-audit.sh
+        else
+          echo "Auditing single region: ${{ github.event.inputs.region }}"
+          aws ec2 describe-vpcs --region ${{ github.event.inputs.region }} --filters "Name=isDefault,Values=false" --query 'Vpcs[].VpcId' || echo "No custom VPCs found"
+        fi
 
     - name: Run Cleanup (Dry Run)
       if: github.event.inputs.action == 'cleanup-dry-run'
       run: |
-        chmod +x scripts/aws-resource-cleanup.sh
-        DRY_RUN=true ./scripts/aws-resource-cleanup.sh
+        if [[ "${{ github.event.inputs.region }}" == "all-regions" ]]; then
+          chmod +x scripts/aws-resource-cleanup.sh
+          DRY_RUN=true ./scripts/aws-resource-cleanup.sh
+        else
+          chmod +x scripts/single-region-cleanup.sh
+          ./scripts/single-region-cleanup.sh ${{ github.event.inputs.region }} true
+        fi
 
     - name: Run Cleanup (Execute)
       if: github.event.inputs.action == 'cleanup-execute' && github.event.inputs.confirm_cleanup == 'CLEANUP'
       run: |
-        chmod +x scripts/aws-resource-cleanup.sh
-        DRY_RUN=false ./scripts/aws-resource-cleanup.sh
+        if [[ "${{ github.event.inputs.region }}" == "all-regions" ]]; then
+          chmod +x scripts/aws-resource-cleanup.sh
+          DRY_RUN=false ./scripts/aws-resource-cleanup.sh
+        else
+          chmod +x scripts/single-region-cleanup.sh
+          ./scripts/single-region-cleanup.sh ${{ github.event.inputs.region }} false
+        fi
 
     - name: Cleanup Confirmation Check
       if: github.event.inputs.action == 'cleanup-execute' && github.event.inputs.confirm_cleanup != 'CLEANUP'
@@ -76,6 +114,7 @@ jobs:
       run: |
         echo "## 🧹 AWS Resource Cleanup Summary" >> $GITHUB_STEP_SUMMARY
         echo "* Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Region: ${{ github.event.inputs.region }}" >> $GITHUB_STEP_SUMMARY
         echo "* Date: $(date)" >> $GITHUB_STEP_SUMMARY
         echo "* Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY

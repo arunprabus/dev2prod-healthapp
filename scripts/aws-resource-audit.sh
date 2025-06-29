@@ -54,7 +54,8 @@ main() {
     echo "{\"audit_date\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"active_region\":\"$ACTIVE_REGION\",\"regions\":[" > "$REPORT_FILE"
     
     local first=true
-    for region in $(aws ec2 describe-regions --query 'Regions[].RegionName' --output text); do
+    local regions="us-east-1 us-east-2 us-west-1 us-west-2 ap-south-1 ap-southeast-1 ap-southeast-2 ap-northeast-1 ap-northeast-2 eu-west-1 eu-west-2 eu-central-1 ca-central-1 sa-east-1 ap-east-1 me-south-1 af-south-1"
+    for region in $regions; do
         log "Auditing region: $region"
         
         if [[ "$first" == "true" ]]; then
