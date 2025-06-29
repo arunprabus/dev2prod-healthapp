@@ -121,12 +121,13 @@ The separation of application and infrastructure code allows for:
 
 ## 💰 Cost Comparison
 
-### 🆓 **Current Setup (K3s - Cost Optimized)**
-| Resource | Quantity | Free Tier | Monthly Cost |
-|----------|----------|-----------|-------------|
-| EC2 t2.micro | 1 | 750 hrs | **$0** |
-| RDS db.t3.micro | 1 | 750 hrs | **$0** |
-| VPC + Networking | 1 | Unlimited | **$0** |
+### 🆓 **Current Setup: 100% FREE TIER**
+| Resource | Usage | Free Tier Limit | Monthly Cost |
+|----------|-------|-----------------|-------------|
+| EC2 t2.micro | 720 hrs | 750 hrs/month | **$0** |
+| RDS db.t3.micro | 720 hrs | 750 hrs/month | **$0** |
+| EBS Storage | 28GB | 30GB/month | **$0** |
+| VPC + Networking | Unlimited | Unlimited | **$0** |
 | **Total** | | | **$0/month** |
 
 ### 💰 Alternative: EKS Setup (Production)
