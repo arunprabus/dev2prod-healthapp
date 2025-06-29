@@ -5,17 +5,17 @@ output "prometheus_namespace" {
 
 output "prometheus_service_endpoint" {
   description = "Endpoint for Prometheus service"
-  value       = kubernetes_service.prometheus_service.status[0].load_balancer[0].ingress[0].hostname
+  value       = "${var.k3s_instance_ip}:30090"
 }
 
 output "grafana_service_endpoint" {
   description = "Endpoint for Grafana service"
-  value       = kubernetes_service.grafana_service.status[0].load_balancer[0].ingress[0].hostname
+  value       = "${var.k3s_instance_ip}:30300"
 }
 
 output "alertmanager_service_endpoint" {
   description = "Endpoint for AlertManager service"
-  value       = kubernetes_service.alertmanager_service.status[0].load_balancer[0].ingress[0].hostname
+  value       = "${var.k3s_instance_ip}:30093"
 }
 
 output "logging_namespace" {
@@ -25,5 +25,5 @@ output "logging_namespace" {
 
 output "cloudwatch_log_group_name" {
   description = "Name of the CloudWatch log group for centralized logging"
-  value       = aws_cloudwatch_log_group.eks_logs.name
+  value       = aws_cloudwatch_log_group.k3s_logs.name
 }
