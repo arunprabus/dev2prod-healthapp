@@ -150,26 +150,92 @@ The separation of application and infrastructure code allows for:
 
 ## 🚀 Quick Start
 
-### 🆓 **Current Setup: K3s (Cost Optimized)**
+### 🆓 **Deploy Instructions: $0 Cost Infrastructure**
+
+#### **⚙️ Prerequisites**
+1. **AWS Account** with Free Tier available
+2. **GitHub Secrets** configured:
+   - `AWS_ACCESS_KEY_ID`
+   - `AWS_SECRET_ACCESS_KEY`
+3. **SSH Key Pair** generated
+
+#### **🚀 Deployment Steps**
+
+**Step 1: Update SSH Key**
 ```bash
-# 1. Clone repository
-git clone https://github.com/arunprabus/dev2prod-healthapp.git
-cd dev2prod-healthapp
+# Generate SSH key if you don't have one
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/aws-key
 
-# 2. Configure GitHub Secrets (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
-# 3. Deploy via GitHub Actions → Infrastructure Deployment → Run workflow
-# 4. Select environment: dev/test/prod and action: apply
-
-# Cost: $0/month (K3s on t2.micro + RDS db.t3.micro)
+# Copy your public key
+cat ~/.ssh/aws-key.pub
 ```
 
-### 💰 **Alternative: EKS Setup** (if needed)
-```bash
-# Switch to EKS modules in main.tf
-# Uncomment EKS module, comment K3s module
-# Deploy via same GitHub Actions workflow
+**Step 2: Configure Environment**
+Edit `infra/environments/dev.tfvars` and replace:
+```hcl
+ssh_public_key = "your-actual-ssh-public-key-content-here"
+```
 
-# Cost: ~$118/month per environment (EKS + NAT Gateway)
+**Step 3: Deploy via GitHub Actions**
+1. Go to **Actions** → **Infrastructure Deployment**
+2. Select **environment**: `dev`
+3. Select **terraform_action**: `apply`
+4. Click **Run workflow**
+
+**Step 4: Access Your Infrastructure**
+```bash
+# SSH to K3s node (get IP from GitHub Actions output)
+ssh -i ~/.ssh/aws-key ubuntu@<EC2_PUBLIC_IP>
+
+# Access Kubernetes cluster
+kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
+```
+
+#### **💰 Cost Verification**
+| Resource | Usage | Free Tier | Status |
+|----------|-------|-----------|--------|
+| EC2 t2.micro | 720h/month | 750h limit | ✅ **$0** |
+| RDS db.t3.micro | 720h/month | 750h limit | ✅ **$0** |
+| EBS Storage | ~28GB | 30GB limit | ✅ **$0** |
+| VPC + Networking | Unlimited | Always free | ✅ **$0** |
+| **Total Monthly Cost** | | | **$0** |
+
+#### **🛡️ Safety Features**
+- ✅ **Instance type locked** to t2.micro (FREE TIER)
+- ✅ **RDS locked** to db.t3.micro (FREE TIER)
+- ✅ **No NAT Gateway** (would cost $45/month)
+- ✅ **No Load Balancers** (would cost $18/month each)
+- ✅ **Storage limits** enforced (20GB max)
+
+#### **🔄 Multi-Environment Deployment**
+```bash
+# Deploy Test Environment
+Actions → Infrastructure Deployment → environment: "test" → apply
+
+# Deploy Production Environment  
+Actions → Infrastructure Deployment → environment: "prod" → apply
+
+# Each environment: $0/month
+# Total all environments: $0/month
+```
+
+#### **📊 Alternative: Manual Deployment**
+```bash
+# Clone repository
+git clone https://github.com/arunprabus/dev2prod-healthapp.git
+cd dev2prod-healthapp/infra
+
+# Initialize Terraform
+terraform init
+
+# Plan deployment (verify $0 cost)
+terraform plan -var-file="environments/dev.tfvars"
+
+# Apply (deploy infrastructure)
+terraform apply -var-file="environments/dev.tfvars"
+
+# Destroy when done (optional)
+terraform destroy -var-file="environments/dev.tfvars"
 ```
 
 ## ⚙️ Configuration Management
