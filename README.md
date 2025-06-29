@@ -455,10 +455,11 @@ Green (New) ──┘
 - **plan**: Preview changes without applying
 
 ### **Cost Management Workflow Actions:**
-- **monitor**: Check weekly costs
+- **monitor**: Check weekly costs (auto-runs breakdown if > $0.50)
 - **cleanup**: Remove expensive resources
 - **budget-setup**: Create cost alerts
-- **all**: Run monitor + cleanup + budget setup
+- **breakdown**: Detailed cost analysis by service/region
+- **all**: Run monitor + cleanup + budget setup + breakdown
 
 ### Manual Operations
 ```bash

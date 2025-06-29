@@ -14,6 +14,7 @@ on:
         - monitor
         - cleanup
         - budget-setup
+        - breakdown
         - all
       email:
         description: 'Email for budget alerts (optional)'
@@ -53,12 +54,19 @@ jobs:
       id: cost-check
       run: |
         chmod +x cost-check-fixed.sh
+        chmod +x cost-breakdown.sh
         ./cost-check-fixed.sh
         
         # Extract cost for next job
         if [ -f cost-report.json ]; then
           COST=$(jq -r '.ResultsByTime[].Total.BlendedCost.Amount // "0"' cost-report.json | awk '{sum += $1} END {print sum+0}')
           echo "cost=$COST" >> $GITHUB_OUTPUT
+          
+          # Run detailed breakdown if cost > $0.50
+          if (( $(echo "$COST > 0.50" | bc -l 2>/dev/null || echo "0") )); then
+            echo "💰 Cost detected: \$$COST - Running detailed breakdown..."
+            ./cost-breakdown.sh
+          fi
         fi
 
     - name: Upload Cost Report
@@ -103,6 +111,29 @@ jobs:
         
         ./cost-cleanup-auto.sh
 
+  cost-breakdown:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'breakdown' || github.event.inputs.action == 'all'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y jq bc
+
+    - name: Run Cost Breakdown
+      run: |
+        chmod +x cost-breakdown.sh
+        ./cost-breakdown.sh
+
   budget-setup:
     runs-on: ubuntu-latest
     if: github.event.inputs.action == 'budget-setup' || github.event.inputs.action == 'all'
@@ -135,7 +166,7 @@ jobs:
 
   summary:
     runs-on: ubuntu-latest
-    needs: [cost-monitor, auto-cleanup, budget-setup]
+    needs: [cost-monitor, auto-cleanup, cost-breakdown, budget-setup]
     if: always()
     
     steps:
@@ -150,7 +181,20 @@ jobs:
         if [ "${{ needs.cost-monitor.result }}" = "success" ]; then
           echo "✅ **Cost Monitor**: Completed" >> $GITHUB_STEP_SUMMARY
           if [ "${{ needs.cost-monitor.outputs.total-cost }}" != "" ]; then
-            echo "   - Weekly Cost: \$${{ needs.cost-monitor.outputs.total-cost }}" >> $GITHUB_STEP_SUMMARY
+            COST="${{ needs.cost-monitor.outputs.total-cost }}"
+            echo "   - Weekly Cost: \$$COST" >> $GITHUB_STEP_SUMMARY
+            
+            if (( $(echo "$COST > 0.50" | bc -l 2>/dev/null || echo "0") )); then
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### 🔍 Cost Breakdown Analysis" >> $GITHUB_STEP_SUMMARY
+              echo "**Detailed analysis was performed - check workflow logs**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Likely cost sources:**" >> $GITHUB_STEP_SUMMARY
+              echo "- NAT Gateway: ~\$45/month" >> $GITHUB_STEP_SUMMARY
+              echo "- Load Balancer: ~\$18/month" >> $GITHUB_STEP_SUMMARY
+              echo "- Elastic IP: ~\$3.6/month" >> $GITHUB_STEP_SUMMARY
+              echo "- Cross-region data transfer" >> $GITHUB_STEP_SUMMARY
+            fi
           fi
         fi
         
@@ -158,6 +202,12 @@ jobs:
           echo "✅ **Auto Cleanup**: Completed" >> $GITHUB_STEP_SUMMARY
         elif [ "${{ needs.auto-cleanup.result }}" = "skipped" ]; then
           echo "⏭️ **Auto Cleanup**: Skipped (cost within limits)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ needs.cost-breakdown.result }}" = "success" ]; then
+          echo "✅ **Cost Breakdown**: Completed" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ needs.cost-breakdown.result }}" = "skipped" ]; then
+          echo "⏭️ **Cost Breakdown**: Skipped" >> $GITHUB_STEP_SUMMARY
         fi
         
         if [ "${{ needs.budget-setup.result }}" = "success" ]; then
