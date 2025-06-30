@@ -12,6 +12,18 @@ variable "backup_strategy" {
   }
 }
 
+variable "project_name" {
+  description = "Project name for resource naming"
+  type        = string
+  default     = "health-app"
+}
+
+variable "tags" {
+  description = "Tags to apply to resources"
+  type        = map(string)
+  default     = {}
+}
+
 variable "s3_backup_bucket" {
   description = "S3 bucket for database backups"
   type        = string
