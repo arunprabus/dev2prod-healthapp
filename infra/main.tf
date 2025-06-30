@@ -23,12 +23,8 @@ provider "kubernetes" {
 }
 
 locals {
-  name_prefix = "health-app-${var.environment}"
-  tags = {
-    Project     = "Health App"
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
+  # Use tags from locals.tf
+  tags = local.common_tags
 
   # Define VPC identifiers for environments
   lower_env_vpc_name = "health-app-dev-vpc"
