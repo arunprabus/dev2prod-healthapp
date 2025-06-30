@@ -1,0 +1,3 @@
+@echo off
+echo Testing PassRole permission...
+aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::943199871063:user/dev2prod_user --action-names iam:PassRole --resource-arns arn:aws:iam::943199871063:role/rds-s3-export-role

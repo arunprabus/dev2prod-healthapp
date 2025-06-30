@@ -1,0 +1,19 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "rds:CreateDBSnapshot",
+                "rds:DescribeDBSnapshots",
+                "rds:DeleteDBSnapshot",
+                "rds:CopyDBSnapshot",
+                "rds:RestoreDBInstanceFromDBSnapshot"
+            ],
+            "Resource": [
+                "arn:aws:rds:ap-south-1:943199871063:db:healthapidb",
+                "arn:aws:rds:ap-south-1:943199871063:snapshot:*"
+            ]
+        }
+    ]
+}

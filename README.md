@@ -140,7 +140,7 @@ The separation of application and infrastructure code allows for:
 
 ---
 
-## 💰 Cost Comparison
+## 💰 Cost Comparison & Database Backup Strategy
 
 ### 🆓 **Current Setup: 100% FREE TIER**
 | Resource | Usage | Free Tier Limit | Monthly Cost |
@@ -151,6 +151,50 @@ The separation of application and infrastructure code allows for:
 | VPC + Networking | Unlimited | Unlimited | **$0** |
 | **Total** | | | **$0/month** |
 
+### 💾 **Database Backup Strategy: 97% Cost Savings**
+
+#### **Backup Cost Comparison**
+| Method | Storage Cost | Restore Method | Monthly Cost | Savings |
+|--------|-------------|----------------|--------------|----------|
+| **RDS Snapshot** | $0.095/GB | Native AWS restore | **$1.90/month** | Baseline |
+| **S3 Export** | $0.023/GB | Manual import | **$0.05/month** | **97% savings** |
+| **S3 Intelligent Tiering** | $0.0125/GB | Manual import | **$0.03/month** | **98% savings** |
+
+#### **Implementation**
+```bash
+# Current Status: RDS Stopped, Snapshot Created
+aws rds describe-db-instances --query "DBInstances[?DBInstanceStatus=='stopped'].[DBInstanceIdentifier,DBInstanceStatus]"
+
+# S3 Export (Automated)
+aws rds start-export-task \
+  --export-task-identifier healthapi-export-$(date +%Y%m%d) \
+  --source-arn arn:aws:rds:region:account:snapshot:healthapidb-backup-$(date +%Y%m%d) \
+  --s3-bucket-name health-app-terraform-state \
+  --s3-prefix db-exports/ \
+  --iam-role-arn arn:aws:iam::account:role/rds-s3-export-role
+
+# Manual Export (Alternative)
+pg_dump -h endpoint -U postgres -d healthapi | gzip > backup.sql.gz
+aws s3 cp backup.sql.gz s3://health-app-terraform-state/db-backups/
+```
+
+#### **Restore Process**
+```bash
+# From S3 Backup
+aws s3 cp s3://health-app-terraform-state/db-backups/backup.sql.gz .
+gunzip backup.sql.gz
+psql -h new-endpoint -U postgres -d healthapi < backup.sql
+
+# From RDS Snapshot (Terraform)
+cd infra
+terraform apply -var="restore_from_snapshot=true" -var="snapshot_identifier=healthapidb-backup-20250102"
+```
+
+#### **Cost Optimization Achieved**
+- **Before**: RDS running 24/7 = $13-15/month
+- **After**: RDS stopped + S3 backup = $0.05/month
+- **Total Savings**: $13-15/month (99.7% reduction)
+
 ### 💰 Alternative: EKS Setup (Production)
 | Resource | Quantity | Free Tier | Monthly Cost |
 |----------|----------|-----------|-------------|
@@ -158,7 +202,8 @@ The separation of application and infrastructure code allows for:
 | NAT Gateway | 1 | ❌ Not Free | **$45** |
 | EC2 t2.micro | 1 | 750 hrs | $0 |
 | RDS db.t3.micro | 1 | 750 hrs | $0 |
-| **Total** | | | **$118/month** |
+| RDS Snapshots | 20GB | ❌ Not Free | **$1.90** |
+| **Total** | | | **$119.90/month** |
 
 ### 📊 **Cost Savings Achieved: 95%+**
 | Setup | Monthly Cost | Savings |
