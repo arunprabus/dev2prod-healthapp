@@ -47,15 +47,15 @@ output "db_instance_name" {
 }
 
 # Deployment Outputs
-output "kubernetes_namespace" {
-  description = "The Kubernetes namespace for the Health app deployment"
-  value       = module.deployment.namespace
-}
+# output "kubernetes_namespace" {
+#   description = "The Kubernetes namespace for the Health app deployment"
+#   value       = module.deployment.namespace
+# }
 
-output "config_map_name" {
-  description = "Name of the application config map"
-  value       = module.deployment.config_map_name
-}
+# output "config_map_name" {
+#   description = "Name of the application config map"
+#   value       = module.deployment.config_map_name
+# }
 
 # Monitoring Outputs (conditional based on whether monitoring is enabled)
 output "prometheus_endpoint" {
