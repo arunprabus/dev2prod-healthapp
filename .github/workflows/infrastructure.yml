@@ -89,10 +89,19 @@ jobs:
       if: github.event.inputs.action == 'deploy'
       run: |
         # Untaint any tainted resources to avoid unnecessary recreation
-        terraform untaint module.rds.aws_cloudwatch_event_rule.rds_backup_schedule[0] || true
-        terraform untaint module.vpc.aws_vpc.main || true
-        terraform untaint module.k3s.aws_key_pair.main || true
-        terraform untaint module.rds.aws_db_parameter_group.health_db || true
+        terraform untaint module.rds.aws_cloudwatch_event_rule.rds_backup_schedule[0] 2>/dev/null || true
+        terraform untaint module.vpc.aws_vpc.main 2>/dev/null || true
+        terraform untaint module.k3s.aws_key_pair.main 2>/dev/null || true
+        terraform untaint module.rds.aws_db_parameter_group.health_db 2>/dev/null || true
+
+    - name: Regenerate Plan After Untaint
+      working-directory: infra
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        terraform plan \
+          -var-file="environments/${{ matrix.env }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -out=tfplan
 
     - name: Terraform Apply
       working-directory: infra
