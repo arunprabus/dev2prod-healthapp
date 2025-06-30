@@ -19,8 +19,8 @@ resource "aws_db_instance" "healthapi_restored" {
   username = var.db_username
   password = var.db_password
   
-  vpc_security_group_ids = [module.rds.security_group_id]
-  db_subnet_group_name   = module.rds.subnet_group_name
+  vpc_security_group_ids = [aws_security_group.db.id]
+  db_subnet_group_name   = aws_db_subnet_group.health_db.name
   
   backup_retention_period = 7
   backup_window          = "03:00-04:00"
