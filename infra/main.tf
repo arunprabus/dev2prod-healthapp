@@ -100,16 +100,16 @@ module "rds" {
   tags                = local.tags
 }
 
-# Deployment configuration for applications
-module "deployment" {
-  source = "./modules/deployment"
-
-  environment      = var.environment
-  k3s_instance_ip  = module.k3s.instance_public_ip
-  health_api_image = var.health_api_image
-
-  depends_on = [module.k3s]
-}
+# Deployment configuration for applications (disabled until K3s is ready)
+# module "deployment" {
+#   source = "./modules/deployment"
+#
+#   environment      = var.environment
+#   k3s_instance_ip  = module.k3s.instance_public_ip
+#   health_api_image = var.health_api_image
+#
+#   depends_on = [module.k3s]
+# }
 
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {

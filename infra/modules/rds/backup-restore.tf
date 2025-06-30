@@ -92,26 +92,26 @@ resource "aws_kms_alias" "rds_export" {
   target_key_id = aws_kms_key.rds_export[0].key_id
 }
 
-# Lambda function for automated S3 exports
-resource "aws_lambda_function" "rds_s3_export" {
-  count         = var.backup_strategy == "s3" || var.backup_strategy == "both" ? 1 : 0
-  filename      = "rds_export_lambda.zip"
-  function_name = "${var.project_name}-rds-s3-export"
-  role          = aws_iam_role.lambda_rds_export[0].arn
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.9"
-  timeout       = 300
-
-  environment {
-    variables = {
-      S3_BUCKET     = var.s3_backup_bucket
-      KMS_KEY_ID    = aws_kms_key.rds_export[0].key_id
-      IAM_ROLE_ARN  = aws_iam_role.rds_s3_export[0].arn
-    }
-  }
-
-  tags = var.tags
-}
+# Lambda function for automated S3 exports (disabled - requires ZIP file)
+# resource "aws_lambda_function" "rds_s3_export" {
+#   count         = var.backup_strategy == "s3" || var.backup_strategy == "both" ? 1 : 0
+#   filename      = "rds_export_lambda.zip"
+#   function_name = "${var.project_name}-rds-s3-export"
+#   role          = aws_iam_role.lambda_rds_export[0].arn
+#   handler       = "lambda_function.lambda_handler"
+#   runtime       = "python3.9"
+#   timeout       = 300
+#
+#   environment {
+#     variables = {
+#       S3_BUCKET     = var.s3_backup_bucket
+#       KMS_KEY_ID    = aws_kms_key.rds_export[0].key_id
+#       IAM_ROLE_ARN  = aws_iam_role.rds_s3_export[0].arn
+#     }
+#   }
+#
+#   tags = var.tags
+# }
 
 # IAM role for Lambda
 resource "aws_iam_role" "lambda_rds_export" {
@@ -180,21 +180,21 @@ resource "aws_cloudwatch_event_rule" "rds_backup_schedule" {
   tags = var.tags
 }
 
-resource "aws_cloudwatch_event_target" "lambda" {
-  count     = var.backup_strategy == "s3" || var.backup_strategy == "both" ? 1 : 0
-  rule      = aws_cloudwatch_event_rule.rds_backup_schedule[0].name
-  target_id = "TriggerLambda"
-  arn       = aws_lambda_function.rds_s3_export[0].arn
-}
+# resource "aws_cloudwatch_event_target" "lambda" {
+#   count     = var.backup_strategy == "s3" || var.backup_strategy == "both" ? 1 : 0
+#   rule      = aws_cloudwatch_event_rule.rds_backup_schedule[0].name
+#   target_id = "TriggerLambda"
+#   arn       = aws_lambda_function.rds_s3_export[0].arn
+# }
 
-resource "aws_lambda_permission" "allow_eventbridge" {
-  count         = var.backup_strategy == "s3" || var.backup_strategy == "both" ? 1 : 0
-  statement_id  = "AllowExecutionFromEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.rds_s3_export[0].function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.rds_backup_schedule[0].arn
-}
+# resource "aws_lambda_permission" "allow_eventbridge" {
+#   count         = var.backup_strategy == "s3" || var.backup_strategy == "both" ? 1 : 0
+#   statement_id  = "AllowExecutionFromEventBridge"
+#   action        = "lambda:InvokeFunction"
+#   function_name = aws_lambda_function.rds_s3_export[0].function_name
+#   principal     = "events.amazonaws.com"
+#   source_arn    = aws_cloudwatch_event_rule.rds_backup_schedule[0].arn
+# }
 
 # Outputs
 output "s3_export_role_arn" {
