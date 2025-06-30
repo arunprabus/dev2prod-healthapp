@@ -18,12 +18,6 @@ variable "project_name" {
   default     = "health-app"
 }
 
-variable "tags" {
-  description = "Tags to apply to resources"
-  type        = map(string)
-  default     = {}
-}
-
 variable "s3_backup_bucket" {
   description = "S3 bucket for database backups"
   type        = string
