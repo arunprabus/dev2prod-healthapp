@@ -1,0 +1,122 @@
+name: Deploy Lambda Functions
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+      alert_email:
+        description: 'Email for cost alerts'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  deploy-lambda:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Create Lambda ZIP files
+      run: |
+        # Create cost monitor ZIP
+        cd lambda/cost-monitor
+        zip -r ../../cost-monitor.zip .
+        cd ../..
+        
+        # Create resource cleanup ZIP
+        cd lambda/resource-cleanup
+        zip -r ../../resource-cleanup.zip .
+        cd ../..
+        
+        # Create RDS backup ZIP
+        cd lambda/rds-backup
+        zip -r ../../rds-backup.zip .
+        cd ../..
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+
+    - name: Deploy Lambda Functions
+      working-directory: infra
+      run: |
+        # Initialize Terraform
+        terraform init \
+          -backend-config="bucket=health-app-terraform-state" \
+          -backend-config="key=lambda-${{ github.event.inputs.environment }}.tfstate" \
+          -backend-config="region=$AWS_REGION"
+        
+        # Create Lambda-specific configuration
+        cat > lambda-config.tf << EOF
+        module "lambda" {
+          source = "./modules/lambda"
+          
+          name_prefix    = "health-app-${{ github.event.inputs.environment }}"
+          environment    = "${{ github.event.inputs.environment }}"
+          cost_threshold = "1.0"
+          alert_email    = "${{ github.event.inputs.alert_email || vars.BUDGET_EMAIL || 'admin@example.com' }}"
+          
+          tags = {
+            Project     = "health-app"
+            Environment = "${{ github.event.inputs.environment }}"
+            ManagedBy   = "terraform"
+          }
+        }
+        EOF
+        
+        # Plan and apply
+        terraform plan -out=lambda-plan
+        terraform apply -auto-approve lambda-plan
+
+    - name: Test Lambda Functions
+      run: |
+        # Test cost monitor
+        aws lambda invoke \
+          --function-name health-app-${{ github.event.inputs.environment }}-cost-monitor \
+          --payload '{}' \
+          cost-monitor-response.json
+        
+        echo "Cost Monitor Response:"
+        cat cost-monitor-response.json
+        
+        # Test cleanup (dry run)
+        aws lambda invoke \
+          --function-name health-app-${{ github.event.inputs.environment }}-resource-cleanup \
+          --payload '{"dry_run": true}' \
+          cleanup-response.json
+        
+        echo "Cleanup Response:"
+        cat cleanup-response.json
+
+    - name: Generate Summary
+      if: always()
+      run: |
+        echo "## 🔧 Lambda Functions Deployed" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Cost Monitor: health-app-${{ github.event.inputs.environment }}-cost-monitor" >> $GITHUB_STEP_SUMMARY
+        echo "* Resource Cleanup: health-app-${{ github.event.inputs.environment }}-resource-cleanup" >> $GITHUB_STEP_SUMMARY
+        echo "* Alert Email: ${{ github.event.inputs.alert_email || vars.BUDGET_EMAIL || 'admin@example.com' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📅 Schedules" >> $GITHUB_STEP_SUMMARY
+        echo "* Cost Monitor: Daily at 9 AM UTC" >> $GITHUB_STEP_SUMMARY
+        echo "* Resource Cleanup: Daily at 6 PM UTC" >> $GITHUB_STEP_SUMMARY
