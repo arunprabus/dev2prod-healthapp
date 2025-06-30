@@ -95,6 +95,7 @@ module "rds" {
   private_subnet_ids  = module.vpc.private_subnet_ids
   db_instance_class   = var.db_instance_class
   db_allocated_storage = var.db_allocated_storage
+  db_password         = "changeme123!"
   environment         = var.environment
   tags                = local.tags
 }

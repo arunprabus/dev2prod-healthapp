@@ -33,3 +33,10 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "db_password" {
+  description = "Database password"
+  type        = string
+  sensitive   = true
+  default     = "changeme123!"
+}
