@@ -21,13 +21,9 @@ provider "aws" {
 }
 
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name]
-    command     = "aws"
-  }
+  host                   = var.k3s_endpoint != "" ? var.k3s_endpoint : "https://127.0.0.1:6443"
+  insecure               = true
+  config_path            = null
 }
 
 locals {
@@ -52,19 +48,17 @@ module "vpc" {
   tags                 = local.tags
 }
 
-module "eks" {
-  source = "../../modules/eks"
+module "k3s" {
+  source = "../../modules/k3s"
 
-  cluster_name       = "${local.name_prefix}-cluster"
+  name_prefix       = local.name_prefix
   vpc_id            = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  public_subnet_ids  = module.vpc.public_subnet_ids
-  node_desired_size  = 1
-  node_max_size      = 1
-  node_min_size      = 1
-  node_instance_types = ["t2.micro"]
-  environment        = local.environment
-  tags               = local.tags
+  vpc_cidr          = module.vpc.vpc_cidr_block
+  subnet_id         = module.vpc.public_subnet_ids[0]
+  k3s_instance_type = "t2.micro"
+  environment       = local.environment
+  ssh_public_key    = var.ssh_public_key
+  tags              = local.tags
 }
 
 module "rds" {
@@ -75,6 +69,7 @@ module "rds" {
   private_subnet_ids  = module.vpc.private_subnet_ids
   db_instance_class   = "db.t3.micro"
   db_allocated_storage = 20
+  db_password         = "changeme123!"
   environment         = local.environment
   tags                = local.tags
 }

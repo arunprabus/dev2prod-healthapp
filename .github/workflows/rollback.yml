@@ -23,7 +23,7 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-  K8S_CLUSTER_NAME: health-app-cluster
+  K3S_CLUSTER_NAME: health-app-cluster
 
 jobs:
   rollback:
@@ -46,7 +46,9 @@ jobs:
         curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
         chmod +x kubectl
         sudo mv kubectl /usr/local/bin/
+        mkdir -p ~/.kube
         echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+        chmod 600 ~/.kube/config
 
     - name: Get current deployment color
       id: current-color
