@@ -102,9 +102,21 @@ jobs:
 
     - name: Configure K8s access
       run: |
-        # Get K8s cluster endpoint from Terraform output
-        echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
-        kubectl config use-context health-app-${{ needs.determine-environment.outputs.environment }}
+        # Use environment-specific kubeconfig
+        ENV=${{ needs.determine-environment.outputs.environment }}
+        
+        # Try environment-specific kubeconfig first
+        if [[ -n "${{ secrets[format('KUBECONFIG_{0}', env.ENVIRONMENT)] }}" ]]; then
+          echo "Using environment-specific kubeconfig for $ENV"
+          echo "${{ secrets[format('KUBECONFIG_{0}', env.ENVIRONMENT)] }}" | base64 -d > ~/.kube/config
+        else
+          echo "Using default kubeconfig"
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+        fi
+        
+        # Verify cluster connection
+        kubectl cluster-info
+        kubectl get nodes
 
     - name: Deploy to K8s
       run: |

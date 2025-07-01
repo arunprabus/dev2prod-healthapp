@@ -123,6 +123,20 @@ jobs:
         echo "❌ Destroy cancelled - must type 'DESTROY' to confirm"
         exit 1
 
+    - name: Get Cluster Info
+      if: github.event.inputs.action == 'deploy'
+      working-directory: infra
+      run: |
+        # Get EC2 public IP for K8s master
+        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "Not available")
+        echo "CLUSTER_IP=$CLUSTER_IP" >> $GITHUB_ENV
+        
+        # Setup kubeconfig if cluster IP is available
+        if [[ "$CLUSTER_IP" != "Not available" ]]; then
+          chmod +x ../scripts/setup-kubeconfig.sh
+          ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
+        fi
+
     - name: Output Summary
       if: always()
       run: |
@@ -131,3 +145,16 @@ jobs:
         echo "* Action: ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
         echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
         echo "* Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ github.event.inputs.action }}" == "deploy" && -n "$CLUSTER_IP" ]]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔗 Cluster Connection" >> $GITHUB_STEP_SUMMARY
+          echo "* K8s Master IP: $CLUSTER_IP" >> $GITHUB_STEP_SUMMARY
+          echo "* SSH Access: ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP" >> $GITHUB_STEP_SUMMARY
+          echo "* K8s API: https://$CLUSTER_IP:6443" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Update KUBECONFIG secret with generated config" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run App Deploy workflow" >> $GITHUB_STEP_SUMMARY
+          echo "3. Deploy applications: kubectl apply -f k8s/" >> $GITHUB_STEP_SUMMARY
+        fi
