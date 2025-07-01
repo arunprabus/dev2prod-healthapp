@@ -1,8 +1,8 @@
 name: K8s Operations
 
 on:
-  schedule:
-    - cron: '0 */2 * * *'  # Every 2 hours
+  # schedule:
+  #   - cron: '0 */2 * * *'  # Every 2 hours - DISABLED
   workflow_dispatch:
     inputs:
       action:

@@ -388,9 +388,9 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 5. You'll get email alerts if any cost > $0.01
 
 **Step 6: Monitor Costs (Automatic)**
-- **Cost Management** workflow runs every Monday (9 AM monitor, 10 AM cleanup)
+- **Cost Management** workflow runs daily at 9 AM UTC
 - Checks last 7 days of spending
-- Auto-removes costly resources if > $0.50
+- Auto-cleanup only if cost > $0.50 or manual trigger
 - Manual run: **Actions** → **Cost Management** → Select action
 
 **Step 7: Cleanup When Done**

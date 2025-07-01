@@ -2,8 +2,8 @@ name: Cost Management
 
 on:
   schedule:
-    - cron: '0 9 * * 1'   # Monitor: Every Monday at 9 AM UTC
-    - cron: '0 10 * * 1'  # Cleanup: Every Monday at 10 AM UTC
+    - cron: '0 9 * * *'   # Daily at 9 AM UTC
+    # - cron: '0 10 * * 1'  # Cleanup: DISABLED
   workflow_dispatch:
     inputs:
       action:
@@ -34,7 +34,7 @@ env:
 jobs:
   cost-monitor:
     runs-on: ubuntu-latest
-    if: github.event.schedule == '0 9 * * 1' || github.event.inputs.action == 'monitor' || github.event.inputs.action == 'all'
+    if: github.event.schedule == '0 9 * * *' || github.event.inputs.action == 'monitor' || github.event.inputs.action == 'all'
     outputs:
       total-cost: ${{ steps.cost-check.outputs.cost }}
     
@@ -253,8 +253,7 @@ jobs:
     needs: [cost-monitor]
     if: |
       always() && 
-      (github.event.schedule == '0 10 * * 1' || 
-       github.event.inputs.action == 'cleanup' || 
+      (github.event.inputs.action == 'cleanup' || 
        github.event.inputs.action == 'all' ||
        (needs.cost-monitor.outputs.total-cost != '' && needs.cost-monitor.outputs.total-cost > 0.50))
     
