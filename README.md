@@ -404,6 +404,49 @@ App Deploy Workflow:
 - 💾 **Separate Databases**: RDS instances per environment
 - 🔐 **Separate Secrets**: Environment-specific kubeconfig files
 
+## 🔄 **GitOps Setup: App Repos → Infra Repo**
+
+### **Requirements for GitOps Pipeline**
+```yaml
+# 1. Personal Access Token
+Create PAT with: "repo and workflow permissions"
+Add to Health API repo as: "INFRA_REPO_TOKEN"
+
+# 2. App Repo Workflow (in Health API repo)
+Actions:
+  - Build container on push
+  - Trigger webhook to infra repo
+  - Pass image tag and environment
+
+# 3. Infra Repo Webhook Handler ✅ (Created: gitops-deploy.yml)
+Features:
+  - Receives webhook from app repo
+  - Updates K8s deployment with new image
+  - Handles rollout and verification
+
+# 4. Container Registry Access
+Options:
+  - GitHub Container Registry (GHCR) - FREE
+  - AWS ECR with proper permissions
+```
+
+### **GitOps Flow**
+```yaml
+# Complete Pipeline
+1. Developer Push: "Code to Health API repo main branch"
+2. App Repo Build: "Container built and pushed to registry"
+3. Webhook Trigger: "Infra repo receives deployment request"
+4. Auto Deploy: "K8s deployment updated with new image"
+5. Verification: "Health checks and rollout status"
+```
+
+### **Benefits**
+- 🔄 **Automated Pipeline**: Push code → Auto deploy
+- 🏢 **Separation of Concerns**: App code ≠ Infrastructure code
+- 📊 **Professional Setup**: Industry-standard GitOps
+- 📝 **Audit Trail**: All deployments tracked in Git
+- 💰 **Cost**: $0 additional (within GitHub free limits)
+
 **Step 3: Deploy AWS Integrations (Optional)**
 ```bash
 # Deploy AWS integrations
@@ -438,12 +481,25 @@ chmod +x scripts/test-aws-integrations.sh
 ./scripts/test-aws-integrations.sh dev
 ```
 
-**Step 6: Deploy Applications**
+**Step 6: Setup GitOps (Optional)**
 ```bash
-# Deploy applications to K8s cluster
+# In Health API repo, add workflow to trigger this repo
+# Create Personal Access Token with repo/workflow permissions
+# Add as INFRA_REPO_TOKEN secret in Health API repo
+
+# Test GitOps deployment
+Actions → GitOps Deployment → Manual test
+```
+
+**Step 7: Deploy Applications**
+```bash
+# Via GitOps (Recommended)
+Push to Health API repo → Auto-deploys via webhook
+
+# Or Direct Deployment
 Actions → App Deploy → environment: "dev"
 
-# Or manually
+# Or Manual
 kubectl apply -f k8s/health-api-complete.yaml
 kubectl apply -f k8s/monitoring-stack.yaml
 ```
