@@ -107,11 +107,30 @@ jobs:
       if: github.event.inputs.action == 'deploy'
       working-directory: infra
       run: |
+        # Get cluster IP from Terraform output
         CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
-        if [[ -n "$CLUSTER_IP" ]]; then
+        
+        # Check if output is valid (not empty and not an error)
+        if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != *"error"* && "$CLUSTER_IP" != "null" ]]; then
+          echo "✅ Cluster IP found: $CLUSTER_IP"
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
+          chmod 600 ~/.ssh/aws-key
+          
+          # Generate kubeconfig
           chmod +x ../scripts/setup-kubeconfig.sh
           ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
+          
           echo "🔗 Update KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]') secret with generated config"
+        else
+          echo "❌ Cluster IP not available: $CLUSTER_IP"
+          echo "💡 K8s cluster may not be deployed or Terraform output failed"
+          
+          # Show available outputs
+          echo "Available Terraform outputs:"
+          terraform output || echo "No outputs available"
         fi
 
     - name: Cleanup on Failure
