@@ -41,12 +41,6 @@ variable "restore_from_snapshot" {
   default     = false
 }
 
-variable "snapshot_identifier" {
-  description = "Snapshot ID to restore from"
-  type        = string
-  default     = ""
-}
-
 variable "db_username" {
   description = "Database username"
   type        = string
