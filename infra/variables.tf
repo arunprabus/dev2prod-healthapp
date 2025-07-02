@@ -93,3 +93,53 @@ variable "enable_monitoring" {
   type        = bool
   default     = false
 }
+
+# New variables for network-level configuration
+variable "cluster_name" {
+  description = "Base cluster name"
+  type        = string
+  default     = "health-app-cluster"
+}
+
+variable "k8s_clusters" {
+  description = "K8s cluster configurations"
+  type = map(object({
+    instance_type = string
+    subnet_index  = number
+    namespace     = string
+  }))
+  default = {}
+}
+
+variable "database_config" {
+  description = "Database configuration"
+  type = object({
+    identifier                = string
+    instance_class           = string
+    allocated_storage        = number
+    engine                   = string
+    engine_version          = string
+    db_name                 = string
+    username                = string
+    multi_az                = bool
+    backup_retention_period = number
+    subnet_group_name       = string
+    snapshot_identifier     = optional(string)
+  })
+  default = null
+}
+
+variable "vpc_peering" {
+  description = "VPC peering configuration"
+  type = object({
+    peer_with_lower  = optional(bool, false)
+    peer_with_higher = optional(bool, false)
+  })
+  default = null
+}
+
+variable "tags" {
+  description = "Tags to apply to all resources"
+  type        = map(string)
+  default     = {}
+}
