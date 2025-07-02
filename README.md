@@ -523,6 +523,51 @@ chmod +x scripts/emergency-cleanup.sh
 - ⚡ **Fast Recovery**: Automatic cleanup in seconds
 - 🛡️ **Fail-Safe**: Multiple cleanup methods available
 
+## 🔄 **Deployment Strategy: New vs Existing**
+
+### **Re-deploying Existing Environment**
+```yaml
+# Safe to run multiple times
+Actions → Core Infrastructure → action: "deploy" → environment: "lower"
+
+# Terraform Behavior:
+✅ Detects existing resources
+✅ Only applies changes/updates
+✅ No data loss on RDS (uses existing database)
+✅ Updates configurations if changed
+✅ Adds missing resources
+✅ Idempotent (safe to run multiple times)
+```
+
+### **When to Destroy vs Deploy**
+```yaml
+# Use DEPLOY when:
+- ✅ Updating existing infrastructure
+- ✅ Adding new resources
+- ✅ Changing configurations
+- ✅ Fixing failed deployments
+- ✅ Infrastructure already exists
+
+# Use DESTROY when:
+- ❌ Want to start completely fresh
+- ❌ Major configuration conflicts
+- ❌ Resources in broken state
+- ❌ Testing full deployment flow
+- ❌ Cost cleanup needed
+```
+
+### **Terraform Safety Features**
+- 📋 **Plan Phase**: Shows what will change before applying
+- 🔄 **State Management**: Tracks existing resources
+- 🛡️ **No Surprises**: Only modifies what's different
+- 🔒 **Data Protection**: Preserves databases and persistent data
+
+### **Recommended Approach**
+- 🚀 **First Time**: Deploy new environment
+- 🔄 **Updates**: Re-deploy existing environment
+- 🧹 **Issues**: Use emergency cleanup, then deploy
+- 💰 **Cost Control**: Destroy when not needed
+
 **Step 3: Deploy AWS Integrations (Optional)**
 ```bash
 # Deploy AWS integrations
@@ -535,17 +580,42 @@ aws lambda create-function --function-name health-app-cost-optimizer \
   --zip-file fileb://scripts/aws-lambda-cost-optimizer.zip
 ```
 
-**Step 4: Setup Cluster Connection**
+**Step 4: Cluster Connection (Automatic)**
 ```bash
-# After infrastructure deployment, get cluster IP from workflow output
-CLUSTER_IP="1.2.3.4"  # From Infrastructure workflow summary
+# ✅ AUTOMATIC: No manual steps required!
+# Infrastructure workflow automatically:
+# 1. Detects cluster IP from Terraform output
+# 2. Generates kubeconfig with SSH connection
+# 3. Creates GitHub Secret: KUBECONFIG_LOWER
+# 4. Updates secret on re-runs
 
-# Generate kubeconfig
-chmod +x scripts/setup-kubeconfig.sh
-./scripts/setup-kubeconfig.sh dev $CLUSTER_IP
-
-# Add base64 output to GitHub Secrets as KUBECONFIG_DEV
+# Manual verification (optional):
+# Check Settings → Secrets → KUBECONFIG_LOWER exists
 ```
+
+### **🔐 Automatic Secret Management**
+```yaml
+# Workflow Permissions:
+permissions:
+  contents: read
+  actions: write
+  secrets: write  # Enables automatic secret creation
+
+# Automated Process:
+1. Generate kubeconfig: "SSH to cluster, get K3s token"
+2. Install GitHub CLI: "Authenticate with GITHUB_TOKEN"
+3. Create Secret: "KUBECONFIG_LOWER automatically added"
+4. Secure: "Base64 kubeconfig not shown in logs"
+5. Re-run Safe: "Secret updated on every deployment"
+```
+
+### **🎯 Secret Details**
+- **Secret Name**: `KUBECONFIG_LOWER` (auto-generated)
+- **Location**: Repository Settings → Secrets
+- **Content**: Base64 encoded kubeconfig file
+- **Security**: Not exposed in workflow logs
+- **Updates**: Automatic on re-deployment
+- **No Manual Steps**: Complete automation from infrastructure to secrets
 
 **Step 5: Deploy Infrastructure**
 ```bash
@@ -600,6 +670,12 @@ kubectl cluster-info
 kubectl get pods -n health-app-dev
 kubectl get services -n health-app-dev
 ```
+
+### **🔄 Re-deployment Notes**
+- **Existing Infrastructure**: Safe to re-run deploy action
+- **Kubeconfig Security**: Automatically added to secrets (not shown in logs)
+- **Database Preservation**: RDS data maintained across deployments
+- **Cost Efficiency**: Only pay for what's running
 
 **Step 4: Access Your Infrastructure**
 ```bash

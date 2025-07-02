@@ -33,6 +33,10 @@ env:
 jobs:
   infrastructure:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -108,7 +112,7 @@ jobs:
       working-directory: infra
       run: |
         # Get cluster IP from Terraform output
-        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
+        CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
         
         # Check if output is valid (not empty and not an error)
         if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != *"error"* && "$CLUSTER_IP" != "null" ]]; then
@@ -123,7 +127,26 @@ jobs:
           chmod +x ../scripts/setup-kubeconfig.sh
           ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
           
-          echo "🔗 Update KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]') secret with generated config"
+          # Automatically add kubeconfig to GitHub Secrets
+          SECRET_NAME="KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]')"
+          
+          if [[ -f ~/.kube/config-${{ matrix.env }} ]]; then
+            # Install GitHub CLI
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update && sudo apt install gh -y
+            
+            # Authenticate and add secret
+            echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+            
+            # Create base64 kubeconfig and add as secret
+            KUBECONFIG_B64=$(base64 -w 0 ~/.kube/config-${{ matrix.env }})
+            echo "$KUBECONFIG_B64" | gh secret set "$SECRET_NAME" --body-file -
+            
+            echo "✅ Kubeconfig automatically added to GitHub Secrets as $SECRET_NAME"
+          else
+            echo "❌ Kubeconfig file not found, cannot add to secrets"
+          fi
         else
           echo "❌ Cluster IP not available: $CLUSTER_IP"
           echo "💡 K8s cluster may not be deployed or Terraform output failed"
@@ -148,13 +171,55 @@ jobs:
 
     - name: Summary
       if: always()
+      working-directory: infra
       run: |
         echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
         echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
         echo "* Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Date: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "* Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         
-        if [[ "${{ job.status }}" == "failure" && "${{ github.event.inputs.action }}" == "deploy" ]]; then
+        if [[ "${{ job.status }}" == "success" && "${{ github.event.inputs.action }}" == "deploy" ]]; then
+          echo "### ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get all Terraform outputs
+          echo "### 📊 Infrastructure Details" >> $GITHUB_STEP_SUMMARY
+          CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "Not available")
+          DB_ENDPOINT=$(terraform output -raw db_instance_endpoint 2>/dev/null || echo "Not available")
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "Not available")
+          
+          echo "* **K3s Cluster IP**: $CLUSTER_IP" >> $GITHUB_STEP_SUMMARY
+          echo "* **K3s API Endpoint**: https://$CLUSTER_IP:6443" >> $GITHUB_STEP_SUMMARY
+          echo "* **SSH Access**: ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP" >> $GITHUB_STEP_SUMMARY
+          echo "* **Database Endpoint**: $DB_ENDPOINT" >> $GITHUB_STEP_SUMMARY
+          echo "* **VPC ID**: $VPC_ID" >> $GITHUB_STEP_SUMMARY
+          echo "* **AWS Region**: ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Kubeconfig status
+          SECRET_NAME="KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]')"
+          if [[ -f ~/.kube/config-${{ matrix.env }} ]]; then
+            echo "### 🔐 Kubeconfig Status" >> $GITHUB_STEP_SUMMARY
+            echo "* **Secret Name**: $SECRET_NAME" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: ✅ Created and added to GitHub Secrets" >> $GITHUB_STEP_SUMMARY
+            echo "* **Re-run Safe**: Yes, secret will be updated automatically" >> $GITHUB_STEP_SUMMARY
+            echo "* **Context**: health-app-${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ❌ Kubeconfig Status" >> $GITHUB_STEP_SUMMARY
+            echo "* **Status**: Failed to generate kubeconfig" >> $GITHUB_STEP_SUMMARY
+            echo "* **Manual Setup**: ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. ✅ Infrastructure ready for application deployment" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🚀 Run GitOps or App Deploy workflow" >> $GITHUB_STEP_SUMMARY
+          echo "3. 📋 Deploy K8s manifests: kubectl apply -f k8s/" >> $GITHUB_STEP_SUMMARY
+          echo "4. 🔍 Verify: kubectl get pods -n health-app-${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+          
+        elif [[ "${{ job.status }}" == "failure" && "${{ github.event.inputs.action }}" == "deploy" ]]; then
           echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
           echo "* Partial resources cleaned up automatically" >> $GITHUB_STEP_SUMMARY
           echo "* Safe to retry deployment" >> $GITHUB_STEP_SUMMARY
