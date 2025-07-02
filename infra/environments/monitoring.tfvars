@@ -1,20 +1,35 @@
+# Monitoring Network Environment
 environment = "monitoring"
-aws_region  = "ap-south-1"
+cluster_name = "health-app-monitoring"
 
-# Network Configuration (Monitoring specific)
+# Network Configuration
 vpc_cidr = "10.3.0.0/16"
-availability_zones = ["ap-south-1a", "ap-south-1b"]
-public_subnet_cidrs = ["10.3.101.0/24", "10.3.102.0/24"]
-private_subnet_cidrs = ["10.3.1.0/24", "10.3.2.0/24"]
+public_subnet_cidrs = ["10.3.1.0/24"]  # Monitoring subnet
+private_subnet_cidrs = []  # No private subnets needed
 
-# K3s Configuration (Minimal)
-k3s_instance_type = "t3.small"
-# ssh_public_key will be passed from GitHub secret
+# K8s Clusters (Monitoring only) - FREE TIER
+k8s_clusters = {
+  monitoring = {
+    instance_type = "t2.micro"  # FREE TIER
+    subnet_index = 0  # 10.3.1.0/24
+    namespace = "monitoring"
+  }
+}
 
-# Database Configuration (Minimal)
-db_instance_class = "db.t3.small"
-db_allocated_storage = 20
+# No Database Configuration (monitoring doesn't need DB)
+database_config = null
 
-# Monitoring specific variables
-connect_to_lower_env = true
-connect_to_higher_env = true
+# VPC Peering Configuration
+vpc_peering = {
+  peer_with_lower = true
+  peer_with_higher = true
+}
+
+# Tags
+tags = {
+  Project = "health-app"
+  Environment = "monitoring"
+  Network = "monitoring"
+  ManagedBy = "terraform"
+  CostCenter = "operations"
+}

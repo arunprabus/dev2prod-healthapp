@@ -12,14 +12,13 @@ on:
         - destroy
         - plan
       environment:
-        description: 'Environment'
+        description: 'Network/Environment'
         required: true
-        default: 'dev'
+        default: 'lower'
         type: choice
         options:
-        - dev
-        - test
-        - prod
+        - lower
+        - higher
         - monitoring
         - all
       confirm_destroy:
@@ -36,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["dev", "test", "prod", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Checkout

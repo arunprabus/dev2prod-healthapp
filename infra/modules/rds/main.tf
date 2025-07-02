@@ -13,10 +13,10 @@ resource "aws_security_group" "db" {
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port   = 3306
-    to_port     = 3306
+    from_port   = var.engine == "postgres" ? 5432 : 3306
+    to_port     = var.engine == "postgres" ? 5432 : 3306
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]
+    cidr_blocks = var.allowed_cidr_blocks
   }
 
   egress {
@@ -32,7 +32,7 @@ resource "aws_security_group" "db" {
 }
 
 resource "aws_db_parameter_group" "health_db" {
-  family = "mysql8.0"
+  family = var.engine == "postgres" ? "postgres15" : "mysql8.0"
   name   = "${var.identifier}-params"
 
   tags = var.tags
@@ -40,23 +40,28 @@ resource "aws_db_parameter_group" "health_db" {
 
 resource "aws_db_instance" "health_db" {
   identifier     = var.identifier
-  engine         = "mysql"
-  engine_version = "8.0"
-  instance_class = var.db_instance_class
+  engine         = var.engine
+  engine_version = var.engine_version
+  instance_class = var.instance_class
   
-  allocated_storage     = var.db_allocated_storage
+  allocated_storage     = var.allocated_storage
   storage_type          = "gp2"
   storage_encrypted     = false  # Free tier doesn't support encryption
   
-  db_name  = "healthapp"
-  username = "admin"
-  password = "changeme123!" # Use AWS Secrets Manager in production
+  # Restore from snapshot if provided
+  snapshot_identifier = var.snapshot_identifier
+  
+  # Only set these if NOT restoring from snapshot
+  db_name  = var.snapshot_identifier == null ? var.db_name : null
+  username = var.snapshot_identifier == null ? var.username : null
+  password = var.snapshot_identifier == null ? "changeme123!" : null
   
   vpc_security_group_ids = [aws_security_group.db.id]
   db_subnet_group_name   = aws_db_subnet_group.health_db.name
   parameter_group_name   = aws_db_parameter_group.health_db.name
   
-  backup_retention_period = 0  # No backups for free tier
+  backup_retention_period = var.backup_retention_period
+  multi_az               = var.multi_az
   
   skip_final_snapshot = true
   deletion_protection = false

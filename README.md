@@ -168,6 +168,14 @@ The separation of application and infrastructure code allows for:
 - ✅ **Cost Optimization**: Shared database for dev/test
 - ✅ **Centralized Monitoring**: Single monitoring cluster for all environments
 - ✅ **Security**: Network-level separation with controlled access
+- ✅ **Data Continuity**: Restore from existing snapshots (healthapidb-snapshot)
+
+### 💾 **Database Restore Advantages**
+- ✅ **Instant Data**: Restore from `healthapidb-snapshot` with all existing data
+- ✅ **Zero Migration**: No manual data import needed
+- ✅ **Real Testing**: Dev/Test environments use production-like data
+- ✅ **Cost Effective**: Shared database reduces storage costs
+- ✅ **Consistent State**: Data integrity maintained across environments
 
 ---
 
@@ -505,11 +513,25 @@ chmod +x scripts/setup-kubeconfig.sh
 
 **Step 5: Deploy Infrastructure**
 ```bash
-# Deploy single environment
-Actions → Core Infrastructure → action: "deploy" → environment: "dev"
+# Deploy Lower Network (Dev + Test + Shared DB)
+Actions → Core Infrastructure → action: "deploy" → environment: "lower"
 
-# Deploy all environments
+# Deploy Higher Network (Prod + Dedicated DB)
+Actions → Core Infrastructure → action: "deploy" → environment: "higher"
+
+# Deploy Monitoring Network
+Actions → Core Infrastructure → action: "deploy" → environment: "monitoring"
+
+# Deploy All Networks
 Actions → Core Infrastructure → action: "deploy" → environment: "all"
+```
+
+**Step 5b: Restore from Existing Data (Optional)**
+```bash
+# To restore from healthapidb-snapshot:
+# 1. Edit infra/environments/lower.tfvars
+# 2. Uncomment: snapshot_identifier = "healthapidb-snapshot"
+# 3. Deploy as normal - gets existing data instantly!
 ```
 
 **Step 6: Setup GitOps**
@@ -573,14 +595,14 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 5. Click **Run workflow**
 6. All resources will be deleted (cost returns to $0)
 
-#### **💰 Cost Verification**
-| Resource | Usage | Free Tier | Status |
-|----------|-------|-----------|--------|
-| EC2 t2.micro | 720h/month | 750h limit | ✅ **$0** |
-| RDS db.t3.micro | 720h/month | 750h limit | ✅ **$0** |
-| EBS Storage | ~28GB | 30GB limit | ✅ **$0** |
-| VPC + Networking | Unlimited | Always free | ✅ **$0** |
-| **Total Monthly Cost** | | | **$0** |
+#### **💰 Cost Verification - New Architecture**
+| Resource | Lower Network | Higher Network | Monitoring | Free Tier Limit | Status |
+|----------|---------------|----------------|------------|-----------------|--------|
+| **EC2 t2.micro** | 2 instances | 1 instance | 1 instance | 750h each | ✅ **$0** |
+| **RDS db.t3.micro** | 1 shared | 1 dedicated | 0 | 750h each | ✅ **$0** |
+| **EBS Storage** | ~40GB | ~20GB | ~20GB | 30GB each | ✅ **$0** |
+| **VPC + Networking** | 3 VPCs + Peering | | | Always free | ✅ **$0** |
+| **Total Monthly Cost** | | | | | **$0** |
 
 #### **🛡️ Safety Features**
 - ✅ **Instance type locked** to t2.micro (FREE TIER)
@@ -788,14 +810,14 @@ Blue (Live) ──┐
 Green (New) ──┘
 ```
 
-## 🌐 Application Access
+## 🌐 Network Architecture Access
 
-| Environment | Network | K8s Cluster | Database | Monitoring |
-|-------------|---------|-------------|----------|------------|
-| Dev | Lower (10.0.0.0/16) | health-app-dev | Shared RDS | ✅ |
-| Test | Lower (10.0.0.0/16) | health-app-test | Shared RDS | ✅ |
-| Prod | Higher (10.1.0.0/16) | health-app-prod | Dedicated RDS | ✅ |
-| Monitoring | Monitoring (10.3.0.0/16) | monitoring | None | ✅ |
+| Network | CIDR | Environments | K8s Clusters | Database | Snapshot Restore | Cost |
+|---------|------|--------------|--------------|----------|------------------|------|
+| **Lower** | 10.0.0.0/16 | Dev + Test | 2x t2.micro | 1x Shared RDS (db.t3.micro) | ✅ healthapidb-snapshot | **$0** |
+| **Higher** | 10.1.0.0/16 | Production | 1x t2.micro | 1x Dedicated RDS (db.t3.micro) | ✅ healthapidb-snapshot | **$0** |
+| **Monitoring** | 10.3.0.0/16 | Monitoring | 1x t2.micro | None | N/A | **$0** |
+| **Total** | | | **4 clusters** | **2 databases** | **Existing Data** | **$0/month** |
 
 ---
 
@@ -828,14 +850,17 @@ Green (New) ──┘
 
 ### Manual Operations
 ```bash
-# Check deployment status
-kubectl get deployments -n health-app-dev
-kubectl get services -n health-app-dev
+# Check deployment status by network
+kubectl get deployments -n health-app-dev    # Lower network
+kubectl get deployments -n health-app-test   # Lower network
+kubectl get deployments -n health-app-prod   # Higher network
+kubectl get deployments -n monitoring        # Monitoring network
 
-# Plan infrastructure changes
-Actions → Core Infrastructure → action: "plan" → environment: "dev"
+# Plan infrastructure changes by network
+Actions → Core Infrastructure → action: "plan" → environment: "lower"
+Actions → Core Infrastructure → action: "plan" → environment: "higher"
 
-# Monitor environments
+# Monitor all environments
 Actions → Core Operations → action: "monitor"
 ```
 
@@ -843,11 +868,11 @@ Actions → Core Operations → action: "monitor"
 
 ### 1. Infrastructure Rollback
 ```bash
-# Destroy problematic environment
-Actions → Core Infrastructure → action: "destroy" → environment: "dev" → confirm: "DESTROY"
+# Destroy problematic network
+Actions → Core Infrastructure → action: "destroy" → environment: "lower" → confirm: "DESTROY"
 
-# Redeploy clean environment
-Actions → Core Infrastructure → action: "deploy" → environment: "dev"
+# Redeploy clean network
+Actions → Core Infrastructure → action: "deploy" → environment: "lower"
 ```
 
 ### 2. Application Issues
@@ -889,14 +914,14 @@ Actions → Core Operations → action: "scale"
 
 ### **Manual Infrastructure Control**
 ```bash
-# Stop specific environment
-Actions → Core Infrastructure → action: "destroy" → environment: "dev"
+# Stop specific network
+Actions → Core Infrastructure → action: "destroy" → environment: "lower"
 
-# Stop all environments
+# Stop all networks
 Actions → Core Infrastructure → action: "destroy" → environment: "all"
 
 # Restart when needed
-Actions → Core Infrastructure → action: "deploy" → environment: "dev"
+Actions → Core Infrastructure → action: "deploy" → environment: "lower"
 ```
 
 ---

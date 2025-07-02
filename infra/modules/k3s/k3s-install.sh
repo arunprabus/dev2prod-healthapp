@@ -19,6 +19,45 @@ mv kubectl /usr/local/bin/
 # Create health app namespace
 kubectl create namespace health-app-${environment} || true
 
+# Configure database connection based on environment
+if [[ "${environment}" == "lower" ]]; then
+  # Configure for both dev and test namespaces (shared DB)
+  kubectl create namespace health-app-dev || true
+  kubectl create namespace health-app-test || true
+  
+  # Create database secrets for shared DB
+  kubectl create secret generic database-config \
+    --from-literal=DB_HOST="${db_endpoint}" \
+    --from-literal=DB_PORT="5432" \
+    --from-literal=DB_NAME="healthapi" \
+    --from-literal=DB_USER="postgres" \
+    --from-literal=DB_PASSWORD="changeme123!" \
+    --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@${db_endpoint}:5432/healthapi" \
+    -n health-app-dev || true
+    
+  kubectl create secret generic database-config \
+    --from-literal=DB_HOST="${db_endpoint}" \
+    --from-literal=DB_PORT="5432" \
+    --from-literal=DB_NAME="healthapi" \
+    --from-literal=DB_USER="postgres" \
+    --from-literal=DB_PASSWORD="changeme123!" \
+    --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@${db_endpoint}:5432/healthapi" \
+    -n health-app-test || true
+    
+elif [[ "${environment}" == "higher" ]]; then
+  # Configure for prod namespace (dedicated DB)
+  kubectl create namespace health-app-prod || true
+  
+  kubectl create secret generic database-config \
+    --from-literal=DB_HOST="${db_endpoint}" \
+    --from-literal=DB_PORT="5432" \
+    --from-literal=DB_NAME="healthapi" \
+    --from-literal=DB_USER="postgres" \
+    --from-literal=DB_PASSWORD="changeme123!" \
+    --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@${db_endpoint}:5432/healthapi" \
+    -n health-app-prod || true
+fi
+
 # Install Helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
@@ -79,3 +118,5 @@ echo 'alias k="kubectl"' >> /root/.bashrc
 echo "K3s installation completed successfully!"
 echo "Cluster: ${cluster_name}"
 echo "Environment: ${environment}"
+echo "Database endpoint: ${db_endpoint}"
+echo "Namespaces created and database secrets configured"
