@@ -38,12 +38,12 @@ output "k3s_ssh_command" {
 # RDS Outputs
 output "db_instance_endpoint" {
   description = "Connection endpoint for the RDS database"
-  value       = module.rds.db_instance_endpoint
+  value       = var.database_config != null ? module.rds[0].db_instance_endpoint : null
 }
 
 output "db_instance_name" {
   description = "Name of the RDS instance"
-  value       = module.rds.db_instance_name
+  value       = var.database_config != null ? module.rds[0].db_instance_name : null
 }
 
 # Deployment Outputs
