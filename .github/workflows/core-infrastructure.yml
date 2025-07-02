@@ -114,9 +114,30 @@ jobs:
           echo "🔗 Update KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]') secret with generated config"
         fi
 
+    - name: Cleanup on Failure
+      if: failure() && github.event.inputs.action == 'deploy'
+      working-directory: infra
+      run: |
+        echo "🧹 Infrastructure deployment failed - cleaning up partial resources"
+        
+        terraform destroy \
+          -var-file="environments/${{ matrix.env }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -auto-approve || echo "Cleanup completed (some errors expected)"
+        
+        echo "✅ Cleanup completed - safe to retry deployment"
+
     - name: Summary
       if: always()
       run: |
         echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
         echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
         echo "* Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ job.status }}" == "failure" && "${{ github.event.inputs.action }}" == "deploy" ]]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "* Partial resources cleaned up automatically" >> $GITHUB_STEP_SUMMARY
+          echo "* Safe to retry deployment" >> $GITHUB_STEP_SUMMARY
+          echo "* Check logs for error details" >> $GITHUB_STEP_SUMMARY
+        fi

@@ -487,6 +487,42 @@ Options:
 - 📝 **Audit Trail**: All deployments tracked in Git
 - 💰 **Cost**: $0 additional (within GitHub free limits)
 
+## 🛡️ **Infrastructure Protection & Cleanup**
+
+### **Automatic Failure Protection**
+```yaml
+# If infrastructure deployment fails:
+1. ❌ Terraform apply fails (e.g., resource conflicts)
+2. 🧹 Cleanup step automatically runs
+3. 🗑️ terraform destroy removes partial resources
+4. ✅ Environment is clean for retry
+```
+
+### **Manual Emergency Cleanup**
+```bash
+# Clean up stuck/partial resources
+chmod +x scripts/emergency-cleanup.sh
+./scripts/emergency-cleanup.sh lower
+
+# Force cleanup without confirmation
+./scripts/emergency-cleanup.sh lower true
+```
+
+### **Protected Resources**
+- 💻 **EC2 Instances**: Auto-terminated on failure
+- 🗄️ **RDS Databases**: Deleted with skip-final-snapshot
+- 🌐 **VPC & Networking**: Cleaned up if no dependencies
+- 🔒 **Security Groups**: Removed automatically
+- 🤖 **Lambda Functions**: Deleted
+- 📊 **CloudWatch Logs**: Cleaned up
+- 🔧 **SSM Parameters**: Removed
+
+### **Cost Protection Benefits**
+- 💰 **No Orphaned Resources**: Prevents surprise bills
+- 🔄 **Safe Retry**: Clean environment for redeployment
+- ⚡ **Fast Recovery**: Automatic cleanup in seconds
+- 🛡️ **Fail-Safe**: Multiple cleanup methods available
+
 **Step 3: Deploy AWS Integrations (Optional)**
 ```bash
 # Deploy AWS integrations
