@@ -1139,6 +1139,8 @@ KUBECONFIG: "Base64 encoded fallback kubeconfig"
 
 #### **Infrastructure**
 ```yaml
+AWS_ACCESS_KEY_ID: "AKIA..."                # AWS access key for Terraform
+AWS_SECRET_ACCESS_KEY: "xyz123..."          # AWS secret key for Terraform
 SSH_PUBLIC_KEY: "ssh-rsa AAAAB3..."         # SSH public key for EC2 access
 TF_STATE_BUCKET: "health-app-terraform-state" # Terraform state bucket
 ```
