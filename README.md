@@ -13,24 +13,35 @@ This repository contains the complete infrastructure and deployment pipeline for
 - ✅ **Complete CI/CD** - GitHub Actions automation
 - ✅ **Infrastructure as Code** - Terraform + K8s manifests
 
-## Repository Structure
+## 📁 Clean Repository Structure
 
-- `infra/`: Infrastructure as Code (IaC) using Terraform
-  - `modules/`: Reusable Terraform modules (VPC, K8s, RDS)
-  - `environments/`: Environment-specific configurations
-- `.github/workflows/`: Complete CI/CD pipeline
-  - `infrastructure.yml`: Infrastructure deployment
-  - `app-deploy.yml`: Application deployment
-  - `k8s-operations.yml`: K8s management & scaling
-  - `monitoring.yml`: Health checks & monitoring
-  - `resource-cleanup.yml`: Cost optimization
-- `k8s/`: Kubernetes manifests
-  - `health-api-complete.yaml`: Complete app deployment
-  - `monitoring-stack.yaml`: Prometheus + Grafana
-- `scripts/`: Automation scripts
-  - `k8s-health-check.sh`: Health monitoring
-  - `k8s-auto-scale.sh`: Auto-scaling management
-  - `rds-monitor.sh`: Database monitoring
+```
+├── .github/workflows/           # 🔥 CLEANED: 3 Core Workflows Only
+│   ├── core-infrastructure.yml  # Infrastructure management
+│   ├── core-deployment.yml      # Application deployment  
+│   └── core-operations.yml      # Monitoring & operations
+├── infra/                       # Infrastructure as Code
+│   ├── modules/                 # Reusable modules
+│   │   ├── vpc/                 # Multi-network VPC module
+│   │   ├── k8s/                 # K8s cluster module
+│   │   ├── rds/                 # Database module
+│   │   └── monitoring/          # Monitoring module
+│   ├── environments/            # Environment configs
+│   │   ├── dev.tfvars          # Dev environment
+│   │   ├── test.tfvars         # Test environment
+│   │   ├── prod.tfvars         # Prod environment
+│   │   ├── monitoring.tfvars   # Monitoring environment
+│   │   └── network-architecture.tfvars  # 🆕 Network design
+│   └── backend-configs/         # Terraform state
+├── k8s/                         # Kubernetes manifests
+│   ├── health-api-complete.yaml # Application deployment
+│   ├── monitoring-stack.yaml   # Prometheus + Grafana
+│   └── network-policies.yaml   # 🆕 Network security
+└── scripts/                     # Automation scripts
+    ├── k8s-health-check.sh     # Health monitoring
+    ├── k8s-auto-scale.sh       # Auto-scaling
+    └── setup-kubeconfig.sh     # Cluster connection
+```
 
 ## Related Repositories
 
@@ -103,40 +114,60 @@ The separation of application and infrastructure code allows for:
 
 ---
 
-## 🧱 Network Architecture
+## 🧱 New Network Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────────┐
-│                       AWS Region: ap-south-1                          │
-├───────────────────────────────────────────────────────────────────────┤
-│                                                                       │
-│ ┌─────────────────────────────────────────────────────────────────┐   │
-│ │                 LOWER NETWORK (10.0.0.0/16)                     │   │
-│ │ ┌──────────────┐     ┌──────────────┐                           │   │
-│ │ │  DEV ENV     │     │  TEST ENV    │                           │   │
-│ │ │ EKS + RDS    │     │ EKS + RDS    │                           │   │
-│ │ └──────────────┘     └──────────────┘                           │   │
-│ └─────────────────────────────────────────────────────────────────┘   │
-│                                                                       │
-│ ┌─────────────────────────────────────────────────────────────────┐   │
-│ │                HIGHER NETWORK (10.1.0.0/16)                     │   │
-│ │ ┌──────────────┐                                                │   │
-│ │ │  PROD ENV    │                                                │   │
-│ │ │ EKS + RDS    │                                                │   │
-│ │ └──────────────┘                                                │   │
-│ └─────────────────────────────────────────────────────────────────┘   │
-│                                                                       │
-│ ┌─────────────────────────────────────────────────────────────────┐   │
-│ │               MONITORING NETWORK (10.3.0.0/16)                  │   │
-│ │ ┌───────────────────────────────────┐      VPC Peering          │   │
-│ │ │  MONITORING ENV                   │◀─────Connection──────────▶│   │
-│ │ │  EKS + Splunk + Prometheus        │                           │   │
-│ │ └───────────────────────────────────┘                           │   │
-│ └─────────────────────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        AWS Region: ap-south-1                           │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │                   LOWER NETWORK (10.0.0.0/16)                       │ │
+│ │ ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐ │ │
+│ │ │   DEV ENV   │  │  TEST ENV   │  │        SHARED DATABASE          │ │ │
+│ │ │ K8s Cluster │  │ K8s Cluster │  │     RDS (db.t3.micro)          │ │ │
+│ │ │ 10.0.1.0/24 │  │ 10.0.2.0/24 │  │       10.0.10.0/24             │ │ │
+│ │ └─────────────┘  └─────────────┘  └─────────────────────────────────┘ │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │                   HIGHER NETWORK (10.1.0.0/16)                      │ │
+│ │ ┌─────────────┐                    ┌─────────────────────────────────┐ │ │
+│ │ │  PROD ENV   │                    │     DEDICATED DATABASE          │ │ │
+│ │ │ K8s Cluster │                    │     RDS (db.t3.small)          │ │ │
+│ │ │ 10.1.1.0/24 │                    │       10.1.10.0/24             │ │ │
+│ │ └─────────────┘                    └─────────────────────────────────┘ │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                                                                         │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │                 MONITORING NETWORK (10.3.0.0/16)                    │ │
+│ │ ┌─────────────────────────────────────────────────────────────────┐   │ │
+│ │ │              MONITORING CLUSTER                                 │   │ │
+│ │ │         Prometheus + Grafana + Alerting                        │   │ │
+│ │ │                10.3.1.0/24                                     │   │ │
+│ │ │                                                                │   │ │
+│ │ │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐        │   │ │
+│ │ │  │VPC Peering  │    │VPC Peering  │    │   No Direct │        │   │ │
+│ │ │  │to Lower Net │    │to Higher Net│    │  Connection │        │   │ │
+│ │ │  └─────────────┘    └─────────────┘    └─────────────┘        │   │ │
+│ │ └─────────────────────────────────────────────────────────────────┘   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-> 🔒 **Enhanced Architecture**: Complete network isolation between Production and Dev/Test environments with centralized monitoring that has visibility into all environments.
+### 🔒 **Enhanced Security Architecture**
+
+| Network | CIDR | Environments | Database | Monitoring Access |
+|---------|------|--------------|----------|------------------|
+| **Lower** | 10.0.0.0/16 | Dev + Test | Shared RDS | ✅ Via VPC Peering |
+| **Higher** | 10.1.0.0/16 | Production | Dedicated RDS | ✅ Via VPC Peering |
+| **Monitoring** | 10.3.0.0/16 | Monitoring | None | ✅ Access to Both |
+
+### 🛡️ **Isolation Benefits**
+- ✅ **Complete Prod Isolation**: No direct dev/test → prod access
+- ✅ **Cost Optimization**: Shared database for dev/test
+- ✅ **Centralized Monitoring**: Single monitoring cluster for all environments
+- ✅ **Security**: Network-level separation with controlled access
 
 ---
 
@@ -239,9 +270,14 @@ Go to **Settings** → **Secrets and variables** → **Actions**:
 
 **🔐 Secrets tab (Required):**
 ```yaml
-AWS_ACCESS_KEY_ID: "AKIA..."
-AWS_SECRET_ACCESS_KEY: "xyz123..."
-KUBECONFIG: "Base64 encoded kubeconfig file"
+# Environment-specific kubeconfig (NEW ARCHITECTURE)
+KUBECONFIG_DEV: "Base64 encoded dev cluster kubeconfig"
+KUBECONFIG_TEST: "Base64 encoded test cluster kubeconfig"
+KUBECONFIG_PROD: "Base64 encoded prod cluster kubeconfig"
+KUBECONFIG_MONITORING: "Base64 encoded monitoring cluster kubeconfig"
+KUBECONFIG: "Base64 encoded fallback kubeconfig"
+
+# Infrastructure
 SSH_PUBLIC_KEY: "ssh-rsa AAAAB3..."
 TF_STATE_BUCKET: "health-app-terraform-state"
 ```
@@ -250,13 +286,9 @@ TF_STATE_BUCKET: "health-app-terraform-state"
 ```yaml
 AWS_REGION: "ap-south-1"
 K8S_CLUSTER_NAME: "health-app-cluster"
-CONTAINER_REGISTRY: "your-account.dkr.ecr.ap-south-1.amazonaws.com"
-REGISTRY_NAMESPACE: "health-app"
-MIN_REPLICAS: "1"
-MAX_REPLICAS: "5"
-KUBECTL_TIMEOUT: "300s"
-BUDGET_EMAIL: "your-email@domain.com"
-BUDGET_REGIONS: "us-east-1,ap-south-1"
+CONTAINER_REGISTRY: "docker.io"
+REGISTRY_NAMESPACE: "your-username"
+TERRAFORM_VERSION: "1.6.0"
 ```
 
 ## 🏷️ **Tagging & Naming Standards**
@@ -471,37 +503,34 @@ chmod +x scripts/setup-kubeconfig.sh
 # Add base64 output to GitHub Secrets as KUBECONFIG_DEV
 ```
 
-**Step 5: Deploy AWS Integrations**
+**Step 5: Deploy Infrastructure**
 ```bash
-# Deploy FREE AWS integrations
-Actions → AWS Integrations Deployment → action: "deploy-all" → environment: "dev"
+# Deploy single environment
+Actions → Core Infrastructure → action: "deploy" → environment: "dev"
 
-# Test integrations
-chmod +x scripts/test-aws-integrations.sh
-./scripts/test-aws-integrations.sh dev
+# Deploy all environments
+Actions → Core Infrastructure → action: "deploy" → environment: "all"
 ```
 
-**Step 6: Setup GitOps (Optional)**
+**Step 6: Setup GitOps**
 ```bash
-# In Health API repo, add workflow to trigger this repo
+# In Health API repo, add INFRA_REPO_TOKEN secret
 # Create Personal Access Token with repo/workflow permissions
-# Add as INFRA_REPO_TOKEN secret in Health API repo
 
-# Test GitOps deployment
-Actions → GitOps Deployment → Manual test
+# Test deployment trigger
+Actions → Core Deployment → Manual test
 ```
 
 **Step 7: Deploy Applications**
 ```bash
 # Via GitOps (Recommended)
-Push to Health API repo → Auto-deploys via webhook
+# Push to Health API repo → Auto-deploys via repository dispatch
 
 # Or Direct Deployment
-Actions → App Deploy → environment: "dev"
+Actions → Core Deployment → Manual deployment
 
-# Or Manual
-kubectl apply -f k8s/health-api-complete.yaml
-kubectl apply -f k8s/monitoring-stack.yaml
+# Apply network policies
+kubectl apply -f k8s/network-policies.yaml
 ```
 
 **Step 7: Verify Deployment**
@@ -536,8 +565,8 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 - Auto-cleanup only if cost > $0.50 or manual trigger
 - Manual run: **Actions** → **Cost Management** → Select action
 
-**Step 7: Cleanup When Done**
-1. Go to **Actions** → **Infrastructure**
+**Step 8: Cleanup When Done**
+1. Go to **Actions** → **Core Infrastructure**
 2. Select **action**: `destroy`
 3. Select **environment** (dev/test/prod/monitoring/all)
 4. Type **"DESTROY"** in confirmation field
@@ -761,11 +790,12 @@ Green (New) ──┘
 
 ## 🌐 Application Access
 
-| Environment | EKS Cluster | Frontend | Backend | Status |
-|-------------|-------------|----------|---------|--------|
-| Dev | health-app-cluster-dev | LoadBalancer | LoadBalancer | Active |
-| Test | health-app-cluster-test | LoadBalancer | LoadBalancer | Active |
-| Prod | health-app-cluster-prod | LoadBalancer | LoadBalancer | Blue-Green |
+| Environment | Network | K8s Cluster | Database | Monitoring |
+|-------------|---------|-------------|----------|------------|
+| Dev | Lower (10.0.0.0/16) | health-app-dev | Shared RDS | ✅ |
+| Test | Lower (10.0.0.0/16) | health-app-test | Shared RDS | ✅ |
+| Prod | Higher (10.1.0.0/16) | health-app-prod | Dedicated RDS | ✅ |
+| Monitoring | Monitoring (10.3.0.0/16) | monitoring | None | ✅ |
 
 ---
 
@@ -774,32 +804,39 @@ Green (New) ──┘
 ### GitHub Actions Workflows
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| `Infrastructure` | Manual | **Deploy/Destroy/Plan** - All infrastructure operations |
-| `Cost Management` | Schedule/Manual | **Monitor + Cleanup + Budget** - Complete cost protection |
+| `Core Infrastructure` | Manual | **Deploy/Destroy/Plan** - Infrastructure management |
+| `Core Deployment` | Repository Dispatch/Manual | **Application deployment** - Triggered by health-api |
+| `Core Operations` | Schedule/Manual | **Monitor/Scale/Backup** - Daily operations |
 
-### **Infrastructure Workflow Actions:**
+### **🔥 Simplified Workflow Actions**
+
+#### **Core Infrastructure** (Manual Only)
 - **deploy**: Create/update infrastructure
-- **destroy**: Delete all resources (requires "DESTROY" confirmation)
-- **plan**: Preview changes without applying
+- **destroy**: Delete resources (requires "DESTROY" confirmation)
+- **plan**: Preview changes
 
-### **Cost Management Workflow Actions:**
-- **monitor**: Check weekly costs (auto-runs breakdown if > $0.50)
-- **cleanup**: Remove expensive resources
-- **budget-setup**: Create cost alerts
-- **breakdown**: Detailed cost analysis by service/region
-- **all**: Run monitor + cleanup + budget setup + breakdown
+#### **Core Deployment** (Triggered by health-api)
+- **Automatic**: Via repository dispatch from health-api
+- **Manual**: Direct deployment with custom image
+
+#### **Core Operations** (Scheduled + Manual)
+- **monitor**: Daily health checks (9 AM UTC)
+- **scale**: Auto-scaling management
+- **backup**: Database backup
+- **cleanup**: Resource cleanup
+- **health-check**: Comprehensive health verification
 
 ### Manual Operations
 ```bash
 # Check deployment status
-kubectl get deployments
-kubectl get services
+kubectl get deployments -n health-app-dev
+kubectl get services -n health-app-dev
 
 # Plan infrastructure changes
-Actions → Infrastructure → action: "plan" → environment: "dev"
+Actions → Core Infrastructure → action: "plan" → environment: "dev"
 
-# Monitor costs manually
-Actions → Cost Management → action: "monitor"
+# Monitor environments
+Actions → Core Operations → action: "monitor"
 ```
 
 ## 🚨 Emergency Procedures
@@ -807,19 +844,19 @@ Actions → Cost Management → action: "monitor"
 ### 1. Infrastructure Rollback
 ```bash
 # Destroy problematic environment
-Actions → Infrastructure → action: "destroy" → environment: "dev" → confirm: "DESTROY"
+Actions → Core Infrastructure → action: "destroy" → environment: "dev" → confirm: "DESTROY"
 
 # Redeploy clean environment
-Actions → Infrastructure → action: "deploy" → environment: "dev"
+Actions → Core Infrastructure → action: "deploy" → environment: "dev"
 ```
 
-### 2. Cost Emergency
+### 2. Application Issues
 ```bash
-# Force cleanup regardless of cost threshold
-Actions → Cost Management → action: "cleanup" → force_cleanup: true
+# Redeploy application
+Actions → Core Deployment → Manual deployment
 
-# Monitor current costs
-Actions → Cost Management → action: "monitor"
+# Check application health
+Actions → Core Operations → action: "health-check"
 ```
 
 ### 3. Manual K3s Access
@@ -840,36 +877,37 @@ sudo k3s kubectl get pods --all-namespaces
 
 ### **Automated (Recommended)**
 ```bash
-# Weekly automatic monitoring + cleanup
-Runs every Monday: 9 AM monitor, 10 AM cleanup
+# Daily automatic monitoring
+Runs every day: 9 AM UTC health checks
 
-# Manual cost check
-Actions → Cost Management → action: "monitor"
+# Manual monitoring
+Actions → Core Operations → action: "monitor"
 
-# Force cleanup if needed
-Actions → Cost Management → action: "cleanup" → force_cleanup: true
+# Manual scaling check
+Actions → Core Operations → action: "scale"
 ```
 
 ### **Manual Infrastructure Control**
 ```bash
 # Stop specific environment
-Actions → Infrastructure → action: "destroy" → environment: "dev"
+Actions → Core Infrastructure → action: "destroy" → environment: "dev"
 
 # Stop all environments
-Actions → Infrastructure → action: "destroy" → environment: "all"
+Actions → Core Infrastructure → action: "destroy" → environment: "all"
 
 # Restart when needed
-Actions → Infrastructure → action: "deploy" → environment: "dev"
+Actions → Core Infrastructure → action: "deploy" → environment: "dev"
 ```
 
 ---
 
 ## 🔒 Security & Isolation
 
-- ✅ Two distinct VPCs (Lower: Dev/Test, Higher: Prod)
-- ✅ Complete isolation—no cross-VPC traffic
-- ✅ SSH key-based login
-- ✅ Public subnets only (no NAT Gateway)
+- ✅ **Three distinct networks**: Lower (Dev/Test), Higher (Prod), Monitoring
+- ✅ **Complete prod isolation**: No direct dev/test → prod access
+- ✅ **Network policies**: Kubernetes-level traffic control
+- ✅ **VPC peering**: Monitoring access only
+- ✅ **Environment-specific kubeconfig**: Separate cluster access
 
 ---
 
@@ -1082,53 +1120,27 @@ kubectl get events --sort-by=.metadata.creationTimestamp
 #### **Core Configuration**
 ```yaml
 AWS_REGION: "ap-south-1"                    # AWS deployment region
-EKS_CLUSTER_NAME: "health-app-cluster"       # Base cluster name
-CONTAINER_REGISTRY: "ghcr.io"               # Container registry URL
+K8S_CLUSTER_NAME: "health-app-cluster"       # Base cluster name
+CONTAINER_REGISTRY: "docker.io"             # Container registry URL
 REGISTRY_NAMESPACE: "your-username"          # Registry namespace
-```
-
-#### **Tool Versions**
-```yaml
 TERRAFORM_VERSION: "1.6.0"                  # Terraform version
-KUBECTL_VERSION: "latest"                   # kubectl version
-```
-
-#### **Deployment Timeouts**
-```yaml
-KUBECTL_TIMEOUT: "300s"                     # Kubernetes operations timeout
-CLEANUP_DELAY: "30"                         # Seconds before cleanup
-LB_WAIT_TIME: "60"                          # Load balancer wait time
-HEALTH_CHECK_RETRIES: "5"                   # Health check retry count
-```
-
-#### **Auto-Scaling Configuration**
-```yaml
-MIN_REPLICAS: "2"                           # Minimum pod replicas
-MAX_REPLICAS: "10"                          # Maximum pod replicas
 ```
 
 ### **Repository Secrets (GitHub Settings → Secrets)**
 
-#### **AWS Credentials**
+#### **Environment-Specific Kubeconfig (REQUIRED)**
 ```yaml
-AWS_ACCESS_KEY_ID: "AKIA..."                # AWS access key
-AWS_SECRET_ACCESS_KEY: "xyz123..."          # AWS secret key
+KUBECONFIG_DEV: "Base64 encoded dev cluster kubeconfig"
+KUBECONFIG_TEST: "Base64 encoded test cluster kubeconfig"
+KUBECONFIG_PROD: "Base64 encoded prod cluster kubeconfig"
+KUBECONFIG_MONITORING: "Base64 encoded monitoring cluster kubeconfig"
+KUBECONFIG: "Base64 encoded fallback kubeconfig"
 ```
 
-#### **Notifications**
+#### **Infrastructure**
 ```yaml
-SLACK_WEBHOOK_URL: "https://hooks.slack.com/..."  # Slack notifications
-```
-
-#### **Optional: Environment-Specific Secrets**
-```yaml
-# Development
-AWS_ACCESS_KEY_ID_DEV: "AKIA..."            # Dev AWS credentials
-AWS_SECRET_ACCESS_KEY_DEV: "xyz123..."
-
-# Production
-AWS_ACCESS_KEY_ID_PROD: "AKIA..."           # Prod AWS credentials
-AWS_SECRET_ACCESS_KEY_PROD: "xyz123..."
+SSH_PUBLIC_KEY: "ssh-rsa AAAAB3..."         # SSH public key for EC2 access
+TF_STATE_BUCKET: "health-app-terraform-state" # Terraform state bucket
 ```
 
 ### **Environment-Specific Variables**
@@ -1136,40 +1148,45 @@ AWS_SECRET_ACCESS_KEY_PROD: "xyz123..."
 #### **Development Environment**
 ```yaml
 AWS_REGION: "ap-south-1"
-EKS_CLUSTER_NAME: "health-app-dev"
-CONTAINER_REGISTRY: "ghcr.io"
+K8S_CLUSTER_NAME: "health-app-dev"
+CONTAINER_REGISTRY: "docker.io"
 REGISTRY_NAMESPACE: "dev-team"
-MIN_REPLICAS: "1"
-MAX_REPLICAS: "3"
-KUBECTL_TIMEOUT: "180s"
-CLEANUP_DELAY: "10"
-LB_WAIT_TIME: "30"
+TERRAFORM_VERSION: "1.6.0"
+NETWORK: "lower"  # Shared with test
+DATABASE: "shared"  # Shared RDS instance
 ```
 
 #### **Test Environment**
 ```yaml
 AWS_REGION: "ap-south-1"
-EKS_CLUSTER_NAME: "health-app-test"
-CONTAINER_REGISTRY: "ghcr.io"
+K8S_CLUSTER_NAME: "health-app-test"
+CONTAINER_REGISTRY: "docker.io"
 REGISTRY_NAMESPACE: "test-team"
-MIN_REPLICAS: "2"
-MAX_REPLICAS: "5"
-KUBECTL_TIMEOUT: "240s"
-CLEANUP_DELAY: "20"
-LB_WAIT_TIME: "45"
+TERRAFORM_VERSION: "1.6.0"
+NETWORK: "lower"  # Shared with dev
+DATABASE: "shared"  # Shared RDS instance
 ```
 
 #### **Production Environment**
 ```yaml
-AWS_REGION: "us-east-1"
-EKS_CLUSTER_NAME: "health-app-prod"
-CONTAINER_REGISTRY: "your-company.dkr.ecr.us-east-1.amazonaws.com"
+AWS_REGION: "ap-south-1"
+K8S_CLUSTER_NAME: "health-app-prod"
+CONTAINER_REGISTRY: "docker.io"
 REGISTRY_NAMESPACE: "production"
-MIN_REPLICAS: "3"
-MAX_REPLICAS: "20"
-KUBECTL_TIMEOUT: "600s"
-CLEANUP_DELAY: "120"
-LB_WAIT_TIME: "180"
+TERRAFORM_VERSION: "1.6.0"
+NETWORK: "higher"  # Isolated network
+DATABASE: "dedicated"  # Dedicated RDS instance
+```
+
+#### **Monitoring Environment**
+```yaml
+AWS_REGION: "ap-south-1"
+K8S_CLUSTER_NAME: "health-app-monitoring"
+CONTAINER_REGISTRY: "docker.io"
+REGISTRY_NAMESPACE: "monitoring"
+TERRAFORM_VERSION: "1.6.0"
+NETWORK: "monitoring"  # Monitoring network
+DATABASE: "none"  # No database needed
 ```
 
 ### **Sample Multi-Region Configuration**
@@ -1203,20 +1220,18 @@ REGISTRY_NAMESPACE: "apac-production"
 ```bash
 # Set repository variables using GitHub CLI
 gh variable set AWS_REGION --body "ap-south-1"
-gh variable set EKS_CLUSTER_NAME --body "health-app-cluster"
-gh variable set CONTAINER_REGISTRY --body "ghcr.io"
-gh variable set REGISTRY_NAMESPACE --body "your-organization"
-gh variable set MIN_REPLICAS --body "2"
-gh variable set MAX_REPLICAS --body "10"
+gh variable set K8S_CLUSTER_NAME --body "health-app-cluster"
+gh variable set CONTAINER_REGISTRY --body "docker.io"
+gh variable set REGISTRY_NAMESPACE --body "your-username"
+gh variable set TERRAFORM_VERSION --body "1.6.0"
 
-# Set repository secrets
-gh secret set AWS_ACCESS_KEY_ID --body "AKIA..."
-gh secret set AWS_SECRET_ACCESS_KEY --body "xyz123..."
-gh secret set SLACK_WEBHOOK_URL --body "https://hooks.slack.com/..."
-
-# Set environment-specific variables
-gh variable set AWS_REGION --env dev --body "ap-south-1"
-gh variable set AWS_REGION --env prod --body "us-east-1"
+# Set repository secrets (CRITICAL: Environment-specific kubeconfig)
+gh secret set KUBECONFIG_DEV --body "$(cat ~/.kube/config-dev | base64 -w 0)"
+gh secret set KUBECONFIG_TEST --body "$(cat ~/.kube/config-test | base64 -w 0)"
+gh secret set KUBECONFIG_PROD --body "$(cat ~/.kube/config-prod | base64 -w 0)"
+gh secret set KUBECONFIG_MONITORING --body "$(cat ~/.kube/config-monitoring | base64 -w 0)"
+gh secret set SSH_PUBLIC_KEY --body "$(cat ~/.ssh/id_rsa.pub)"
+gh secret set TF_STATE_BUCKET --body "health-app-terraform-state"
 ```
 
 ---

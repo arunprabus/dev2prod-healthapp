@@ -1,0 +1,145 @@
+name: Core Operations
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # Daily monitoring
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+        - monitor
+        - scale
+        - backup
+        - cleanup
+        - health-check
+        - all
+      environment:
+        description: 'Environment'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+        - all
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    if: github.event.schedule || github.event.inputs.action == 'monitor' || github.event.inputs.action == 'all'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+
+    - name: Monitor environments
+      run: |
+        ENVS="${{ github.event.inputs.environment || 'all' }}"
+        
+        if [[ "$ENVS" == "all" ]]; then
+          ENVS="dev test prod"
+        fi
+        
+        for ENV in $ENVS; do
+          echo "## Monitoring $ENV environment"
+          
+          # Configure kubeconfig for environment
+          mkdir -p ~/.kube
+          if [[ "$ENV" == "dev" && -n "${{ secrets.KUBECONFIG_DEV }}" ]]; then
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
+          elif [[ "$ENV" == "test" && -n "${{ secrets.KUBECONFIG_TEST }}" ]]; then
+            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > ~/.kube/config
+          elif [[ "$ENV" == "prod" && -n "${{ secrets.KUBECONFIG_PROD }}" ]]; then
+            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+          else
+            continue
+          fi
+          
+          chmod 600 ~/.kube/config
+          
+          # Health checks
+          kubectl get nodes || echo "❌ Cluster unreachable"
+          kubectl get pods -n health-app-$ENV || echo "❌ No pods in health-app-$ENV"
+          kubectl top pods -n health-app-$ENV || echo "⚠️ Metrics not available"
+        done
+
+  scale:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'scale' || github.event.inputs.action == 'all'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup kubectl
+      run: |
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+
+    - name: Auto-scale check
+      run: |
+        chmod +x scripts/k8s-auto-scale.sh
+        ./scripts/k8s-auto-scale.sh
+
+  backup:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'backup' || github.event.inputs.action == 'all'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Database backup
+      run: |
+        echo "🔄 Database backup logic here"
+        # Add your backup logic
+
+  cleanup:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'cleanup'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Resource cleanup
+      run: |
+        echo "🧹 Cleanup unused resources"
+        # Add cleanup logic
+
+  health-check:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'health-check' || github.event.inputs.action == 'all'
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Health checks
+      run: |
+        chmod +x scripts/k8s-health-check.sh
+        ./scripts/k8s-health-check.sh
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [monitor, scale, backup, cleanup, health-check]
+    if: always()
+    
+    steps:
+    - name: Generate summary
+      run: |
+        echo "## 🔧 Operations Summary" >> $GITHUB_STEP_SUMMARY
+        echo "* Date: $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "* Action: ${{ github.event.inputs.action || 'scheduled' }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment: ${{ github.event.inputs.environment || 'all' }}" >> $GITHUB_STEP_SUMMARY

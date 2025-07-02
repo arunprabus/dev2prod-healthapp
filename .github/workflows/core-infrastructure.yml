@@ -1,0 +1,116 @@
+name: Core Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+        - deploy
+        - destroy
+        - plan
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - test
+        - prod
+        - monitoring
+        - all
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  infrastructure:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["dev", "test", "prod", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p ~/.kube
+        ENV="${{ matrix.env }}"
+        
+        if [[ "$ENV" == "dev" && -n "${{ secrets.KUBECONFIG_DEV }}" ]]; then
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
+        elif [[ "$ENV" == "test" && -n "${{ secrets.KUBECONFIG_TEST }}" ]]; then
+          echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > ~/.kube/config
+        elif [[ "$ENV" == "prod" && -n "${{ secrets.KUBECONFIG_PROD }}" ]]; then
+          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+        elif [[ "$ENV" == "monitoring" && -n "${{ secrets.KUBECONFIG_MONITORING }}" ]]; then
+          echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > ~/.kube/config
+        else
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+        fi
+        
+        chmod 600 ~/.kube/config
+
+    - name: Terraform Init
+      working-directory: infra
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+          -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
+          -backend-config="region=$AWS_REGION"
+
+    - name: Terraform Plan
+      working-directory: infra
+      if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
+      run: |
+        terraform plan \
+          -var-file="environments/${{ matrix.env }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -out=tfplan
+
+    - name: Terraform Apply
+      working-directory: infra
+      if: github.event.inputs.action == 'deploy'
+      run: terraform apply -auto-approve tfplan
+
+    - name: Terraform Destroy
+      working-directory: infra
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
+      run: |
+        terraform destroy \
+          -var-file="environments/${{ matrix.env }}.tfvars" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -auto-approve
+
+    - name: Generate kubeconfig
+      if: github.event.inputs.action == 'deploy'
+      working-directory: infra
+      run: |
+        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
+        if [[ -n "$CLUSTER_IP" ]]; then
+          chmod +x ../scripts/setup-kubeconfig.sh
+          ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
+          echo "🔗 Update KUBECONFIG_${{ matrix.env | upper }} secret with generated config"
+        fi
+
+    - name: Summary
+      if: always()
+      run: |
+        echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY

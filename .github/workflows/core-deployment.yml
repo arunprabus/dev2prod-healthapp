@@ -1,4 +1,4 @@
-name: Kubernetes Deployment
+name: Core Deployment
 
 on:
   repository_dispatch:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       app:
-        description: 'Application name'
+        description: 'Application'
         required: true
         default: 'health-api'
         type: string
@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       environment:
-        description: 'Target environment'
+        description: 'Environment'
         required: true
         default: 'dev'
         type: choice
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
+    - name: Checkout
       uses: actions/checkout@v4
 
     - name: Setup kubectl
@@ -44,16 +44,12 @@ jobs:
         ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
         
         if [[ "$ENV" == "dev" && -n "${{ secrets.KUBECONFIG_DEV }}" ]]; then
-          echo "Using DEV kubeconfig"
           echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
         elif [[ "$ENV" == "test" && -n "${{ secrets.KUBECONFIG_TEST }}" ]]; then
-          echo "Using TEST kubeconfig"
           echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > ~/.kube/config
         elif [[ "$ENV" == "prod" && -n "${{ secrets.KUBECONFIG_PROD }}" ]]; then
-          echo "Using PROD kubeconfig"
           echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
         else
-          echo "Using default kubeconfig"
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
         fi
         
@@ -69,12 +65,8 @@ jobs:
         echo "app=$APP" >> $GITHUB_OUTPUT
         echo "image=$IMAGE" >> $GITHUB_OUTPUT
         echo "environment=$ENV" >> $GITHUB_OUTPUT
-        
-        echo "Deploying: $APP"
-        echo "Image: $IMAGE"
-        echo "Environment: $ENV"
 
-    - name: Verify cluster connection
+    - name: Verify cluster
       run: |
         kubectl cluster-info
         kubectl get nodes
@@ -84,13 +76,12 @@ jobs:
         APP="${{ steps.deploy-info.outputs.app }}"
         IMAGE="${{ steps.deploy-info.outputs.image }}"
         ENV="${{ steps.deploy-info.outputs.environment }}"
-        
         NAMESPACE="health-app-${ENV}"
         
-        # Create namespace if it doesn't exist
+        # Create namespace
         kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
         
-        # Update deployment using kubectl set image
+        # Update deployment
         kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
         
         # Wait for rollout
@@ -102,21 +93,14 @@ jobs:
         ENV="${{ steps.deploy-info.outputs.environment }}"
         NAMESPACE="health-app-${ENV}"
         
-        echo "Pod status:"
         kubectl get pods -l app=$APP -n $NAMESPACE
-        
-        echo "Service status:"
         kubectl get services -l app=$APP -n $NAMESPACE
 
-    - name: Generate summary
+    - name: Summary
       if: always()
       run: |
-        APP="${{ steps.deploy-info.outputs.app }}"
-        IMAGE="${{ steps.deploy-info.outputs.image }}"
-        ENV="${{ steps.deploy-info.outputs.environment }}"
-        
         echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-        echo "* Application: $APP" >> $GITHUB_STEP_SUMMARY
-        echo "* Image: $IMAGE" >> $GITHUB_STEP_SUMMARY
-        echo "* Environment: $ENV" >> $GITHUB_STEP_SUMMARY
+        echo "* App: ${{ steps.deploy-info.outputs.app }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Image: ${{ steps.deploy-info.outputs.image }}" >> $GITHUB_STEP_SUMMARY
+        echo "* Environment: ${{ steps.deploy-info.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
         echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
