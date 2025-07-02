@@ -67,6 +67,15 @@ mkdir -p /home/ubuntu/.kube
 cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
 chown ubuntu:ubuntu /home/ubuntu/.kube/config
 
+# Set KUBECONFIG environment variable for all users
+echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> /etc/environment
+echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> /home/ubuntu/.bashrc
+echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> /root/.bashrc
+
+# Create kubectl alias for convenience
+echo 'alias k="kubectl"' >> /home/ubuntu/.bashrc
+echo 'alias k="kubectl"' >> /root/.bashrc
+
 echo "K3s installation completed successfully!"
 echo "Cluster: ${cluster_name}"
 echo "Environment: ${environment}"
