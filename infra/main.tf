@@ -23,9 +23,8 @@ provider "kubernetes" {
 }
 
 locals {
-  # Use tags from variables
-  tags = var.tags
-  name_prefix = "${var.cluster_name}-${var.environment}"
+  # Use tags from variables merged with common tags
+  tags = merge(local.common_tags, var.tags)
 
   # Define VPC identifiers for environments
   lower_env_vpc_name = "health-app-dev-vpc"
