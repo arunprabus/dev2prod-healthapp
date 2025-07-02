@@ -36,7 +36,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -127,25 +126,19 @@ jobs:
           chmod +x ../scripts/setup-kubeconfig.sh
           ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
           
-          # Automatically add kubeconfig to GitHub Secrets
+          # Display kubeconfig for manual addition to secrets
           SECRET_NAME="KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]')"
           
           if [[ -f ~/.kube/config-${{ matrix.env }} ]]; then
-            # Install GitHub CLI
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-            sudo apt update && sudo apt install gh -y
-            
-            # Authenticate and add secret
-            echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
-            
-            # Create base64 kubeconfig and add as secret
-            KUBECONFIG_B64=$(base64 -w 0 ~/.kube/config-${{ matrix.env }})
-            echo "$KUBECONFIG_B64" | gh secret set "$SECRET_NAME" --body-file -
-            
-            echo "✅ Kubeconfig automatically added to GitHub Secrets as $SECRET_NAME"
+            echo "✅ Kubeconfig generated successfully"
+            echo "🔗 Add the following to GitHub Secrets as $SECRET_NAME:"
+            echo "---BEGIN KUBECONFIG---"
+            base64 -w 0 ~/.kube/config-${{ matrix.env }}
+            echo ""
+            echo "---END KUBECONFIG---"
+            echo "💡 Go to Settings → Secrets → New secret → Name: $SECRET_NAME"
           else
-            echo "❌ Kubeconfig file not found, cannot add to secrets"
+            echo "❌ Kubeconfig file not found"
           fi
         else
           echo "❌ Cluster IP not available: $CLUSTER_IP"
