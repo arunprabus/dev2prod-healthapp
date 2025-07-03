@@ -67,11 +67,7 @@ variable "snapshot_identifier" {
   default     = null
 }
 
-variable "restore_from_snapshot" {
-  description = "Whether to restore from snapshot (prevents accidental restores)"
-  type        = bool
-  default     = false
-}
+
 
 variable "environment" {
   description = "Environment name"
