@@ -113,6 +113,7 @@ jobs:
       run: |
         # Get cluster IP from Terraform output
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
+        SSH_PRIVATE_KEY="${{ secrets.SSH_PRIVATE_KEY }}"
         
         # Check if output is valid (not empty and not an error)
         if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != *"error"* && "$CLUSTER_IP" != "null" ]]; then
@@ -120,8 +121,8 @@ jobs:
           
           # Setup SSH key
           mkdir -p ~/.ssh
-          if [[ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]]; then
-            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
+          if [[ -n "$SSH_PRIVATE_KEY" ]]; then
+            echo "$SSH_PRIVATE_KEY" > ~/.ssh/aws-key
             chmod 600 ~/.ssh/aws-key
             echo "✅ SSH private key configured"
           else
