@@ -17,6 +17,22 @@ echo "🔧 Setting up kubeconfig for $ENVIRONMENT environment"
 # Create kubeconfig
 mkdir -p ~/.kube
 
+# Get K3s token via SSH
+echo "🔑 Retrieving K3s token from cluster..."
+K3S_TOKEN=$(ssh -i ~/.ssh/aws-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP 'sudo cat /var/lib/rancher/k3s/server/node-token' 2>/dev/null || echo "TOKEN_ERROR")
+
+if [[ "$K3S_TOKEN" == "TOKEN_ERROR" || -z "$K3S_TOKEN" ]]; then
+    echo "❌ Failed to retrieve K3s token from cluster"
+    echo "💡 Cluster may not be ready or SSH access failed"
+    echo "🔗 Manual setup required:"
+    echo "   ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP"
+    echo "   sudo cat /var/lib/rancher/k3s/server/node-token"
+    exit 1
+fi
+
+echo "✅ K3s token retrieved successfully"
+
+# Create kubeconfig
 cat > ~/.kube/config-$ENVIRONMENT << EOF
 apiVersion: v1
 kind: Config
@@ -34,7 +50,7 @@ current-context: health-app-$ENVIRONMENT
 users:
 - name: health-app-$ENVIRONMENT
   user:
-    token: $(ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP 'sudo cat /var/lib/rancher/k3s/server/node-token')
+    token: $K3S_TOKEN
 EOF
 
 # Encode for GitHub Secrets

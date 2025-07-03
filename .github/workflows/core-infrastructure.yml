@@ -149,6 +149,19 @@ jobs:
           
           # Test SSH connection first
           echo "🔍 Testing SSH connection to $CLUSTER_IP..."
+          
+          # Debug SSH connection with verbose output
+          echo "🔍 SSH Debug - Testing connection..."
+          ssh -i ~/.ssh/aws-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no -v ubuntu@$CLUSTER_IP "echo 'SSH connection successful'" 2>&1 | head -20
+          
+          # Check if EC2 instance is running
+          echo "🔍 Checking EC2 instance status..."
+          aws ec2 describe-instances --filters "Name=ip-address,Values=$CLUSTER_IP" --query 'Reservations[].Instances[].State.Name' --output text || echo "Could not check instance status"
+          
+          # Test basic connectivity
+          echo "🔍 Testing basic connectivity..."
+          nc -zv $CLUSTER_IP 22 2>&1 || echo "Port 22 not reachable"
+          
           if ssh -i ~/.ssh/aws-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "echo 'SSH connection successful'" 2>/dev/null; then
             echo "✅ SSH connection successful"
             ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
@@ -156,6 +169,11 @@ jobs:
             echo "❌ SSH connection failed to $CLUSTER_IP"
             echo "🔍 Checking SSH key and cluster status..."
             ls -la ~/.ssh/aws-key || echo "SSH key not found"
+            echo "💡 Possible issues:"
+            echo "   - EC2 instance not fully booted yet"
+            echo "   - Security group blocking SSH (port 22)"
+            echo "   - SSH key mismatch"
+            echo "   - Instance in private subnet"
             echo "💡 Manual kubeconfig setup required"
           fi
           
