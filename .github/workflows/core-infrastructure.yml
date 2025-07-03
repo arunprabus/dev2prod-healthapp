@@ -119,8 +119,18 @@ jobs:
           
           # Setup SSH key
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
-          chmod 600 ~/.ssh/aws-key
+          if [[ -n "${{ secrets.SSH_PRIVATE_KEY }}" ]]; then
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
+            chmod 600 ~/.ssh/aws-key
+            echo "✅ SSH private key configured"
+          else
+            echo "❌ SSH_PRIVATE_KEY secret not found"
+            echo "💡 Add your SSH private key to GitHub Secrets as SSH_PRIVATE_KEY"
+            echo "🔗 Manual kubeconfig setup required:"
+            echo "   ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP"
+            echo "   sudo cat /var/lib/rancher/k3s/server/node-token"
+            exit 1
+          fi
           
           # Generate kubeconfig
           chmod +x ../scripts/setup-kubeconfig.sh
