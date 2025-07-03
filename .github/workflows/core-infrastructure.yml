@@ -25,6 +25,11 @@ on:
         description: 'Type "DESTROY" to confirm'
         required: false
         type: string
+      restore_from_snapshot:
+        description: 'Restore RDS from snapshot'
+        required: false
+        default: false
+        type: boolean
 
 env:
   AWS_REGION: ap-south-1
@@ -90,6 +95,7 @@ jobs:
         terraform plan \
           -var-file="environments/${{ matrix.env }}.tfvars" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -out=tfplan
 
     - name: Terraform Apply
@@ -105,6 +111,7 @@ jobs:
         terraform destroy \
           -var-file="environments/${{ matrix.env }}.tfvars" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -auto-approve
 
     - name: Display kubeconfig setup instructions

@@ -103,6 +103,7 @@ module "rds" {
   backup_retention_period = var.database_config.backup_retention_period
   multi_az                = var.database_config.multi_az
   snapshot_identifier     = var.database_config.snapshot_identifier
+  restore_from_snapshot   = var.restore_from_snapshot
   environment             = var.environment
   tags                    = var.tags
 }

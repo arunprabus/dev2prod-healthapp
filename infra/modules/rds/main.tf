@@ -48,13 +48,13 @@ resource "aws_db_instance" "health_db" {
   storage_type          = "gp2"
   storage_encrypted     = false  # Free tier doesn't support encryption
   
-  # Restore from snapshot if provided
-  snapshot_identifier = var.snapshot_identifier
+  # Restore from snapshot only if explicitly enabled
+  snapshot_identifier = var.restore_from_snapshot ? var.snapshot_identifier : null
   
   # Only set these if NOT restoring from snapshot
-  db_name  = var.snapshot_identifier == null ? var.db_name : null
-  username = var.snapshot_identifier == null ? var.username : null
-  password = var.snapshot_identifier == null ? "changeme123!" : null
+  db_name  = var.restore_from_snapshot && var.snapshot_identifier != null ? null : var.db_name
+  username = var.restore_from_snapshot && var.snapshot_identifier != null ? null : var.username
+  password = var.restore_from_snapshot && var.snapshot_identifier != null ? null : "changeme123!"
   
   vpc_security_group_ids = [aws_security_group.db.id]
   db_subnet_group_name   = aws_db_subnet_group.health_db.name

@@ -33,8 +33,8 @@ database_config = {
   multi_az = false
   backup_retention_period = 7
   subnet_group_name = "health-app-lower-db-subnet-group"
-  # Restore from existing snapshot (ENABLED BY DEFAULT)
-  snapshot_identifier = "healthapidb-snapshot"
+  # Restore from existing snapshot (DISABLED - prevents destroy/recreate)
+  # snapshot_identifier = "healthapidb-snapshot"
 }
 
 # Tags
