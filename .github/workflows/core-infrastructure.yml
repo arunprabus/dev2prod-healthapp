@@ -93,6 +93,7 @@ jobs:
           -out=tfplan
 
     - name: Terraform Apply
+      id: terraform-apply
       working-directory: infra
       if: github.event.inputs.action == 'deploy'
       run: terraform apply -auto-approve tfplan
@@ -129,12 +130,25 @@ jobs:
             echo "🔗 Manual kubeconfig setup required:"
             echo "   ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP"
             echo "   sudo cat /var/lib/rancher/k3s/server/node-token"
-            exit 1
+            echo "⚠️ Infrastructure deployment successful - only kubeconfig generation failed"
+            echo "🛡️ No cleanup needed - infrastructure is ready"
+            exit 0
           fi
           
           # Generate kubeconfig
           chmod +x ../scripts/setup-kubeconfig.sh
-          ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
+          
+          # Test SSH connection first
+          echo "🔍 Testing SSH connection to $CLUSTER_IP..."
+          if ssh -i ~/.ssh/aws-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "echo 'SSH connection successful'" 2>/dev/null; then
+            echo "✅ SSH connection successful"
+            ../scripts/setup-kubeconfig.sh ${{ matrix.env }} $CLUSTER_IP
+          else
+            echo "❌ SSH connection failed to $CLUSTER_IP"
+            echo "🔍 Checking SSH key and cluster status..."
+            ls -la ~/.ssh/aws-key || echo "SSH key not found"
+            echo "💡 Manual kubeconfig setup required"
+          fi
           
           # Display kubeconfig for manual addition to secrets
           SECRET_NAME="KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]')"
@@ -160,10 +174,10 @@ jobs:
         fi
 
     - name: Cleanup on Failure
-      if: failure() && github.event.inputs.action == 'deploy'
+      if: failure() && github.event.inputs.action == 'deploy' && steps.terraform-apply.outcome == 'failure'
       working-directory: infra
       run: |
-        echo "🧹 Infrastructure deployment failed - cleaning up partial resources"
+        echo "🧹 Terraform deployment failed - cleaning up partial resources"
         
         terraform destroy \
           -var-file="environments/${{ matrix.env }}.tfvars" \
