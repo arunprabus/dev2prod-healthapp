@@ -115,6 +115,14 @@ jobs:
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
         SSH_PRIVATE_KEY="${{ secrets.SSH_PRIVATE_KEY }}"
         
+        # Debug: Check if secret exists
+        echo "🔍 Debug: SSH_PRIVATE_KEY length: ${#SSH_PRIVATE_KEY}"
+        if [[ -n "$SSH_PRIVATE_KEY" ]]; then
+          echo "🔍 Debug: SSH_PRIVATE_KEY secret found"
+        else
+          echo "🔍 Debug: SSH_PRIVATE_KEY secret is empty or missing"
+        fi
+        
         # Check if output is valid (not empty and not an error)
         if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != *"error"* && "$CLUSTER_IP" != "null" ]]; then
           echo "✅ Cluster IP found: $CLUSTER_IP"
