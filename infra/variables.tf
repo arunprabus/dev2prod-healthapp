@@ -143,3 +143,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "restore_from_snapshot" {
+  description = "Whether to restore from snapshot"
+  type        = bool
+  default     = false
+}
