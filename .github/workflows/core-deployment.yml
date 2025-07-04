@@ -41,11 +41,8 @@ jobs:
 
     - name: Configure kubeconfig
       run: |
-        ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
-        
-        # Create simple kubeconfig with token auth
         mkdir -p ~/.kube
-        cat > ~/.kube/config << EOF
+        cat > ~/.kube/config <<'EOF'
 apiVersion: v1
 clusters:
 - cluster:
@@ -62,11 +59,13 @@ kind: Config
 users:
 - name: k3s-user
   user:
-    token: ${{ secrets.K3S_TOKEN }}
+    token: TOKEN_PLACEHOLDER
 EOF
         
+        # Replace token placeholder
+        sed -i "s/TOKEN_PLACEHOLDER/${{ secrets.K3S_TOKEN }}/g" ~/.kube/config
         chmod 600 ~/.kube/config
-        echo "Using simple token-based kubeconfig"
+        echo "Kubeconfig configured"
 
     - name: Extract deployment info
       id: deploy-info
