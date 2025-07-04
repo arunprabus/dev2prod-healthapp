@@ -86,44 +86,41 @@ jobs:
         # API test
         curl -k -m 10 https://$CLUSTER_IP:6443/ || echo "API endpoint test completed"
 
-    - name: Get fresh K3s token
-      id: fresh-token
+    - name: Get fresh kubeconfig
+      id: fresh-config
       run: |
         CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
         
-        # Try to get fresh token via SSH
-        echo "Getting fresh K3s token from cluster..."
+        echo "Getting fresh kubeconfig from cluster..."
         
         # Create SSH key file
         mkdir -p ~/.ssh
         echo "$SSH_PRIVATE_KEY" > ~/.ssh/aws-key
         chmod 600 ~/.ssh/aws-key
         
-        # Get fresh token
-        FRESH_TOKEN=$(ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /var/lib/rancher/k3s/server/node-token' 2>/dev/null || echo "")
+        # Try SSH with debug
+        echo "Testing SSH connection..."
+        ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP 'echo "SSH successful"' || echo "SSH failed"
         
-        if [[ -n "$FRESH_TOKEN" ]]; then
-          echo "Fresh token retrieved (length: ${#FRESH_TOKEN})"
-          echo "fresh_token=$FRESH_TOKEN" >> $GITHUB_OUTPUT
+        # Get fresh kubeconfig and modify it
+        if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config 2>/dev/null; then
+          echo "Fresh kubeconfig retrieved"
+          # Replace 127.0.0.1 with actual cluster IP
+          sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > ~/.kube/config
+          chmod 600 ~/.kube/config
+          echo "config_ready=true" >> $GITHUB_OUTPUT
         else
-          echo "Failed to get fresh token, using stored token"
-          echo "fresh_token=$K3S_TOKEN" >> $GITHUB_OUTPUT
+          echo "Failed to get fresh kubeconfig, will use token method"
+          echo "config_ready=false" >> $GITHUB_OUTPUT
         fi
       env:
-        K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
         SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 
-    - name: Configure kubeconfig
+    - name: Configure kubeconfig fallback
+      if: steps.fresh-config.outputs.config_ready != 'true'
       run: |
+        echo "Using fallback token method..."
         CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
-        TOKEN="${{ steps.fresh-token.outputs.fresh_token }}"
-        
-        if [[ -z "$TOKEN" ]]; then
-          echo "ERROR: No token available!"
-          exit 1
-        fi
-        
-        echo "Using token (length: ${#TOKEN})"
         
         mkdir -p ~/.kube
         echo "apiVersion: v1" > ~/.kube/config
@@ -142,22 +139,9 @@ jobs:
         echo "users:" >> ~/.kube/config
         echo "- name: k3s-user" >> ~/.kube/config
         echo "  user:" >> ~/.kube/config
-        echo "    token: $TOKEN" >> ~/.kube/config
+        echo "    token: $K3S_TOKEN" >> ~/.kube/config
         chmod 600 ~/.kube/config
-        echo "Kubeconfig configured for $CLUSTER_IP"
-        
-        # Debug: Check if token is set (show first 10 chars only)
-        if [[ -n "$TOKEN" ]]; then
-          echo "Token found: ${TOKEN:0:10}..."
-        else
-          echo "ERROR: Token is empty!"
-          exit 1
-        fi
-        
-        # Debug: Show kubeconfig structure (without token)
-        echo "=== Kubeconfig structure ==="
-        cat ~/.kube/config | grep -v "token:"
-        echo "=== End kubeconfig ==="
+        echo "Fallback kubeconfig configured"
       env:
         K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
 
@@ -178,15 +162,12 @@ jobs:
         kubectl config view --minify
         echo "=== Current context ==="
         kubectl config current-context
-        echo "=== Test with curl ==="
-        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
-        FRESH_TOKEN="${{ steps.fresh-token.outputs.fresh_token }}"
-        curl -k -H "Authorization: Bearer $FRESH_TOKEN" https://$CLUSTER_IP:6443/api/v1/namespaces || echo "Direct API test completed"
-        
-        echo "=== Token validation ==="
-        echo "Fresh token starts with: ${FRESH_TOKEN:0:20}..."
-        echo "Fresh token ends with: ...${FRESH_TOKEN: -20}"
-        echo "Fresh token contains :: ? $(echo $FRESH_TOKEN | grep -o '::' || echo 'NO')"
+        echo "=== Kubeconfig status ==="
+        if [[ "${{ steps.fresh-config.outputs.config_ready }}" == "true" ]]; then
+          echo "Using fresh kubeconfig from cluster"
+        else
+          echo "Using fallback token method"
+        fi
         
     - name: Verify cluster
       run: |
