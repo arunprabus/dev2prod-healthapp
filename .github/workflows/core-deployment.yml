@@ -89,6 +89,14 @@ jobs:
     - name: Configure kubeconfig
       run: |
         CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
+        
+        # Check if token exists
+        if [[ -z "${{ secrets.K3S_TOKEN }}" ]]; then
+          echo "ERROR: K3S_TOKEN secret is missing!"
+          echo "Please add K3S_TOKEN secret to repository settings"
+          exit 1
+        fi
+        
         mkdir -p ~/.kube
         echo "apiVersion: v1" > ~/.kube/config
         echo "clusters:" >> ~/.kube/config
@@ -109,6 +117,9 @@ jobs:
         echo "    token: ${{ secrets.K3S_TOKEN }}" >> ~/.kube/config
         chmod 600 ~/.kube/config
         echo "Kubeconfig configured for $CLUSTER_IP"
+        echo "Token length: ${#K3S_TOKEN}" # Debug info
+      env:
+        K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
 
     - name: Extract deployment info
       id: deploy-info
