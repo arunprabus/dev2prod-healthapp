@@ -119,17 +119,13 @@ jobs:
     - name: Configure kubeconfig fallback
       if: steps.fresh-config.outputs.config_ready != 'true'
       run: |
-        echo "Using pre-stored kubeconfig..."
+        echo "Using direct kubectl with server and token..."
+        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
         
-        if [[ -n "$KUBECONFIG_B64" ]]; then
-          echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
-          echo "Pre-stored kubeconfig configured"
-        else
-          echo "ERROR: No kubeconfig available!"
-          echo "Please add KUBECONFIG_B64 secret with base64 encoded kubeconfig"
-          exit 1
-        fi
+        # Skip kubeconfig, use kubectl directly with server and insecure flag
+        echo "Will use kubectl with --server and --insecure-skip-tls-verify flags"
+        echo "cluster_ip=$CLUSTER_IP" > /tmp/cluster-info
+        echo "direct_mode=true" >> $GITHUB_OUTPUT
       env:
         KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
 
@@ -159,8 +155,15 @@ jobs:
         
     - name: Verify cluster
       run: |
-        kubectl cluster-info
-        kubectl get nodes
+        if [[ "${{ steps.fresh-config.outputs.config_ready }}" == "true" ]]; then
+          kubectl cluster-info
+          kubectl get nodes
+        else
+          CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
+          echo "Using direct kubectl commands..."
+          kubectl --server=https://$CLUSTER_IP:6443 --insecure-skip-tls-verify=true cluster-info
+          kubectl --server=https://$CLUSTER_IP:6443 --insecure-skip-tls-verify=true get nodes
+        fi
 
     - name: Deploy application
       run: |
