@@ -119,31 +119,19 @@ jobs:
     - name: Configure kubeconfig fallback
       if: steps.fresh-config.outputs.config_ready != 'true'
       run: |
-        echo "Using fallback token method..."
-        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
+        echo "Using pre-stored kubeconfig..."
         
-        mkdir -p ~/.kube
-        echo "apiVersion: v1" > ~/.kube/config
-        echo "clusters:" >> ~/.kube/config
-        echo "- cluster:" >> ~/.kube/config
-        echo "    server: https://$CLUSTER_IP:6443" >> ~/.kube/config
-        echo "    insecure-skip-tls-verify: true" >> ~/.kube/config
-        echo "  name: k3s-cluster" >> ~/.kube/config
-        echo "contexts:" >> ~/.kube/config
-        echo "- context:" >> ~/.kube/config
-        echo "    cluster: k3s-cluster" >> ~/.kube/config
-        echo "    user: k3s-user" >> ~/.kube/config
-        echo "  name: k3s-context" >> ~/.kube/config
-        echo "current-context: k3s-context" >> ~/.kube/config
-        echo "kind: Config" >> ~/.kube/config
-        echo "users:" >> ~/.kube/config
-        echo "- name: k3s-user" >> ~/.kube/config
-        echo "  user:" >> ~/.kube/config
-        echo "    token: $K3S_TOKEN" >> ~/.kube/config
-        chmod 600 ~/.kube/config
-        echo "Fallback kubeconfig configured"
+        if [[ -n "$KUBECONFIG_B64" ]]; then
+          echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          echo "Pre-stored kubeconfig configured"
+        else
+          echo "ERROR: No kubeconfig available!"
+          echo "Please add KUBECONFIG_B64 secret with base64 encoded kubeconfig"
+          exit 1
+        fi
       env:
-        K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
+        KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
 
     - name: Extract deployment info
       id: deploy-info
