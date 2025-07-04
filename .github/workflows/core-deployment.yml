@@ -127,6 +127,11 @@ jobs:
           echo "ERROR: Token is empty!"
           exit 1
         fi
+        
+        # Debug: Show kubeconfig structure (without token)
+        echo "=== Kubeconfig structure ==="
+        cat ~/.kube/config | grep -v "token:"
+        echo "=== End kubeconfig ==="
       env:
         K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
 
@@ -141,6 +146,14 @@ jobs:
         echo "image=$IMAGE" >> $GITHUB_OUTPUT
         echo "environment=$ENV" >> $GITHUB_OUTPUT
 
+    - name: Debug kubeconfig
+      run: |
+        echo "=== Testing kubeconfig ==="
+        kubectl config view --minify
+        echo "=== Current context ==="
+        kubectl config current-context
+        echo "=== Cluster info test ==="
+        
     - name: Verify cluster
       run: |
         kubectl cluster-info
