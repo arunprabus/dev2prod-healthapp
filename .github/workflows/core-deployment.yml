@@ -42,30 +42,31 @@ jobs:
     - name: Configure kubeconfig
       run: |
         ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
-        INFRA_ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
         
-        # Map app environment to infrastructure network
-        if [[ "$ENV" == "prod" ]]; then
-          INFRA_ENV="higher"
-        else
-          INFRA_ENV="lower"  # dev and test both use lower network
-        fi
-        
-        SECRET_NAME="KUBECONFIG_$(echo $INFRA_ENV | tr '[:lower:]' '[:upper:]')"
-        
-        if [[ "$INFRA_ENV" == "lower" && -n "${{ secrets.KUBECONFIG_LOWER }}" ]]; then
-          echo "${{ secrets.KUBECONFIG_LOWER }}" | base64 -d > ~/.kube/config
-        elif [[ "$INFRA_ENV" == "higher" && -n "${{ secrets.KUBECONFIG_HIGHER }}" ]]; then
-          echo "${{ secrets.KUBECONFIG_HIGHER }}" | base64 -d > ~/.kube/config
-        elif [[ -n "${{ secrets.KUBECONFIG }}" ]]; then
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
-        else
-          echo "❌ No kubeconfig found for $INFRA_ENV network"
-          exit 1
-        fi
+        # Create simple kubeconfig with token auth
+        mkdir -p ~/.kube
+        cat > ~/.kube/config << EOF
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://43.205.211.129:6443
+    insecure-skip-tls-verify: true
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    user: k3s-user
+  name: k3s-context
+current-context: k3s-context
+kind: Config
+users:
+- name: k3s-user
+  user:
+    token: ${{ secrets.K3S_TOKEN }}
+EOF
         
         chmod 600 ~/.kube/config
-        echo "✅ Using kubeconfig for $INFRA_ENV network (app env: $ENV)"
+        echo "✅ Using simple token-based kubeconfig"
 
     - name: Extract deployment info
       id: deploy-info
