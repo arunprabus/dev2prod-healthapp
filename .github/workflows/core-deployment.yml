@@ -39,13 +39,52 @@ jobs:
         sudo mv kubectl /usr/local/bin/
         mkdir -p ~/.kube
 
+    - name: Get cluster IP dynamically
+      id: cluster-ip
+      run: |
+        # Get cluster IP from Terraform state or AWS
+        CLUSTER_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=*k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+        
+        if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+          echo "Failed to get cluster IP"
+          exit 1
+        fi
+        
+        echo "cluster_ip=$CLUSTER_IP" >> $GITHUB_OUTPUT
+        echo "Found cluster IP: $CLUSTER_IP"
+
+    - name: Test connectivity
+      run: |
+        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
+        echo "Testing connectivity to $CLUSTER_IP"
+        
+        # Ping test
+        if ping -c 3 $CLUSTER_IP; then
+          echo "Ping successful"
+        else
+          echo "Ping failed"
+        fi
+        
+        # Port test
+        if timeout 10 bash -c "</dev/tcp/$CLUSTER_IP/6443"; then
+          echo "Port 6443 is reachable"
+        else
+          echo "Port 6443 is not reachable"
+        fi
+        
+        # API test
+        curl -k -m 10 https://$CLUSTER_IP:6443/ || echo "API endpoint test completed"
+
     - name: Configure kubeconfig
       run: |
+        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
         mkdir -p ~/.kube
         echo "apiVersion: v1" > ~/.kube/config
         echo "clusters:" >> ~/.kube/config
         echo "- cluster:" >> ~/.kube/config
-        echo "    server: https://43.205.211.129:6443" >> ~/.kube/config
+        echo "    server: https://$CLUSTER_IP:6443" >> ~/.kube/config
         echo "    insecure-skip-tls-verify: true" >> ~/.kube/config
         echo "  name: k3s-cluster" >> ~/.kube/config
         echo "contexts:" >> ~/.kube/config
@@ -60,7 +99,7 @@ jobs:
         echo "  user:" >> ~/.kube/config
         echo "    token: ${{ secrets.K3S_TOKEN }}" >> ~/.kube/config
         chmod 600 ~/.kube/config
-        echo "Kubeconfig configured"
+        echo "Kubeconfig configured for $CLUSTER_IP"
 
     - name: Extract deployment info
       id: deploy-info
