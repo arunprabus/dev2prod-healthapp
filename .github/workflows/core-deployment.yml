@@ -91,11 +91,13 @@ jobs:
         CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
         
         # Check if token exists
-        if [[ -z "${{ secrets.K3S_TOKEN }}" ]]; then
-          echo "ERROR: K3S_TOKEN secret is missing!"
-          echo "Please add K3S_TOKEN secret to repository settings"
+        if [[ -z "$K3S_TOKEN" ]]; then
+          echo "ERROR: K3S_TOKEN secret is missing or empty!"
+          echo "Please verify K3S_TOKEN is added to repository secrets"
           exit 1
         fi
+        
+        echo "Token received (length: ${#K3S_TOKEN})"
         
         mkdir -p ~/.kube
         echo "apiVersion: v1" > ~/.kube/config
@@ -117,7 +119,14 @@ jobs:
         echo "    token: ${{ secrets.K3S_TOKEN }}" >> ~/.kube/config
         chmod 600 ~/.kube/config
         echo "Kubeconfig configured for $CLUSTER_IP"
-        echo "Token length: ${#K3S_TOKEN}" # Debug info
+        
+        # Debug: Check if token is set (show first 10 chars only)
+        if [[ -n "$K3S_TOKEN" ]]; then
+          echo "Token found: ${K3S_TOKEN:0:10}..."
+        else
+          echo "ERROR: Token is empty!"
+          exit 1
+        fi
       env:
         K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
 
