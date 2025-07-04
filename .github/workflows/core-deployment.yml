@@ -42,18 +42,30 @@ jobs:
     - name: Configure kubeconfig
       run: |
         ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
+        INFRA_ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
         
-        if [[ "$ENV" == "dev" && -n "${{ secrets.KUBECONFIG_DEV }}" ]]; then
-          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
-        elif [[ "$ENV" == "test" && -n "${{ secrets.KUBECONFIG_TEST }}" ]]; then
-          echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > ~/.kube/config
-        elif [[ "$ENV" == "prod" && -n "${{ secrets.KUBECONFIG_PROD }}" ]]; then
-          echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
+        # Map app environment to infrastructure network
+        if [[ "$ENV" == "prod" ]]; then
+          INFRA_ENV="higher"
         else
+          INFRA_ENV="lower"  # dev and test both use lower network
+        fi
+        
+        SECRET_NAME="KUBECONFIG_$(echo $INFRA_ENV | tr '[:lower:]' '[:upper:]')"
+        
+        if [[ "$INFRA_ENV" == "lower" && -n "${{ secrets.KUBECONFIG_LOWER }}" ]]; then
+          echo "${{ secrets.KUBECONFIG_LOWER }}" | base64 -d > ~/.kube/config
+        elif [[ "$INFRA_ENV" == "higher" && -n "${{ secrets.KUBECONFIG_HIGHER }}" ]]; then
+          echo "${{ secrets.KUBECONFIG_HIGHER }}" | base64 -d > ~/.kube/config
+        elif [[ -n "${{ secrets.KUBECONFIG }}" ]]; then
           echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+        else
+          echo "❌ No kubeconfig found for $INFRA_ENV network"
+          exit 1
         fi
         
         chmod 600 ~/.kube/config
+        echo "✅ Using kubeconfig for $INFRA_ENV network (app env: $ENV)"
 
     - name: Extract deployment info
       id: deploy-info
@@ -81,8 +93,25 @@ jobs:
         # Create namespace
         kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
         
-        # Update deployment
-        kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
+        # Check if deployment exists
+        if kubectl get deployment $APP -n $NAMESPACE >/dev/null 2>&1; then
+          echo "🔄 Updating existing deployment"
+          kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
+        else
+          echo "🆕 Creating new deployment"
+          # Apply K8s manifests if they exist
+          if [[ -d "k8s" ]]; then
+            # Update manifests with correct values
+            sed -i "s|namespace: health-app-dev|namespace: $NAMESPACE|g" k8s/*.yaml
+            sed -i "s|environment: dev|environment: $ENV|g" k8s/*.yaml
+            sed -i "s|arunprabusiva/health-api:latest|$IMAGE|g" k8s/*.yaml
+            kubectl apply -f k8s/ -n $NAMESPACE
+          else
+            # Create basic deployment
+            kubectl create deployment $APP --image=$IMAGE -n $NAMESPACE
+            kubectl expose deployment $APP --port=80 --target-port=8080 -n $NAMESPACE
+          fi
+        fi
         
         # Wait for rollout
         kubectl rollout status deployment/$APP -n $NAMESPACE --timeout=300s
