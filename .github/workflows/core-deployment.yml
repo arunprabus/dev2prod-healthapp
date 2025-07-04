@@ -152,7 +152,16 @@ jobs:
         kubectl config view --minify
         echo "=== Current context ==="
         kubectl config current-context
-        echo "=== Cluster info test ==="
+        echo "=== Test with curl ==="
+        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
+        curl -k -H "Authorization: Bearer $K3S_TOKEN" https://$CLUSTER_IP:6443/api/v1/namespaces || echo "Direct API test completed"
+        
+        echo "=== Token validation ==="
+        echo "Token starts with: ${K3S_TOKEN:0:20}..."
+        echo "Token ends with: ...${K3S_TOKEN: -20}"
+        echo "Token contains :: ? $(echo $K3S_TOKEN | grep -o '::' || echo 'NO')"
+      env:
+        K3S_TOKEN: ${{ secrets.K3S_TOKEN }}
         
     - name: Verify cluster
       run: |
