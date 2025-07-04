@@ -66,7 +66,7 @@ users:
 EOF
         
         chmod 600 ~/.kube/config
-        echo "✅ Using simple token-based kubeconfig"
+        echo "Using simple token-based kubeconfig"
 
     - name: Extract deployment info
       id: deploy-info
@@ -96,10 +96,10 @@ EOF
         
         # Check if deployment exists
         if kubectl get deployment $APP -n $NAMESPACE >/dev/null 2>&1; then
-          echo "🔄 Updating existing deployment"
+          echo "Updating existing deployment"
           kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
         else
-          echo "🆕 Creating new deployment"
+          echo "Creating new deployment"
           # Apply K8s manifests if they exist
           if [[ -d "k8s" ]]; then
             # Update manifests with correct values
@@ -129,7 +129,7 @@ EOF
     - name: Summary
       if: always()
       run: |
-        echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
         echo "* App: ${{ steps.deploy-info.outputs.app }}" >> $GITHUB_STEP_SUMMARY
         echo "* Image: ${{ steps.deploy-info.outputs.image }}" >> $GITHUB_STEP_SUMMARY
         echo "* Environment: ${{ steps.deploy-info.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
