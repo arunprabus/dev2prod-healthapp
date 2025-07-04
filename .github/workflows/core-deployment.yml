@@ -116,7 +116,7 @@ jobs:
         echo "users:" >> ~/.kube/config
         echo "- name: k3s-user" >> ~/.kube/config
         echo "  user:" >> ~/.kube/config
-        echo "    token: ${{ secrets.K3S_TOKEN }}" >> ~/.kube/config
+        echo "    token: $K3S_TOKEN" >> ~/.kube/config
         chmod 600 ~/.kube/config
         echo "Kubeconfig configured for $CLUSTER_IP"
         
