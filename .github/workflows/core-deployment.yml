@@ -44,6 +44,7 @@ jobs:
       run: |
         # Get cluster IP from Terraform state or AWS
         CLUSTER_IP=$(aws ec2 describe-instances \
+          --region ap-south-1 \
           --filters "Name=tag:Name,Values=*k3s-node" "Name=instance-state-name,Values=running" \
           --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
         
