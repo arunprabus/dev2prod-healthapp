@@ -125,7 +125,7 @@ jobs:
             
             # Use the same script as infrastructure workflow
             chmod +x scripts/generate-kubeconfig.sh
-            ./scripts/generate-kubeconfig.sh "$CLUSTER_IP" ~/.kube/config "unused"
+            ./scripts/generate-kubeconfig.sh "$CLUSTER_IP" ~/.kube/config
           fi
           
           chmod 600 ~/.kube/config
