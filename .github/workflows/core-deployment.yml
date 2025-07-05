@@ -97,6 +97,13 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
           chmod 600 ~/.ssh/aws-key
           
+          # Test SSH key format
+          if ! ssh-keygen -l -f ~/.ssh/aws-key >/dev/null 2>&1; then
+            echo "❌ Invalid SSH private key format"
+            echo "Please ensure SSH_PRIVATE_KEY secret contains a valid private key"
+            exit 1
+          fi
+          
           # Get kubeconfig from cluster
           if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config; then
             sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > ~/.kube/config
