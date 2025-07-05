@@ -211,12 +211,77 @@ jobs:
       if: always()
       working-directory: infra
       run: |
-        echo "## Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-        echo "* Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-        echo "* Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         
         if [[ "${{ job.status }}" == "success" && "${{ github.event.inputs.action }}" == "deploy" ]]; then
+          echo "### ✅ Resources Created" >> $GITHUB_STEP_SUMMARY
+          
+          # Get Terraform outputs
           CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "Not available")
-          echo "* Cluster IP: $CLUSTER_IP" >> $GITHUB_STEP_SUMMARY
-          echo "* Ready for deployment" >> $GITHUB_STEP_SUMMARY
+          DB_ENDPOINT=$(terraform output -raw db_instance_endpoint 2>/dev/null || echo "Not available")
+          VPC_ID=$(terraform output -raw vpc_id 2>/dev/null || echo "Not available")
+          
+          echo "- **VPC:** $VPC_ID" >> $GITHUB_STEP_SUMMARY
+          echo "- **K3s Cluster:** $CLUSTER_IP:6443" >> $GITHUB_STEP_SUMMARY
+          echo "- **Database:** $DB_ENDPOINT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📁 S3 Kubeconfig Files" >> $GITHUB_STEP_SUMMARY
+          
+          # Check kubeconfig files in S3
+          S3_BUCKET="s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig"
+          
+          if aws s3 ls "$S3_BUCKET/${{ matrix.env }}-network.yaml" >/dev/null 2>&1; then
+            echo "- ✅ **${{ matrix.env }}-network.yaml** - Uploaded successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ❌ **${{ matrix.env }}-network.yaml** - Upload failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          case "${{ matrix.env }}" in
+            "lower")
+              if aws s3 ls "$S3_BUCKET/dev-network.yaml" >/dev/null 2>&1; then
+                echo "- ✅ **dev-network.yaml** - Copy created" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- ❌ **dev-network.yaml** - Copy failed" >> $GITHUB_STEP_SUMMARY
+              fi
+              if aws s3 ls "$S3_BUCKET/test-network.yaml" >/dev/null 2>&1; then
+                echo "- ✅ **test-network.yaml** - Copy created" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- ❌ **test-network.yaml** - Copy failed" >> $GITHUB_STEP_SUMMARY
+              fi
+              ;;
+            "higher")
+              if aws s3 ls "$S3_BUCKET/prod-network.yaml" >/dev/null 2>&1; then
+                echo "- ✅ **prod-network.yaml** - Copy created" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "- ❌ **prod-network.yaml** - Copy failed" >> $GITHUB_STEP_SUMMARY
+              fi
+              ;;
+          esac
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚀 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Run **Core Deployment** workflow" >> $GITHUB_STEP_SUMMARY
+          echo "2. Select environment: dev/test/prod" >> $GITHUB_STEP_SUMMARY
+          echo "3. Kubeconfig will be auto-downloaded from S3" >> $GITHUB_STEP_SUMMARY
+          
+        elif [[ "${{ job.status }}" == "success" && "${{ github.event.inputs.action }}" == "destroy" ]]; then
+          echo "### 🗑️ Resources Destroyed" >> $GITHUB_STEP_SUMMARY
+          echo "- All infrastructure resources removed" >> $GITHUB_STEP_SUMMARY
+          echo "- Kubeconfig files cleaned from S3" >> $GITHUB_STEP_SUMMARY
+          
+        elif [[ "${{ job.status }}" == "success" && "${{ github.event.inputs.action }}" == "plan" ]]; then
+          echo "### 📋 Plan Generated" >> $GITHUB_STEP_SUMMARY
+          echo "- Review the plan output above" >> $GITHUB_STEP_SUMMARY
+          echo "- Run deploy action to apply changes" >> $GITHUB_STEP_SUMMARY
+          
+        elif [[ "${{ job.status }}" == "failure" ]]; then
+          echo "### ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+          echo "- Check logs for error details" >> $GITHUB_STEP_SUMMARY
+          echo "- Partial resources may have been cleaned up" >> $GITHUB_STEP_SUMMARY
+          echo "- Safe to retry deployment" >> $GITHUB_STEP_SUMMARY
         fi
