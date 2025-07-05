@@ -28,8 +28,7 @@ kind: Config
 preferences: {}
 users:
 - name: default
-  user:
-    token: ${AUTH_TOKEN}
+  user: {}
 EOF
 
 echo "✅ Kubeconfig written to $OUTPUT_FILE"
