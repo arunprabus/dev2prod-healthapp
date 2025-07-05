@@ -53,94 +53,85 @@ jobs:
       run: |
         mkdir -p ~/.kube
         
-        # Determine environment-specific kubeconfig path
         ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
+        echo "🔧 Setting up kubeconfig for environment: $ENV"
         
-        # Map environment to network and try multiple S3 paths
+        # Define S3 paths to try for each environment
         case $ENV in
           "dev")
             KUBECONFIG_PATHS=("kubeconfig/dev-network.yaml" "kubeconfig/lower-network.yaml")
+            NETWORK="lower"
             ;;
           "test")
             KUBECONFIG_PATHS=("kubeconfig/test-network.yaml" "kubeconfig/lower-network.yaml")
+            NETWORK="lower"
             ;;
           "prod")
             KUBECONFIG_PATHS=("kubeconfig/prod-network.yaml" "kubeconfig/higher-network.yaml")
+            NETWORK="higher"
             ;;
           "monitoring")
             KUBECONFIG_PATHS=("kubeconfig/monitoring-network.yaml")
+            NETWORK="monitoring"
             ;;
           *)
             KUBECONFIG_PATHS=("kubeconfig/lower-network.yaml")
+            NETWORK="lower"
             ;;
         esac
         
-        echo "Trying to download kubeconfig for $ENV environment..."
+        echo "📥 Attempting to download kubeconfig from S3..."
         
-        # Try to download from S3 (try multiple paths)
+        # Try S3 download with multiple paths
         KUBECONFIG_FOUND=false
         for KUBECONFIG_PATH in "${KUBECONFIG_PATHS[@]}"; do
-          echo "Trying S3 path: $KUBECONFIG_PATH"
+          echo "  Trying: s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH"
           if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH ~/.kube/config 2>/dev/null; then
-            echo "✅ Kubeconfig downloaded from S3: $KUBECONFIG_PATH"
+            echo "✅ Downloaded kubeconfig from S3: $KUBECONFIG_PATH"
             KUBECONFIG_FOUND=true
             break
           fi
         done
         
+        # Fallback to dynamic generation if S3 fails
         if [[ "$KUBECONFIG_FOUND" == "false" ]]; then
-          echo "⚠️ Kubeconfig not found in S3, generating dynamically..."
+          echo "⚠️ Kubeconfig not found in S3, generating from cluster..."
           
-          # Get cluster IP from AWS based on environment
-          case $ENV in
-            "dev"|"test")
-              TAG_FILTER="*lower*k3s*"
-              ;;
-            "prod")
-              TAG_FILTER="*higher*k3s*"
-              ;;
-            "monitoring")
-              TAG_FILTER="*monitoring*k3s*"
-              ;;
-            *)
-              TAG_FILTER="*k3s*"
-              ;;
-          esac
+          # Find cluster by network tags
+          TAG_FILTER="*${NETWORK}*k3s*"
+          echo "🔍 Searching for cluster with tag: $TAG_FILTER"
           
           CLUSTER_IP=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
           
           if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-            echo "❌ No running K3s cluster found for environment: $ENV"
+            echo "❌ No running cluster found for $ENV environment ($NETWORK network)"
+            echo "💡 Please run: Actions → Core Infrastructure → deploy → $NETWORK"
             exit 1
           fi
           
-          echo "Found cluster IP: $CLUSTER_IP"
+          echo "🌐 Found cluster IP: $CLUSTER_IP"
           
-          # Create SSH key
+          # Setup SSH
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
           chmod 600 ~/.ssh/aws-key
           
-          # Test SSH key format
-          if ! ssh-keygen -l -f ~/.ssh/aws-key >/dev/null 2>&1; then
-            echo "❌ Invalid SSH private key format"
-            echo "Please ensure SSH_PRIVATE_KEY secret contains a valid private key"
-            exit 1
-          fi
-          
-          # Get kubeconfig from cluster
-          if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config; then
+          # Generate kubeconfig from cluster
+          echo "🔑 Retrieving kubeconfig from cluster..."
+          if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config 2>/dev/null; then
             sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > ~/.kube/config
-            echo "✅ Kubeconfig generated from cluster"
+            echo "✅ Generated kubeconfig from cluster"
           else
-            echo "❌ Failed to get kubeconfig from cluster"
+            echo "❌ Failed to retrieve kubeconfig from cluster"
+            echo "🔧 Check SSH_PRIVATE_KEY secret and cluster accessibility"
             exit 1
           fi
         fi
         
         chmod 600 ~/.kube/config
+        echo "🎯 Kubeconfig ready for $ENV environment"
 
     - name: Extract deployment info
       id: deploy-info
@@ -155,14 +146,27 @@ jobs:
 
     - name: Verify cluster connection
       run: |
-        echo "=== Testing kubeconfig ==="
-        kubectl config view --minify
-        echo "=== Current context ==="
+        ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
+        echo "🔍 Verifying cluster connection for $ENV environment"
+        echo ""
+        
+        echo "📋 Kubeconfig details:"
+        kubectl config view --minify --output=yaml | head -20
+        echo ""
+        
+        echo "🎯 Current context:"
         kubectl config current-context
-        echo "=== Cluster info ==="
-        kubectl cluster-info
-        echo "=== Nodes ==="
-        kubectl get nodes
+        echo ""
+        
+        echo "🌐 Cluster info:"
+        kubectl cluster-info --request-timeout=30s
+        echo ""
+        
+        echo "🖥️ Cluster nodes:"
+        kubectl get nodes -o wide
+        echo ""
+        
+        echo "✅ Cluster connection verified for $ENV environment"
 
     - name: Deploy application
       run: |
@@ -171,31 +175,52 @@ jobs:
         ENV="${{ steps.deploy-info.outputs.environment }}"
         NAMESPACE="health-app-${ENV}"
         
+        echo "🚀 Deploying $APP to $ENV environment"
+        echo "  Image: $IMAGE"
+        echo "  Namespace: $NAMESPACE"
+        echo ""
+        
         # Create namespace
+        echo "📋 Creating namespace: $NAMESPACE"
         kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
         
         # Check if deployment exists
         if kubectl get deployment $APP -n $NAMESPACE >/dev/null 2>&1; then
-          echo "Updating existing deployment"
+          echo "🔄 Updating existing deployment"
           kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
+          kubectl annotate deployment/$APP deployment.kubernetes.io/revision- -n $NAMESPACE
         else
-          echo "Creating new deployment"
-          # Apply K8s manifests if they exist
-          if [[ -d "k8s" ]]; then
-            # Update manifests with correct values
-            sed -i "s|namespace: health-app-dev|namespace: $NAMESPACE|g" k8s/*.yaml
-            sed -i "s|environment: dev|environment: $ENV|g" k8s/*.yaml
-            sed -i "s|arunprabusiva/health-api:latest|$IMAGE|g" k8s/*.yaml
-            kubectl apply -f k8s/ -n $NAMESPACE
+          echo "🆕 Creating new deployment"
+          
+          # Use K8s manifests if available
+          if [[ -d "k8s" && -f "k8s/health-api-complete.yaml" ]]; then
+            echo "📄 Using K8s manifests"
+            # Create temp directory for modified manifests
+            mkdir -p /tmp/k8s-deploy
+            cp k8s/*.yaml /tmp/k8s-deploy/
+            
+            # Update manifests with environment-specific values
+            find /tmp/k8s-deploy -name "*.yaml" -exec sed -i "s|namespace: health-app-dev|namespace: $NAMESPACE|g" {} \;
+            find /tmp/k8s-deploy -name "*.yaml" -exec sed -i "s|environment: dev|environment: $ENV|g" {} \;
+            find /tmp/k8s-deploy -name "*.yaml" -exec sed -i "s|arunprabusiva/health-api:latest|$IMAGE|g" {} \;
+            
+            # Apply manifests
+            kubectl apply -f /tmp/k8s-deploy/ -n $NAMESPACE
           else
-            # Create basic deployment
+            echo "🔨 Creating basic deployment"
             kubectl create deployment $APP --image=$IMAGE -n $NAMESPACE
-            kubectl expose deployment $APP --port=80 --target-port=8080 -n $NAMESPACE
+            kubectl expose deployment $APP --port=80 --target-port=8080 --type=ClusterIP -n $NAMESPACE
+            
+            # Add labels for better management
+            kubectl label deployment $APP app=$APP environment=$ENV -n $NAMESPACE
+            kubectl label service $APP app=$APP environment=$ENV -n $NAMESPACE
           fi
         fi
         
-        # Wait for rollout
+        echo "⏳ Waiting for deployment rollout..."
         kubectl rollout status deployment/$APP -n $NAMESPACE --timeout=300s
+        
+        echo "✅ Deployment completed successfully"
 
     - name: Verify deployment
       run: |
@@ -203,8 +228,33 @@ jobs:
         ENV="${{ steps.deploy-info.outputs.environment }}"
         NAMESPACE="health-app-${ENV}"
         
-        kubectl get pods -l app=$APP -n $NAMESPACE
-        kubectl get services -l app=$APP -n $NAMESPACE
+        echo "🔍 Verifying deployment in $ENV environment"
+        echo ""
+        
+        echo "📦 Pods:"
+        kubectl get pods -l app=$APP -n $NAMESPACE -o wide
+        echo ""
+        
+        echo "🌐 Services:"
+        kubectl get services -l app=$APP -n $NAMESPACE -o wide
+        echo ""
+        
+        echo "📋 Deployment status:"
+        kubectl get deployment $APP -n $NAMESPACE -o wide
+        echo ""
+        
+        # Check pod health
+        READY_PODS=$(kubectl get pods -l app=$APP -n $NAMESPACE --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+        TOTAL_PODS=$(kubectl get pods -l app=$APP -n $NAMESPACE --no-headers 2>/dev/null | wc -l)
+        
+        echo "📊 Health check: $READY_PODS/$TOTAL_PODS pods ready"
+        
+        if [[ $READY_PODS -gt 0 ]]; then
+          echo "✅ Application is running in $ENV environment"
+        else
+          echo "⚠️ No ready pods found - check pod logs"
+          kubectl describe pods -l app=$APP -n $NAMESPACE | tail -20
+        fi
 
     - name: Summary
       if: always()
