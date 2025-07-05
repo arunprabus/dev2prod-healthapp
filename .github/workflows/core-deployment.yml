@@ -56,37 +56,63 @@ jobs:
         # Determine environment-specific kubeconfig path
         ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
         
-        # Map environment to network
+        # Map environment to network and try multiple S3 paths
         case $ENV in
-          "dev"|"test")
-            KUBECONFIG_PATH="kubeconfig/lower-network.yaml"
+          "dev")
+            KUBECONFIG_PATHS=("kubeconfig/dev-network.yaml" "kubeconfig/lower-network.yaml")
+            ;;
+          "test")
+            KUBECONFIG_PATHS=("kubeconfig/test-network.yaml" "kubeconfig/lower-network.yaml")
             ;;
           "prod")
-            KUBECONFIG_PATH="kubeconfig/higher-network.yaml"
+            KUBECONFIG_PATHS=("kubeconfig/prod-network.yaml" "kubeconfig/higher-network.yaml")
             ;;
           "monitoring")
-            KUBECONFIG_PATH="kubeconfig/monitoring-network.yaml"
+            KUBECONFIG_PATHS=("kubeconfig/monitoring-network.yaml")
             ;;
           *)
-            KUBECONFIG_PATH="kubeconfig/lower-network.yaml"
+            KUBECONFIG_PATHS=("kubeconfig/lower-network.yaml")
             ;;
         esac
         
-        echo "Trying to download kubeconfig for $ENV environment from $KUBECONFIG_PATH"
+        echo "Trying to download kubeconfig for $ENV environment..."
         
-        # Try to download from S3 first
-        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH ~/.kube/config 2>/dev/null; then
-          echo "✅ Kubeconfig downloaded from S3"
-        else
+        # Try to download from S3 (try multiple paths)
+        KUBECONFIG_FOUND=false
+        for KUBECONFIG_PATH in "${KUBECONFIG_PATHS[@]}"; do
+          echo "Trying S3 path: $KUBECONFIG_PATH"
+          if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH ~/.kube/config 2>/dev/null; then
+            echo "✅ Kubeconfig downloaded from S3: $KUBECONFIG_PATH"
+            KUBECONFIG_FOUND=true
+            break
+          fi
+        done
+        
+        if [[ "$KUBECONFIG_FOUND" == "false" ]]; then
           echo "⚠️ Kubeconfig not found in S3, generating dynamically..."
           
-          # Get cluster IP from AWS
+          # Get cluster IP from AWS based on environment
+          case $ENV in
+            "dev"|"test")
+              TAG_FILTER="*lower*k3s*"
+              ;;
+            "prod")
+              TAG_FILTER="*higher*k3s*"
+              ;;
+            "monitoring")
+              TAG_FILTER="*monitoring*k3s*"
+              ;;
+            *)
+              TAG_FILTER="*k3s*"
+              ;;
+          esac
+          
           CLUSTER_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=*k3s-node" "Name=instance-state-name,Values=running" \
+            --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
             --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
           
           if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-            echo "❌ No running K3s cluster found"
+            echo "❌ No running K3s cluster found for environment: $ENV"
             exit 1
           fi
           

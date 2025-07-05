@@ -97,6 +97,30 @@ jobs:
           -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -auto-approve
 
+    - name: Cleanup kubeconfig from S3
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
+      run: |
+        echo "🧹 Cleaning up kubeconfig files from S3..."
+        
+        # Remove main kubeconfig
+        aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml 2>/dev/null || echo "Main kubeconfig not found"
+        
+        # Remove environment-specific copies
+        case "${{ matrix.env }}" in
+          "lower")
+            aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml 2>/dev/null || echo "Dev kubeconfig not found"
+            aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml 2>/dev/null || echo "Test kubeconfig not found"
+            ;;
+          "higher")
+            aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml 2>/dev/null || echo "Prod kubeconfig not found"
+            ;;
+          "monitoring")
+            # No additional copies for monitoring
+            ;;
+        esac
+        
+        echo "✅ Kubeconfig cleanup completed"
+
 
 
     - name: Upload kubeconfig to S3
@@ -123,14 +147,35 @@ jobs:
           # Get kubeconfig from cluster and upload to S3
           echo "🔧 Getting kubeconfig from cluster..."
           if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config; then
-            # Replace 127.0.0.1 with actual cluster IP
-            sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > /tmp/kubeconfig-${{ matrix.env }}.yaml
+            # Replace 127.0.0.1 with actual cluster IP and set cluster name
+            sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config | \
+            sed "s|name: default|name: health-app-${{ matrix.env }}|g" | \
+            sed "s|cluster: default|cluster: health-app-${{ matrix.env }}|g" | \
+            sed "s|context: default|context: health-app-${{ matrix.env }}|g" | \
+            sed "s|current-context: default|current-context: health-app-${{ matrix.env }}|g" > /tmp/kubeconfig-${{ matrix.env }}.yaml
             
-            # Upload to S3
+            # Upload to S3 with consistent naming
             S3_PATH="kubeconfig/${{ matrix.env }}-network.yaml"
             aws s3 cp /tmp/kubeconfig-${{ matrix.env }}.yaml s3://${{ secrets.TF_STATE_BUCKET }}/$S3_PATH
             
             echo "✅ Kubeconfig uploaded to S3: s3://${{ secrets.TF_STATE_BUCKET }}/$S3_PATH"
+            echo "📋 Context: health-app-${{ matrix.env }}"
+            
+            # Also create environment-specific copies for backward compatibility
+            case "${{ matrix.env }}" in
+              "lower")
+                # Copy for dev and test environments
+                aws s3 cp /tmp/kubeconfig-${{ matrix.env }}.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml
+                aws s3 cp /tmp/kubeconfig-${{ matrix.env }}.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml
+                echo "✅ Dev and Test kubeconfig copies created"
+                ;;
+              "higher")
+                # Copy for prod environment
+                aws s3 cp /tmp/kubeconfig-${{ matrix.env }}.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml
+                echo "✅ Prod kubeconfig copy created"
+                ;;
+            esac
+            
           else
             echo "❌ Failed to get kubeconfig from cluster"
             echo "📋 Manual setup may be required"
