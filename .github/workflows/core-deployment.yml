@@ -48,86 +48,36 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ap-south-1
 
-    - name: Get cluster IP dynamically
-      id: cluster-ip
+    - name: Download kubeconfig from S3
       run: |
-        # Get cluster IP from AWS
-        CLUSTER_IP=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=*k3s-node" "Name=instance-state-name,Values=running" \
-          --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+        mkdir -p ~/.kube
         
-        if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-          echo "Failed to get cluster IP"
-          exit 1
-        fi
+        # Determine environment-specific kubeconfig path
+        ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
         
-        echo "cluster_ip=$CLUSTER_IP" >> $GITHUB_OUTPUT
-        echo "Found cluster IP: $CLUSTER_IP"
-
-    - name: Test connectivity
-      run: |
-        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
-        echo "Testing connectivity to $CLUSTER_IP"
+        # Map environment to network
+        case $ENV in
+          "dev"|"test")
+            KUBECONFIG_PATH="kubeconfig/lower-network.yaml"
+            ;;
+          "prod")
+            KUBECONFIG_PATH="kubeconfig/higher-network.yaml"
+            ;;
+          "monitoring")
+            KUBECONFIG_PATH="kubeconfig/monitoring-network.yaml"
+            ;;
+          *)
+            KUBECONFIG_PATH="kubeconfig/lower-network.yaml"
+            ;;
+        esac
         
-        # Ping test
-        if ping -c 3 $CLUSTER_IP; then
-          echo "Ping successful"
-        else
-          echo "Ping failed"
-        fi
+        echo "Downloading kubeconfig for $ENV environment from $KUBECONFIG_PATH"
         
-        # Port test
-        if timeout 10 bash -c "</dev/tcp/$CLUSTER_IP/6443"; then
-          echo "Port 6443 is reachable"
-        else
-          echo "Port 6443 is not reachable"
-        fi
+        # Download kubeconfig from S3
+        aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH ~/.kube/config
+        chmod 600 ~/.kube/config
         
-        # API test
-        curl -k -m 10 https://$CLUSTER_IP:6443/ || echo "API endpoint test completed"
-
-    - name: Get fresh kubeconfig
-      id: fresh-config
-      run: |
-        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
-        
-        echo "Getting fresh kubeconfig from cluster..."
-        
-        # Create SSH key file
-        mkdir -p ~/.ssh
-        echo "$SSH_PRIVATE_KEY" > ~/.ssh/aws-key
-        chmod 600 ~/.ssh/aws-key
-        
-        # Try SSH with debug
-        echo "Testing SSH connection..."
-        ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP 'echo "SSH successful"' || echo "SSH failed"
-        
-        # Get fresh kubeconfig and modify it
-        if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config 2>/dev/null; then
-          echo "Fresh kubeconfig retrieved"
-          # Replace 127.0.0.1 with actual cluster IP
-          sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > ~/.kube/config
-          chmod 600 ~/.kube/config
-          echo "config_ready=true" >> $GITHUB_OUTPUT
-        else
-          echo "Failed to get fresh kubeconfig, will use token method"
-          echo "config_ready=false" >> $GITHUB_OUTPUT
-        fi
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-
-    - name: Configure kubeconfig fallback
-      if: steps.fresh-config.outputs.config_ready != 'true'
-      run: |
-        echo "Using direct kubectl with server and token..."
-        CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
-        
-        # Skip kubeconfig, use kubectl directly with server and insecure flag
-        echo "Will use kubectl with --server and --insecure-skip-tls-verify flags"
-        echo "cluster_ip=$CLUSTER_IP" > /tmp/cluster-info
-        echo "direct_mode=true" >> $GITHUB_OUTPUT
-      env:
-        KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        echo "Kubeconfig downloaded successfully"
 
     - name: Extract deployment info
       id: deploy-info
@@ -140,30 +90,16 @@ jobs:
         echo "image=$IMAGE" >> $GITHUB_OUTPUT
         echo "environment=$ENV" >> $GITHUB_OUTPUT
 
-    - name: Debug kubeconfig
+    - name: Verify cluster connection
       run: |
         echo "=== Testing kubeconfig ==="
         kubectl config view --minify
         echo "=== Current context ==="
         kubectl config current-context
-        echo "=== Kubeconfig status ==="
-        if [[ "${{ steps.fresh-config.outputs.config_ready }}" == "true" ]]; then
-          echo "Using fresh kubeconfig from cluster"
-        else
-          echo "Using fallback token method"
-        fi
-        
-    - name: Verify cluster
-      run: |
-        if [[ "${{ steps.fresh-config.outputs.config_ready }}" == "true" ]]; then
-          kubectl cluster-info
-          kubectl get nodes
-        else
-          CLUSTER_IP="${{ steps.cluster-ip.outputs.cluster_ip }}"
-          echo "Using direct kubectl commands..."
-          kubectl --server=https://$CLUSTER_IP:6443 --insecure-skip-tls-verify=true cluster-info
-          kubectl --server=https://$CLUSTER_IP:6443 --insecure-skip-tls-verify=true get nodes
-        fi
+        echo "=== Cluster info ==="
+        kubectl cluster-info
+        echo "=== Nodes ==="
+        kubectl get nodes
 
     - name: Deploy application
       run: |
