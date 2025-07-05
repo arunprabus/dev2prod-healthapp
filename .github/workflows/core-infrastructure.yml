@@ -149,8 +149,8 @@ jobs:
         # Make script executable
         chmod +x ../scripts/generate-kubeconfig.sh
         
-        # Generate kubeconfig
-        ../scripts/generate-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT" "$TOKEN"
+        # Generate kubeconfig (new script only needs 2 args)
+        ../scripts/generate-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT"
         
         # Verify file was created
         if [[ ! -f "$OUTPUT" ]]; then
