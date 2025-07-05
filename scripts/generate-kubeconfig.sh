@@ -28,7 +28,8 @@ kind: Config
 preferences: {}
 users:
 - name: default
-  user: {}
+  user:
+    insecure-skip-tls-verify: true
 EOF
 
 echo "✅ Kubeconfig written to $OUTPUT_FILE"

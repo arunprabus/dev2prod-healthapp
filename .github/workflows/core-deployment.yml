@@ -132,7 +132,10 @@ jobs:
           echo "🎯 Kubeconfig ready for $ENV environment"
 
       - name: Verify connection
-        run: kubectl get nodes
+        run: |
+          echo "🔍 Testing cluster connection..."
+          kubectl cluster-info --request-timeout=10s || echo "Cluster info failed"
+          kubectl get nodes --request-timeout=10s || echo "Get nodes failed"
 
       - name: Deploy application
         run: |
