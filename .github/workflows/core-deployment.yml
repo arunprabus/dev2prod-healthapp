@@ -93,41 +93,12 @@ jobs:
           fi
         done
         
-        # Fallback to dynamic generation if S3 fails
+        # Exit if kubeconfig not found in S3
         if [[ "$KUBECONFIG_FOUND" == "false" ]]; then
-          echo "⚠️ Kubeconfig not found in S3, generating from cluster..."
-          
-          # Find cluster by network tags
-          TAG_FILTER="*${NETWORK}*k3s*"
-          echo "🔍 Searching for cluster with tag: $TAG_FILTER"
-          
-          CLUSTER_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
-          
-          if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-            echo "❌ No running cluster found for $ENV environment ($NETWORK network)"
-            echo "💡 Please run: Actions → Core Infrastructure → deploy → $NETWORK"
-            exit 1
-          fi
-          
-          echo "🌐 Found cluster IP: $CLUSTER_IP"
-          
-          # Setup SSH
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
-          chmod 600 ~/.ssh/aws-key
-          
-          # Generate kubeconfig from cluster
-          echo "🔑 Retrieving kubeconfig from cluster..."
-          if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config 2>/dev/null; then
-            sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > ~/.kube/config
-            echo "✅ Generated kubeconfig from cluster"
-          else
-            echo "❌ Failed to retrieve kubeconfig from cluster"
-            echo "🔧 Check SSH_PRIVATE_KEY secret and cluster accessibility"
-            exit 1
-          fi
+          echo "❌ Kubeconfig not found in S3 for $ENV environment"
+          echo "💡 Please run: Actions → Core Infrastructure → deploy → $NETWORK"
+          echo "📋 This will generate and upload kubeconfig to S3 automatically"
+          exit 1
         fi
         
         chmod 600 ~/.kube/config
