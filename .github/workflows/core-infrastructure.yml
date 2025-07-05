@@ -123,34 +123,45 @@ jobs:
 
 
 
-    - name: Upload kubeconfig to S3
+    - name: Create kubeconfig for S3
       if: github.event.inputs.action == 'deploy'
       working-directory: infra
       run: |
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
         
         if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != "null" ]]; then
-          sleep 60
+          cat > /tmp/kubeconfig.yaml << EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://$CLUSTER_IP:6443
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    token: K10...
+EOF
           
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
-          chmod 600 ~/.ssh/aws-key
+          aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
           
-          if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$CLUSTER_IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config; then
-            sed "s|127.0.0.1:6443|$CLUSTER_IP:6443|g" /tmp/k3s-config > /tmp/kubeconfig.yaml
-            
-            aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
-            
-            case "${{ matrix.env }}" in
-              "lower")
-                aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml
-                aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml
-                ;;
-              "higher")
-                aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml
-                ;;
-            esac
-          fi
+          case "${{ matrix.env }}" in
+            "lower")
+              aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml
+              aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml
+              ;;
+            "higher")
+              aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml
+              ;;
+          esac
         fi
 
     - name: Cleanup on Failure
