@@ -123,76 +123,66 @@ jobs:
 
 
 
-    - name: Install yq
-      if: github.event.inputs.action == 'deploy'
-      run: |
-        sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
-        sudo chmod +x /usr/bin/yq
-
-    - name: Create and upload kubeconfig to S3
-      if: github.event.inputs.action == 'deploy'
+    - name: Generate and upload kubeconfig to S3
+      if: github.event.inputs.action == 'deploy' && steps.terraform-apply.outcome == 'success'
       working-directory: infra
       run: |
-        CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
+        echo "🔧 Starting kubeconfig generation for ${{ matrix.env }} environment"
         
-        if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
-          echo "❌ Cluster IP not found. Skipping kubeconfig generation."
+        # Debug: Check if terraform outputs exist
+        echo "📋 Available Terraform outputs:"
+        terraform output || echo "No outputs available"
+        
+        CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
+        TOKEN="K10..."
+        OUTPUT="/tmp/kubeconfig.yaml"
+        
+        # Debug: Test S3 access
+        echo "🧪 Testing S3 access:"
+        echo "test" > /tmp/test.txt
+        aws s3 cp /tmp/test.txt s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test.txt
+        aws s3 rm s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test.txt
+        
+        echo "📡 Cluster IP: $CLUSTER_IP"
+        echo "📁 Output file: $OUTPUT"
+        
+        # Make script executable
+        chmod +x ../scripts/generate-kubeconfig.sh
+        
+        # Generate kubeconfig
+        ../scripts/generate-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT" "$TOKEN"
+        
+        # Verify file was created
+        if [[ ! -f "$OUTPUT" ]]; then
+          echo "❌ Kubeconfig file not created"
           exit 1
         fi
-
-        KUBECONFIG_FILE="/tmp/kubeconfig.yaml"
-
-        yq eval -n --arg ip "$CLUSTER_IP" --arg token "K10..." '
-          {
-            apiVersion: "v1",
-            kind: "Config",
-            preferences: {},
-            "current-context": "default",
-            clusters: [
-              {
-                name: "default",
-                cluster: {
-                  server: "https://\($ip):6443",
-                  "insecure-skip-tls-verify": true
-                }
-              }
-            ],
-            contexts: [
-              {
-                name: "default",
-                context: {
-                  cluster: "default",
-                  user: "default"
-                }
-              }
-            ],
-            users: [
-              {
-                name: "default",
-                user: {
-                  token: $token
-                }
-              }
-            ]
-          }
-        ' > "$KUBECONFIG_FILE"
-
-        echo "✅ Kubeconfig generated for $CLUSTER_IP"
-
-        DEST_BUCKET="s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig"
-        aws s3 cp "$KUBECONFIG_FILE" "$DEST_BUCKET/${{ matrix.env }}-network.yaml"
-
+        
+        echo "📄 Generated kubeconfig content:"
+        cat "$OUTPUT"
+        
+        # Upload main file
+        echo "☁️ Uploading main kubeconfig: ${{ matrix.env }}-network.yaml"
+        aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
+        
+        # Upload environment-specific copies
         case "${{ matrix.env }}" in
           "lower")
-            aws s3 cp "$KUBECONFIG_FILE" "$DEST_BUCKET/dev-network.yaml"
-            aws s3 cp "$KUBECONFIG_FILE" "$DEST_BUCKET/test-network.yaml"
+            echo "☁️ Uploading dev and test copies"
+            aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml
+            aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml
             ;;
           "higher")
-            aws s3 cp "$KUBECONFIG_FILE" "$DEST_BUCKET/prod-network.yaml"
+            echo "☁️ Uploading prod copy"
+            aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml
             ;;
         esac
-
-        echo "✅ Uploaded kubeconfig to S3"
+        
+        # Verify uploads
+        echo "🔍 Verifying S3 uploads:"
+        aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/
+        
+        echo "✅ Kubeconfig upload completed for ${{ matrix.env }} environment"
 
     - name: Cleanup on Failure
       if: failure() && github.event.inputs.action == 'deploy' && steps.terraform-apply.outcome == 'failure'

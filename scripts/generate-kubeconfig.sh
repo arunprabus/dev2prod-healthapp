@@ -1,21 +1,35 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-# Usage: ./scripts/generate-kubeconfig.sh <env> <cluster-ip>
-ENV="$1"
-CLUSTER_IP="$2"
-OUT="./kubeconfig-${ENV}.yaml"
+set -e
 
-# 1. SSH in and pull the raw K3s kubeconfig
-ssh -o StrictHostKeyChecking=no \
-    -i ~/.ssh/aws-key \
-    ubuntu@"${CLUSTER_IP}" \
-    'sudo cat /etc/rancher/k3s/k3s.yaml' \
-  > "${OUT}"
+CLUSTER_IP="$1"
+OUTPUT_FILE="$2"
+AUTH_TOKEN="$3"
 
-# 2. Rewrite server endpoint (127.0.0.1 → actual IP)
-sed -i "s|127.0.0.1:6443|${CLUSTER_IP}:6443|g" "${OUT}"
+if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
+  echo "❌ Cluster IP is empty or null"
+  exit 1
+fi
 
-# 3. Base64‑encode (no newlines)
-base64 -w0 "${OUT}"
-echo
+cat > "$OUTPUT_FILE" <<EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://${CLUSTER_IP}:6443
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    token: ${AUTH_TOKEN}
+EOF
+
+echo "✅ Kubeconfig written to $OUTPUT_FILE"
