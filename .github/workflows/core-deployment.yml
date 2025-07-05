@@ -13,6 +13,7 @@ on:
       image:
         description: 'Container image'
         required: true
+        default: 'arunprabusiva/health-api:latest'
         type: string
       environment:
         description: 'Environment'
