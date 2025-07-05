@@ -2,7 +2,7 @@ name: Core Deployment
 
 on:
   repository_dispatch:
-    types: [app-deploy]
+    types: [ app-deploy ]
   workflow_dispatch:
     inputs:
       app:
@@ -21,116 +21,116 @@ on:
         default: 'dev'
         type: choice
         options:
-        - dev
-        - test
-        - prod
+          - dev
+          - test
+          - prod
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Setup kubectl
-      run: |
-        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-        chmod +x kubectl
-        sudo mv kubectl /usr/local/bin/
+      - name: Setup kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ap-south-1
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
 
-    - name: Setup kubeconfig
-      run: |
-        ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
-        
-        case $ENV in
-          "dev"|"test") S3_PATH="kubeconfig/lower-network.yaml" ;;
-          "prod") S3_PATH="kubeconfig/higher-network.yaml" ;;
-          *) S3_PATH="kubeconfig/lower-network.yaml" ;;
-        esac
-        
-        mkdir -p ~/.kube
-        
-        # Try S3 first
-        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$S3_PATH ~/.kube/config 2>/dev/null; then
-          echo "Downloaded kubeconfig from S3"
-        else
-          echo "Creating kubeconfig from cluster IP"
+      - name: Setup kubeconfig
+        run: |
+          ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
           
-          # Get cluster IP based on environment
           case $ENV in
-            "dev"|"test") TAG_FILTER="*lower*k3s*" ;;
-            "prod") TAG_FILTER="*higher*k3s*" ;;
-            *) TAG_FILTER="*lower*k3s*" ;;
+            "dev"|"test") S3_PATH="kubeconfig/lower-network.yaml" ;;
+            "prod") S3_PATH="kubeconfig/higher-network.yaml" ;;
+            *) S3_PATH="kubeconfig/lower-network.yaml" ;;
           esac
           
-          CLUSTER_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          mkdir -p ~/.kube
           
-          if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-            echo "No cluster found, using fallback IP: 13.235.132.195"
-            CLUSTER_IP="13.235.132.195"
+          # Try S3 first
+          if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$S3_PATH ~/.kube/config 2>/dev/null; then
+            echo "Downloaded kubeconfig from S3"
+          else
+            echo "Creating kubeconfig from cluster IP"
+          
+            # Get cluster IP based on environment
+            case $ENV in
+              "dev"|"test") TAG_FILTER="*lower*k3s*" ;;
+              "prod") TAG_FILTER="*higher*k3s*" ;;
+              *) TAG_FILTER="*lower*k3s*" ;;
+            esac
+          
+            CLUSTER_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
+              --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          
+            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+              echo "No cluster found, using fallback IP: 13.235.132.195"
+              CLUSTER_IP="13.235.132.195"
+            fi
+          
+              # Create basic kubeconfig
+              cat > ~/.kube/config << EOF
+              apiVersion: v1
+              clusters:
+              - cluster:
+                  insecure-skip-tls-verify: true
+                  server: https://$CLUSTER_IP:6443
+                name: default
+              contexts:
+              - context:
+                  cluster: default
+                  user: default
+                name: default
+              current-context: default
+              kind: Config
+              preferences: {}
+              users:
+              - name: default
+                user:
+                  token: K10...
+              EOF
           fi
           
-          # Create basic kubeconfig
-          cat > ~/.kube/config << EOF
-apiVersion: v1
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://$CLUSTER_IP:6443
-  name: default
-contexts:
-- context:
-    cluster: default
-    user: default
-  name: default
-current-context: default
-kind: Config
-preferences: {}
-users:
-- name: default
-  user:
-    token: K10...
-EOF
-        fi
-        
-        chmod 600 ~/.kube/config
+          chmod 600 ~/.kube/config
 
-    - name: Verify connection
-      run: kubectl get nodes
+      - name: Verify connection
+        run: kubectl get nodes
 
-    - name: Deploy application
-      run: |
-        APP="${{ github.event.client_payload.app || github.event.inputs.app }}"
-        IMAGE="${{ github.event.client_payload.image || github.event.inputs.image }}"
-        ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
-        NAMESPACE="health-app-${ENV}"
-        
-        kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-        
-        if kubectl get deployment $APP -n $NAMESPACE >/dev/null 2>&1; then
-          kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
-        else
-          kubectl create deployment $APP --image=$IMAGE -n $NAMESPACE
-          kubectl expose deployment $APP --port=80 --target-port=8080 -n $NAMESPACE
-        fi
-        
-        kubectl rollout status deployment/$APP -n $NAMESPACE --timeout=300s
+      - name: Deploy application
+        run: |
+          APP="${{ github.event.client_payload.app || github.event.inputs.app }}"
+          IMAGE="${{ github.event.client_payload.image || github.event.inputs.image }}"
+          ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
+          NAMESPACE="health-app-${ENV}"
+          
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          
+          if kubectl get deployment $APP -n $NAMESPACE >/dev/null 2>&1; then
+            kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
+          else
+            kubectl create deployment $APP --image=$IMAGE -n $NAMESPACE
+            kubectl expose deployment $APP --port=80 --target-port=8080 -n $NAMESPACE
+          fi
+          
+          kubectl rollout status deployment/$APP -n $NAMESPACE --timeout=300s
 
-    - name: Verify deployment
-      run: |
-        APP="${{ github.event.client_payload.app || github.event.inputs.app }}"
-        ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
-        NAMESPACE="health-app-${ENV}"
-        
-        kubectl get pods -l app=$APP -n $NAMESPACE
-        kubectl get services -l app=$APP -n $NAMESPACE
+      - name: Verify deployment
+        run: |
+          APP="${{ github.event.client_payload.app || github.event.inputs.app }}"
+          ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
+          NAMESPACE="health-app-${ENV}"
+          
+          kubectl get pods -l app=$APP -n $NAMESPACE
+          kubectl get services -l app=$APP -n $NAMESPACE
