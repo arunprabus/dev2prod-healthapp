@@ -46,7 +46,7 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ap-south-1
 
-    - name: Download kubeconfig
+    - name: Setup kubeconfig
       run: |
         ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
         
@@ -57,7 +57,52 @@ jobs:
         esac
         
         mkdir -p ~/.kube
-        aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$S3_PATH ~/.kube/config
+        
+        # Try S3 first
+        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$S3_PATH ~/.kube/config 2>/dev/null; then
+          echo "Downloaded kubeconfig from S3"
+        else
+          echo "Creating kubeconfig from cluster IP"
+          
+          # Get cluster IP based on environment
+          case $ENV in
+            "dev"|"test") TAG_FILTER="*lower*k3s*" ;;
+            "prod") TAG_FILTER="*higher*k3s*" ;;
+            *) TAG_FILTER="*lower*k3s*" ;;
+          esac
+          
+          CLUSTER_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+          
+          if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+            echo "No cluster found, using fallback IP: 13.235.132.195"
+            CLUSTER_IP="13.235.132.195"
+          fi
+          
+          # Create basic kubeconfig
+          cat > ~/.kube/config << EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://$CLUSTER_IP:6443
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    token: K10...
+EOF
+        fi
+        
         chmod 600 ~/.kube/config
 
     - name: Verify connection

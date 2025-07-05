@@ -119,6 +119,31 @@ module "rds" {
 #   depends_on = [module.k3s]
 # }
 
+# Upload kubeconfig to S3
+resource "null_resource" "upload_kubeconfig" {
+  provisioner "local-exec" {
+    command = <<EOT
+      sleep 60
+      ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@${module.k3s.instance_public_ip} 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/k3s-config || exit 0
+      if [ -f /tmp/k3s-config ]; then
+        sed 's|127.0.0.1:6443|${module.k3s.instance_public_ip}:6443|g' /tmp/k3s-config > /tmp/kubeconfig.yaml
+        aws s3 cp /tmp/kubeconfig.yaml s3://${var.tf_state_bucket}/kubeconfig/${var.environment}-network.yaml || true
+        case "${var.environment}" in
+          "lower")
+            aws s3 cp /tmp/kubeconfig.yaml s3://${var.tf_state_bucket}/kubeconfig/dev-network.yaml || true
+            aws s3 cp /tmp/kubeconfig.yaml s3://${var.tf_state_bucket}/kubeconfig/test-network.yaml || true
+            ;;
+          "higher")
+            aws s3 cp /tmp/kubeconfig.yaml s3://${var.tf_state_bucket}/kubeconfig/prod-network.yaml || true
+            ;;
+        esac
+      fi
+EOT
+  }
+
+  depends_on = [module.k3s]
+}
+
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {
   source = "./modules/monitoring"

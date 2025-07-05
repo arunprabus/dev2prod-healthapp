@@ -149,3 +149,9 @@ variable "restore_from_snapshot" {
   type        = bool
   default     = false
 }
+
+variable "tf_state_bucket" {
+  description = "S3 bucket for Terraform state and kubeconfig storage"
+  type        = string
+  default     = "health-app-terraform-state"
+}
