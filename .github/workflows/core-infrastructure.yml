@@ -131,25 +131,25 @@ jobs:
         
         if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != "null" ]]; then
           cat > /tmp/kubeconfig.yaml << EOF
-apiVersion: v1
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://$CLUSTER_IP:6443
-  name: default
-contexts:
-- context:
-    cluster: default
-    user: default
-  name: default
-current-context: default
-kind: Config
-preferences: {}
-users:
-- name: default
-  user:
-    token: K10...
-EOF
+          apiVersion: v1
+          clusters:
+          - cluster:
+              insecure-skip-tls-verify: true
+              server: https://$CLUSTER_IP:6443
+            name: default
+          contexts:
+          - context:
+              cluster: default
+              user: default
+            name: default
+          current-context: default
+          kind: Config
+          preferences: {}
+          users:
+          - name: default
+            user:
+              token: K10...
+          EOF
           
           aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
           
