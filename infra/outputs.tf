@@ -90,3 +90,13 @@ output "deployment_status" {
   description = "Current deployment status"
   value       = "Deployed to ${var.environment} environment"
 }
+
+# Kubeconfig (base64 encoded)
+output "kubeconfig_b64" {
+  description = "Base64 encoded kubeconfig for K3s cluster"
+  value       = base64encode(templatefile("${path.module}/kubeconfig-template.yaml", {
+    cluster_ip = module.k3s.instance_public_ip
+    cluster_name = "health-app-${var.environment}"
+  }))
+  sensitive   = true
+}
