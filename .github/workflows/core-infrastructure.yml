@@ -121,10 +121,16 @@ jobs:
         # Get cluster IP for working kubeconfig
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
         
+        # Try service account kubeconfig first, fallback to regular kubeconfig
         if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE "$OUTPUT" 2>/dev/null; then
           echo "✅ Downloaded service account kubeconfig from S3"
           
           echo "📄 Service account kubeconfig content:"
+          cat "$OUTPUT"
+        elif aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml "$OUTPUT" 2>/dev/null; then
+          echo "⚠️ Using fallback kubeconfig (service account failed)"
+          
+          echo "📄 Fallback kubeconfig content:"
           cat "$OUTPUT"
           
           # Copy to standard locations
@@ -142,7 +148,7 @@ jobs:
           
           echo "✅ Kubeconfig distributed successfully"
         else
-          echo "❌ Failed to download service account kubeconfig from S3"
+          echo "❌ Failed to download any kubeconfig from S3"
           exit 1
         fi
 
