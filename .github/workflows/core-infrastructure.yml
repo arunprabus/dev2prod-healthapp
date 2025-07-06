@@ -109,8 +109,8 @@ jobs:
         echo "🔍 Checking S3 kubeconfig directory:"
         aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/ || echo "No kubeconfig directory found"
         
-        # Download kubeconfig from S3
-        KUBECONFIG_FILE="${{ matrix.env }}-kubeconfig.yaml"
+        # Download existing kubeconfig from S3
+        KUBECONFIG_FILE="${{ matrix.env }}-network.yaml"
         OUTPUT="/tmp/kubeconfig.yaml"
         
         echo "📥 Attempting to download: $KUBECONFIG_FILE"
