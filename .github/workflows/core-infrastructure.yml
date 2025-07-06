@@ -113,8 +113,8 @@ jobs:
         echo "🔍 File timestamps and sizes:"
         aws s3api head-object --bucket ${{ secrets.TF_STATE_BUCKET }} --key kubeconfig/dev-network.yaml --query 'LastModified,ContentLength' || echo "File not found"
         
-        # Download existing kubeconfig from S3
-        KUBECONFIG_FILE="${{ matrix.env }}-network.yaml"
+        # Download service account kubeconfig from S3
+        KUBECONFIG_FILE="${{ matrix.env }}-gha.yaml"
         OUTPUT="/tmp/kubeconfig.yaml"
         
         echo "📥 Attempting to download: $KUBECONFIG_FILE"

@@ -93,12 +93,6 @@ output "deployment_status" {
   value       = "Deployed to ${var.environment} environment"
 }
 
-# Service Account kubeconfig
-output "gha_kubeconfig_b64" {
-  description = "Base64 encoded service account kubeconfig for GitHub Actions"
-  value       = base64encode(file("./gha-kubeconfig.yaml"))
-  sensitive   = true
-  depends_on  = [null_resource.generate_gha_kubeconfig]
-}
+
 
 
