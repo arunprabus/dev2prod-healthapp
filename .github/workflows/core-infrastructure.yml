@@ -102,8 +102,8 @@ jobs:
         echo "🔧 Downloading kubeconfig for ${{ matrix.env }} environment"
         
         # Wait for instance to upload kubeconfig
-        echo "⏳ Waiting for instance to generate and upload kubeconfig..."
-        sleep 120
+        echo "⏳ Waiting for instance to upload working kubeconfig..."
+        sleep 90
         
         # Debug: Check what's in S3
         echo "🔍 Checking S3 kubeconfig directory:"
