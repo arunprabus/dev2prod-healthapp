@@ -120,8 +120,8 @@ resource "aws_instance" "k3s" {
     # Install AWS CLI
     apt-get install -y awscli
     
-    # Install K3s with write permissions for kubeconfig
-    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+    # Install K3s with anonymous auth enabled
+    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --kube-apiserver-arg=anonymous-auth=true --kube-apiserver-arg=authorization-mode=AlwaysAllow
     
     # Setup Docker
     systemctl enable docker
