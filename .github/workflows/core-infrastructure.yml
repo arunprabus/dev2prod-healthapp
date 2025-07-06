@@ -169,9 +169,34 @@ jobs:
         # Make script executable
         chmod +x ../scripts/generate-kubeconfig.sh
         
-        # Generate kubeconfig
+        # Force token-based kubeconfig generation (ignore Terraform output)
+        echo "🔧 Creating token-based kubeconfig..."
         chmod +x ../scripts/generate-kubeconfig.sh
-        ../scripts/generate-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT"
+        
+        # Create token-based kubeconfig directly
+        mkdir -p "$(dirname "$OUTPUT")"
+        cat > "$OUTPUT" << EOF
+        apiVersion: v1
+        clusters:
+        - cluster:
+            insecure-skip-tls-verify: true
+            server: https://${CLUSTER_IP}:6443
+          name: k3s-cluster
+        contexts:
+        - context:
+            cluster: k3s-cluster
+            user: k3s-user
+          name: k3s-context
+        current-context: k3s-context
+        kind: Config
+        preferences: {}
+        users:
+        - name: k3s-user
+          user:
+            token: TOKEN_PLACEHOLDER
+        EOF
+        chmod 600 "$OUTPUT"
+        echo "✅ Token-based kubeconfig template created"
         
         # If kubeconfig has TOKEN_PLACEHOLDER, try to get real token via SSH
         if grep -q "TOKEN_PLACEHOLDER" "$OUTPUT" 2>/dev/null; then
