@@ -156,12 +156,12 @@ resource "aws_instance" "k3s" {
       
       if [[ -n "$TOKEN" ]]; then
         # Create service account kubeconfig
-        cat > /tmp/gha-kubeconfig.yaml << EOF
+        cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
 apiVersion: v1
 clusters:
 - cluster:
     insecure-skip-tls-verify: true
-    server: https://$PUBLIC_IP:6443
+    server: https://\$PUBLIC_IP:6443
   name: k3s-cluster
 contexts:
 - context:
@@ -174,8 +174,8 @@ preferences: {}
 users:
 - name: gha-deployer
   user:
-    token: $TOKEN
-EOF
+    token: \$TOKEN
+KUBE_EOF
         
         # Upload service account kubeconfig
         aws s3 cp /tmp/gha-kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-gha.yaml
