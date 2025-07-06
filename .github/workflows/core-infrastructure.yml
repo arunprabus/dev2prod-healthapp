@@ -105,10 +105,15 @@ jobs:
         echo "⏳ Waiting for instance to generate and upload kubeconfig..."
         sleep 120
         
+        # Debug: Check what's in S3
+        echo "🔍 Checking S3 kubeconfig directory:"
+        aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/ || echo "No kubeconfig directory found"
+        
         # Download kubeconfig from S3
         KUBECONFIG_FILE="${{ matrix.env }}-kubeconfig.yaml"
         OUTPUT="/tmp/kubeconfig.yaml"
         
+        echo "📥 Attempting to download: $KUBECONFIG_FILE"
         if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE "$OUTPUT" 2>/dev/null; then
           echo "✅ Downloaded kubeconfig from S3"
           

@@ -137,22 +137,45 @@ resource "aws_instance" "k3s" {
     sleep 60
     
     # Generate and upload kubeconfig to S3
+    echo "Starting kubeconfig generation and S3 upload..."
+    echo "S3 bucket: ${var.s3_bucket}"
+    echo "Environment: ${var.environment}"
+    
     if [[ -n "${var.s3_bucket}" ]]; then
-      echo "Generating kubeconfig for S3 upload..."
-      
-      # Get public IP and kubeconfig
+      # Get public IP
       PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+      echo "Public IP: $PUBLIC_IP"
       
-      # Copy K3s kubeconfig and modify for external access
-      cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml
-      
-      # Replace localhost with public IP
-      sed -i "s|127.0.0.1:6443|$PUBLIC_IP:6443|g" /tmp/kubeconfig.yaml
-      
-      # Upload to S3
-      aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-kubeconfig.yaml
-      
-      echo "Kubeconfig uploaded to S3 successfully"
+      # Check if K3s kubeconfig exists
+      if [[ -f /etc/rancher/k3s/k3s.yaml ]]; then
+        echo "K3s kubeconfig found, processing..."
+        
+        # Copy and modify kubeconfig
+        cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml
+        sed -i "s|127.0.0.1:6443|$PUBLIC_IP:6443|g" /tmp/kubeconfig.yaml
+        
+        echo "Modified kubeconfig content:"
+        cat /tmp/kubeconfig.yaml
+        
+        # Test AWS CLI
+        echo "Testing AWS CLI access..."
+        aws sts get-caller-identity || echo "AWS CLI test failed"
+        
+        # Upload to S3
+        echo "Uploading to S3..."
+        if aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-kubeconfig.yaml; then
+          echo "SUCCESS: Kubeconfig uploaded to S3"
+        else
+          echo "ERROR: Failed to upload kubeconfig to S3"
+        fi
+        
+        # List S3 contents to verify
+        aws s3 ls s3://${var.s3_bucket}/kubeconfig/ || echo "Failed to list S3 contents"
+      else
+        echo "ERROR: K3s kubeconfig not found at /etc/rancher/k3s/k3s.yaml"
+      fi
+    else
+      echo "ERROR: S3 bucket not specified"
     fi
     
     # Make kubeconfig accessible locally
