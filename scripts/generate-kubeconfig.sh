@@ -1,22 +1,6 @@
 #!/usr/bin/env bash
-# ------------------------------------------------------------------
-# generate-kubeconfig.sh
-#
-# Usage:
-#   ./generate-kubeconfig.sh <cluster-ip> <output-file>
-#
-# This script decodes a base64-encoded kubeconfig (exported via Terraform),
-# replaces the localhost address with the public cluster IP, and writes
-# the resulting kubeconfig to the specified output path.
-#
-# Requires:
-# - terraform CLI in working directory with "kubeconfig_b64" output defined
-# - base64, sed
-#
-# Arguments:
-#   $1 - CLUSTER_IP (public IP or DNS of the K3s server)
-#   $2 - OUTPUT_FILE (path to save the generated kubeconfig)
-# ------------------------------------------------------------------
+# Generate kubeconfig for K3s cluster
+# Usage: ./generate-kubeconfig.sh <cluster-ip> <output-file>
 
 set -euo pipefail
 
@@ -28,24 +12,45 @@ fi
 CLUSTER_IP="$1"
 OUTPUT_FILE="$2"
 
-# Fetch the base64-encoded kubeconfig from Terraform output
-echo "🔍 Retrieving base64 kubeconfig from Terraform..."
-BASE64_CONFIG=$(terraform output -raw kubeconfig_b64)
+echo "🔍 Generating kubeconfig for cluster: $CLUSTER_IP"
 
-# Decode and write to a temporary file
-TMP_RAW="/tmp/kubeconfig_raw.yaml"
-echo "$BASE64_CONFIG" | base64 -d > "$TMP_RAW"
+# Try to get kubeconfig from Terraform output first
+if terraform output -raw kubeconfig_b64 2>/dev/null; then
+  echo "📥 Using Terraform kubeconfig output"
+  BASE64_CONFIG=$(terraform output -raw kubeconfig_b64)
+  TMP_RAW="/tmp/kubeconfig_raw.yaml"
+  echo "$BASE64_CONFIG" | base64 -d > "$TMP_RAW"
+  
+  # Replace localhost with actual cluster IP
+  mkdir -p "$(dirname "$OUTPUT_FILE")"
+  sed "s|127.0.0.1:6443|${CLUSTER_IP}:6443|g" "$TMP_RAW" > "$OUTPUT_FILE"
+  rm -f "$TMP_RAW"
+else
+  echo "⚠️ Terraform output not available, creating basic kubeconfig"
+  mkdir -p "$(dirname "$OUTPUT_FILE")"
+  
+  # Create basic kubeconfig template (token will be added later)
+  cat > "$OUTPUT_FILE" << EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://${CLUSTER_IP}:6443
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    user: k3s-user
+  name: k3s-context
+current-context: k3s-context
+kind: Config
+preferences: {}
+users:
+- name: k3s-user
+  user:
+    token: TOKEN_PLACEHOLDER
+EOF
+fi
 
-# Replace localhost with the actual cluster IP and save
-mkdir -p "$(dirname "$OUTPUT_FILE")"
-
-# sed replacement: change "127.0.0.1:6443" to "${CLUSTER_IP}:6443"
-sed "s|127.0.0.1:6443|${CLUSTER_IP}:6443|g" "$TMP_RAW" > "$OUTPUT_FILE"
-
-# Secure the permissions
 chmod 600 "$OUTPUT_FILE"
-
-# Cleanup
-rm -f "$TMP_RAW"
-
 echo "✅ Generated kubeconfig at $OUTPUT_FILE"

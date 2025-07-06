@@ -146,11 +146,111 @@ jobs:
         echo "📡 Cluster IP: $CLUSTER_IP"
         echo "📁 Output file: $OUTPUT"
         
+        # Wait for EC2 instance to be fully ready
+        if [[ -n "$CLUSTER_IP" && "$CLUSTER_IP" != "None" ]]; then
+          echo "⏳ Waiting for EC2 instance to be fully ready..."
+          sleep 30
+          
+          # Check instance status
+          INSTANCE_STATE=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$CLUSTER_IP" --query "Reservations[0].Instances[0].State.Name" --output text 2>/dev/null || echo "unknown")
+          echo "Instance state: $INSTANCE_STATE"
+          
+          # Check system status
+          INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$CLUSTER_IP" --query "Reservations[0].Instances[0].InstanceId" --output text 2>/dev/null || echo "unknown")
+          if [[ "$INSTANCE_ID" != "unknown" && "$INSTANCE_ID" != "None" ]]; then
+            echo "Instance ID: $INSTANCE_ID"
+            SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].SystemStatus.Status" --output text 2>/dev/null || echo "unknown")
+            INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids $INSTANCE_ID --query "InstanceStatuses[0].InstanceStatus.Status" --output text 2>/dev/null || echo "unknown")
+            echo "System status: $SYSTEM_STATUS"
+            echo "Instance status: $INSTANCE_STATUS"
+          fi
+        fi
+        
         # Make script executable
         chmod +x ../scripts/generate-kubeconfig.sh
         
-        # Generate kubeconfig (new script only needs 2 args)
+        # Generate kubeconfig
+        chmod +x ../scripts/generate-kubeconfig.sh
         ../scripts/generate-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT"
+        
+        # If kubeconfig has TOKEN_PLACEHOLDER, try to get real token via SSH
+        if grep -q "TOKEN_PLACEHOLDER" "$OUTPUT" 2>/dev/null; then
+          echo "🔑 Getting K3s token via SSH..."
+          
+          # Setup SSH key from secret
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/aws-key
+          chmod 600 ~/.ssh/aws-key
+          
+          # Debug SSH key setup
+          echo "🔍 SSH key fingerprint:"
+          ssh-keygen -lf ~/.ssh/aws-key.pub 2>/dev/null || echo "Could not get fingerprint"
+          
+          # Test basic connectivity first
+          echo "🌐 Testing basic connectivity to $CLUSTER_IP..."
+          if ping -c 2 $CLUSTER_IP >/dev/null 2>&1; then
+            echo "✅ Ping successful"
+          else
+            echo "❌ Ping failed - network issue?"
+          fi
+          
+          # Test SSH port
+          echo "🚪 Testing SSH port 22..."
+          if timeout 10 bash -c "</dev/tcp/$CLUSTER_IP/22"; then
+            echo "✅ SSH port 22 is open"
+          else
+            echo "❌ SSH port 22 is not accessible"
+          fi
+          
+          # Test SSH connection without command
+          echo "🔑 Testing SSH authentication..."
+          if ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH connection successful'" 2>/dev/null; then
+            echo "✅ SSH authentication successful"
+          else
+            echo "❌ SSH authentication failed"
+            echo "SSH debug output:"
+            ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v ubuntu@$CLUSTER_IP "echo test" 2>&1 | head -20
+          fi
+          
+          # Check if K3s is running
+          echo "🔍 Checking K3s status..."
+          K3S_STATUS=$(ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo systemctl is-active k3s" 2>/dev/null || echo "unknown")
+          echo "K3s service status: $K3S_STATUS"
+          
+          # Check if token file exists
+          echo "📄 Checking K3s token file..."
+          TOKEN_EXISTS=$(ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo test -f /var/lib/rancher/k3s/server/node-token && echo 'exists' || echo 'missing'" 2>/dev/null || echo "unknown")
+          echo "Token file status: $TOKEN_EXISTS"
+          
+          # Get token with retries and better error handling
+          TOKEN=""
+          for i in {1..5}; do
+            echo "Attempt $i/5: Getting K3s token..."
+            TOKEN=$(ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=15 ubuntu@$CLUSTER_IP "sudo cat /var/lib/rancher/k3s/server/node-token" 2>/dev/null || echo "")
+            
+            if [[ -n "$TOKEN" && "$TOKEN" != "unknown" ]]; then
+              echo "✅ Token retrieved successfully (length: ${#TOKEN})"
+              echo "Token preview: ${TOKEN:0:20}..."
+              break
+            else
+              echo "❌ Attempt $i failed, token empty or error"
+              if [[ $i -lt 5 ]]; then
+                echo "Waiting 15 seconds before retry..."
+                sleep 15
+              fi
+            fi
+          done
+          
+          if [[ -n "$TOKEN" && "$TOKEN" != "unknown" ]]; then
+            sed -i "s/TOKEN_PLACEHOLDER/$TOKEN/g" "$OUTPUT"
+            echo "✅ Token added to kubeconfig successfully"
+          else
+            echo "❌ Could not get token after 5 attempts"
+            echo "Kubeconfig will use template without token (may not work)"
+          fi
+        else
+          echo "ℹ️ No TOKEN_PLACEHOLDER found, using existing kubeconfig"
+        fi
         
         # Verify file was created
         if [[ ! -f "$OUTPUT" ]]; then
