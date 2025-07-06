@@ -23,9 +23,6 @@ if terraform output -raw kubeconfig_b64 2>/dev/null; then
   # Replace localhost with actual cluster IP
   sed -i "s|127.0.0.1:6443|${CLUSTER_IP}:6443|g" "$OUTPUT_FILE"
   
-  # Replace placeholder token with K3s admin token (works without authentication)
-  sed -i 's|PLACEHOLDER_TOKEN|K3s-admin-token|g' "$OUTPUT_FILE"
-  
   chmod 600 "$OUTPUT_FILE"
   echo "✅ Kubeconfig fixed and ready"
 else
