@@ -1,60 +1,45 @@
 #!/bin/bash
 
-# Setup kubeconfig for K8s cluster access
-set -e
+# Simple kubeconfig setup script
+# Usage: ./setup-kubeconfig.sh <cluster-ip> [output-file]
 
-ENVIRONMENT=${1:-"dev"}
-CLUSTER_IP=${2}
+CLUSTER_IP=$1
+OUTPUT_FILE=${2:-~/.kube/config}
 
 if [[ -z "$CLUSTER_IP" ]]; then
-    echo "Usage: $0 <environment> <cluster-ip>"
-    echo "Example: $0 dev 1.2.3.4"
+    echo "Usage: $0 <cluster-ip> [output-file]"
     exit 1
 fi
 
-echo "🔧 Setting up kubeconfig for $ENVIRONMENT environment"
+echo "🔧 Setting up kubeconfig for cluster: $CLUSTER_IP"
 
-# Create kubeconfig
-mkdir -p ~/.kube
+# Create kubeconfig directory
+mkdir -p $(dirname "$OUTPUT_FILE")
 
-# Get K3s token via SSH
-echo "🔑 Retrieving K3s token from cluster..."
-K3S_TOKEN=$(ssh -i ~/.ssh/aws-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP 'sudo cat /var/lib/rancher/k3s/server/node-token' 2>/dev/null || echo "TOKEN_ERROR")
-
-if [[ "$K3S_TOKEN" == "TOKEN_ERROR" || -z "$K3S_TOKEN" ]]; then
-    echo "❌ Failed to retrieve K3s token from cluster"
-    echo "💡 Cluster may not be ready or SSH access failed"
-    echo "🔗 Manual setup required:"
-    echo "   ssh -i ~/.ssh/aws-key ubuntu@$CLUSTER_IP"
-    echo "   sudo cat /var/lib/rancher/k3s/server/node-token"
-    exit 1
-fi
-
-# Create kubeconfig
-cat > ~/.kube/config-$ENVIRONMENT << EOF
+# Generate kubeconfig
+cat > "$OUTPUT_FILE" << EOF
 apiVersion: v1
-kind: Config
 clusters:
 - cluster:
-    server: https://$CLUSTER_IP:6443
     insecure-skip-tls-verify: true
-  name: health-app-$ENVIRONMENT
+    server: https://$CLUSTER_IP:6443
+  name: k3s-cluster
 contexts:
 - context:
-    cluster: health-app-$ENVIRONMENT
-    user: health-app-$ENVIRONMENT
-  name: health-app-$ENVIRONMENT
-current-context: health-app-$ENVIRONMENT
+    cluster: k3s-cluster
+    user: k3s-user
+  name: k3s-context
+current-context: k3s-context
+kind: Config
+preferences: {}
 users:
-- name: health-app-$ENVIRONMENT
+- name: k3s-user
   user:
-    token: $K3S_TOKEN
+    token: K10NODE_TOKEN_PLACEHOLDER
 EOF
 
-# Encode for GitHub Secrets
-echo "📋 Base64 encoded kubeconfig for GitHub Secrets:"
-base64 -w 0 ~/.kube/config-$ENVIRONMENT
+# Set permissions
+chmod 600 "$OUTPUT_FILE"
 
-echo ""
-echo "✅ Kubeconfig created: ~/.kube/config-$ENVIRONMENT"
-echo "💡 Add the base64 output to GitHub Secrets as KUBECONFIG_$ENVIRONMENT"
+echo "✅ Kubeconfig created at: $OUTPUT_FILE"
+echo "📝 Note: Replace K10NODE_TOKEN_PLACEHOLDER with actual K3s node token"

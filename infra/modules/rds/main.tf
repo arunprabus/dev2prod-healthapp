@@ -32,7 +32,7 @@ resource "aws_security_group" "db" {
 }
 
 resource "aws_db_parameter_group" "health_db" {
-  family = var.engine == "postgres" ? "postgres17" : "mysql8.0"
+  family = var.engine == "postgres" ? "postgres15" : "mysql8.0"
   name   = "${var.identifier}-params"
 
   tags = var.tags

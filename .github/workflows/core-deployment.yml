@@ -52,90 +52,27 @@ jobs:
           
           echo "🔧 Setting up kubeconfig for environment: $ENV"
           
-          # Define S3 paths to try for each environment
+          # Download kubeconfig from S3 (created by infrastructure workflow)
           case $ENV in
-            "dev")
-              KUBECONFIG_PATHS=("kubeconfig/dev-network.yaml" "kubeconfig/lower-network.yaml")
-              ;;
-            "test")
-              KUBECONFIG_PATHS=("kubeconfig/test-network.yaml" "kubeconfig/lower-network.yaml")
-              ;;
-            "prod")
-              KUBECONFIG_PATHS=("kubeconfig/prod-network.yaml" "kubeconfig/higher-network.yaml")
-              ;;
-            *)
-              KUBECONFIG_PATHS=("kubeconfig/lower-network.yaml")
-              ;;
+            "dev") KUBECONFIG_FILE="dev-network.yaml" ;;
+            "test") KUBECONFIG_FILE="test-network.yaml" ;;
+            "prod") KUBECONFIG_FILE="prod-network.yaml" ;;
+            *) KUBECONFIG_FILE="lower-network.yaml" ;;
           esac
           
           mkdir -p ~/.kube
           
-          echo "📥 Attempting to download kubeconfig from S3..."
-          
-          # Try S3 download with multiple paths
-          KUBECONFIG_FOUND=false
-          for KUBECONFIG_PATH in "${KUBECONFIG_PATHS[@]}"; do
-            echo "  Trying: s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH"
-            if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_PATH ~/.kube/config 2>/dev/null; then
-              echo "✅ Downloaded kubeconfig from S3: $KUBECONFIG_PATH"
-              KUBECONFIG_FOUND=true
-              
-              # Verify downloaded file
-              if [[ ! -f ~/.kube/config ]]; then
-                echo "❌ Kubeconfig file not found after download"
-                KUBECONFIG_FOUND=false
-                continue
-              fi
-              
-              # Check file size
-              FILE_SIZE=$(stat -c%s ~/.kube/config 2>/dev/null || echo "0")
-              if [[ $FILE_SIZE -lt 100 ]]; then
-                echo "❌ Downloaded kubeconfig file too small ($FILE_SIZE bytes)"
-                KUBECONFIG_FOUND=false
-                continue
-              fi
-              
-              echo "📄 Downloaded kubeconfig content:"
-              cat ~/.kube/config
-              break
-            fi
-          done
-          
-          # Fallback to dynamic creation if S3 fails
-          if [[ "$KUBECONFIG_FOUND" == "false" ]]; then
-            echo "⚠️ Kubeconfig not found in S3, creating from cluster IP..."
-            
-            # Get cluster IP based on environment
-            case $ENV in
-              "dev"|"test") TAG_FILTER="*lower*k3s*" ;;
-              "prod") TAG_FILTER="*higher*k3s*" ;;
-              *) TAG_FILTER="*lower*k3s*" ;;
-            esac
-            
-            CLUSTER_IP=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=$TAG_FILTER" "Name=instance-state-name,Values=running" \
-              --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-            
-            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-              echo "No cluster found, using fallback IP: 13.235.132.195"
-              CLUSTER_IP="13.235.132.195"
-            fi
-            
-            echo "🌐 Using cluster IP: $CLUSTER_IP"
-            
-            # Use the same script as infrastructure workflow
-            chmod +x scripts/generate-kubeconfig.sh
-            ./scripts/generate-kubeconfig.sh "$CLUSTER_IP" ~/.kube/config
-          fi
+          echo "📥 Downloading kubeconfig: $KUBECONFIG_FILE"
+          aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE ~/.kube/config
           
           chmod 600 ~/.kube/config
-          echo "🎯 Kubeconfig ready for $ENV environment"
+          echo "✅ Kubeconfig ready for $ENV environment"
 
       - name: Verify connection
         run: |
           echo "🔍 Testing cluster connection..."
-          kubectl cluster-info --request-timeout=10s || echo "Cluster info failed"
-          kubectl get nodes --request-timeout=10s || echo "Get nodes failed"
+          kubectl cluster-info --request-timeout=30s
+          kubectl get nodes --request-timeout=30s
 
       - name: Deploy application
         run: |
