@@ -15,9 +15,8 @@ OUTPUT_FILE="$2"
 echo "🔧 Fixing kubeconfig for cluster: $CLUSTER_IP"
 
 # Get Terraform's kubeconfig and decode it
-if terraform output -raw kubeconfig_b64 2>/dev/null; then
+if BASE64_CONFIG=$(terraform output -raw kubeconfig_b64 2>/dev/null) && [[ -n "$BASE64_CONFIG" ]]; then
   echo "📥 Using Terraform kubeconfig"
-  BASE64_CONFIG=$(terraform output -raw kubeconfig_b64)
   echo "$BASE64_CONFIG" | base64 -d > "$OUTPUT_FILE"
   
   # Replace localhost with actual cluster IP
