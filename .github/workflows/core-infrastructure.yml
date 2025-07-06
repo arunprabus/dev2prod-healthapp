@@ -121,9 +121,8 @@ jobs:
         # Get cluster IP for working kubeconfig
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
         
-        if [[ -f ./gha-kubeconfig.yaml ]]; then
-          echo "✅ Using Terraform-generated service account kubeconfig"
-          cp ./gha-kubeconfig.yaml "$OUTPUT"
+        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE "$OUTPUT" 2>/dev/null; then
+          echo "✅ Downloaded service account kubeconfig from S3"
           
           echo "📄 Service account kubeconfig content:"
           cat "$OUTPUT"
@@ -143,7 +142,7 @@ jobs:
           
           echo "✅ Kubeconfig distributed successfully"
         else
-          echo "❌ No service account kubeconfig found"
+          echo "❌ Failed to download service account kubeconfig from S3"
           exit 1
         fi
 

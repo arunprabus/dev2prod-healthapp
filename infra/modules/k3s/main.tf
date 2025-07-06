@@ -136,20 +136,55 @@ resource "aws_instance" "k3s" {
     # Wait for K3s to be ready
     sleep 60
     
-    # Create and upload working kubeconfig
+    # Create service account and generate kubeconfig
     if [[ -n "${var.s3_bucket}" && -f /etc/rancher/k3s/k3s.yaml ]]; then
       PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
       
-      # Create kubeconfig with public IP
-      cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml
-      sed -i "s|127.0.0.1:6443|$PUBLIC_IP:6443|g" /tmp/kubeconfig.yaml
+      # Create service account for GitHub Actions
+      kubectl create serviceaccount gha-deployer -n kube-system --dry-run=client -o yaml | kubectl apply -f -
       
-      # Upload to S3 (overwrite existing files)
-      aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-network.yaml
-      aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/dev-network.yaml
-      aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/test-network.yaml
+      # Create cluster role binding
+      kubectl create clusterrolebinding gha-deployer-binding --clusterrole=cluster-admin --serviceaccount=kube-system:gha-deployer --dry-run=client -o yaml | kubectl apply -f -
       
-      echo "Working kubeconfig uploaded to S3"
+      # Wait for service account token
+      sleep 10
+      
+      # Get service account token
+      TOKEN=$(kubectl get secret -n kube-system -o jsonpath="{.items[?(@.metadata.annotations['kubernetes\.io/service-account\.name']=='gha-deployer')].data.token}" | base64 -d)
+      
+      if [[ -n "$TOKEN" ]]; then
+        # Create kubeconfig with service account token
+        cat > /tmp/kubeconfig.yaml << KUBE_EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://$PUBLIC_IP:6443
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    user: gha-deployer
+  name: gha-context
+current-context: gha-context
+kind: Config
+preferences: {}
+users:
+- name: gha-deployer
+  user:
+    token: $TOKEN
+KUBE_EOF
+        
+        # Upload to S3
+        aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-network.yaml
+        aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/dev-network.yaml
+        aws s3 cp /tmp/kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/test-network.yaml
+        
+        echo "Service account kubeconfig uploaded to S3"
+      else
+        echo "Failed to get service account token"
+      fi
     fi
     
     # Make kubeconfig accessible locally
