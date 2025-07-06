@@ -95,24 +95,18 @@ jobs:
           -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -auto-approve
 
-    - name: Generate kubeconfig using SSM
+    - name: Generate kubeconfig
       if: github.event.inputs.action == 'deploy' && steps.terraform-apply.outcome == 'success'
       working-directory: infra
       run: |
         echo "🔧 Starting kubeconfig generation for ${{ matrix.env }} environment"
         
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
-        INSTANCE_ID=$(terraform output -raw k3s_instance_id 2>/dev/null || echo "")
         OUTPUT="/tmp/kubeconfig.yaml"
         
-        if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-          echo "❌ No instance ID found"
-          exit 1
-        fi
-        
-        # Use SSM script to generate kubeconfig
-        chmod +x ../scripts/generate-kubeconfig-ssm.sh
-        ../scripts/generate-kubeconfig-ssm.sh "$CLUSTER_IP" "$INSTANCE_ID" "$OUTPUT"
+        # Use simple fix script
+        chmod +x ../scripts/fix-kubeconfig.sh
+        ../scripts/fix-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT"
         
         echo "📄 Generated kubeconfig:"
         cat "$OUTPUT"
@@ -130,7 +124,7 @@ jobs:
             ;;
         esac
         
-        echo "✅ Kubeconfig with real token uploaded successfully"
+        echo "✅ Kubeconfig uploaded successfully"
 
     - name: Summary
       if: always()
