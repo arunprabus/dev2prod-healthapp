@@ -215,7 +215,7 @@ KUBE_EOF
         fi
       else
         echo "ERROR: Failed to get service account token after all attempts"
-        echo "Token length: ${#TOKEN}"
+        echo "Token length: $${#TOKEN}"
       fi
     fi
     
