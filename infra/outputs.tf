@@ -35,10 +35,7 @@ output "k3s_cluster_endpoint" {
   value       = module.k3s.cluster_endpoint
 }
 
-output "k3s_ssh_command" {
-  description = "SSH command to connect to K3s instance"
-  value       = module.k3s.ssh_command
-}
+
 
 # RDS Outputs
 output "db_instance_endpoint" {
@@ -96,12 +93,4 @@ output "deployment_status" {
   value       = "Deployed to ${var.environment} environment"
 }
 
-# Kubeconfig (base64 encoded)
-output "kubeconfig_b64" {
-  description = "Base64 encoded kubeconfig for K3s cluster"
-  value       = base64encode(templatefile("${path.module}/kubeconfig-template.yaml", {
-    cluster_ip = module.k3s.instance_public_ip
-    cluster_name = "health-app-${var.environment}"
-  }))
-  sensitive   = true
-}
+

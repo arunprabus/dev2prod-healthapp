@@ -18,7 +18,3 @@ output "cluster_endpoint" {
   value       = "https://${aws_instance.k3s.public_ip}:6443"
 }
 
-output "ssh_command" {
-  description = "SSH command to connect to K3s instance"
-  value       = "ssh -i ~/.ssh/id_rsa ubuntu@${aws_instance.k3s.public_ip}"
-}
