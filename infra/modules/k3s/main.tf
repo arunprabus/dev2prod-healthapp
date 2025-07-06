@@ -116,60 +116,57 @@ resource "aws_instance" "k3s" {
   iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
 
   user_data = <<-EOF
-    #!/bin/bash
-    apt-get update
-    apt-get install -y curl docker.io mysql-client
-    
-    # Install AWS CLI
-    apt-get install -y awscli
-    
-    # Install K3s with write permissions
-    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
-    
-    # Setup Docker
-    systemctl enable docker
-    systemctl start docker
-    usermod -aG docker ubuntu
-    
-    # Install kubectl
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x kubectl
-    mv kubectl /usr/local/bin/
-    
-    # Wait for K3s to be ready
-    sleep 60
-    
-    # Create service account with modern approach
-    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-    
-    # Wait for K3s to be ready
-    sleep 30
-    
-    # Create namespace and service account
-    echo "Creating namespace and service account..."
-    kubectl create namespace gha-access || true
-    kubectl create serviceaccount gha-deployer -n gha-access
-    
-    # Create role with deployment permissions
-    echo "Creating role with deployment permissions..."
-    kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access
-    kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access
-    
-    # Generate dynamic token (no secrets needed)
-    echo "Generating dynamic token..."
-    TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=24h)
-    
-    if [[ -n "$TOKEN" ]]; then
-      PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-      
-      # Create kubeconfig with dynamic token
-      cat > /tmp/gha-kubeconfig.yaml << EOF
+#!/bin/bash
+
+# Set variables from Terraform
+ENVIRONMENT="${var.environment}"
+S3_BUCKET="${var.s3_bucket}"
+
+apt-get update
+apt-get install -y curl docker.io mysql-client awscli
+
+# Install K3s with write permissions
+curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+
+# Setup Docker
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ubuntu
+
+# Install kubectl
+curl -LO "https://dl.k8s.io/release/$$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+mv kubectl /usr/local/bin/
+
+# Wait for K3s to be ready
+sleep 60
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
+# Create namespace and service account
+echo "Creating namespace and service account..."
+kubectl create namespace gha-access || true
+kubectl create serviceaccount gha-deployer -n gha-access
+
+# Create role with deployment permissions
+echo "Creating role with deployment permissions..."
+kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access
+kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access
+
+# Generate dynamic token
+echo "Generating dynamic token..."
+TOKEN=$$(kubectl create token gha-deployer -n gha-access --duration=24h)
+
+if [[ -n "$$TOKEN" ]]; then
+  PUBLIC_IP=$$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+  
+  # Create kubeconfig with dynamic token
+  cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
 apiVersion: v1
 kind: Config
 clusters:
 - cluster:
     insecure-skip-tls-verify: true
-    server: https://$PUBLIC_IP:6443
+    server: https://$$PUBLIC_IP:6443
   name: k3s-cluster
 contexts:
 - context:
@@ -181,32 +178,32 @@ current-context: gha-context
 users:
 - name: gha-deployer
   user:
-    token: $TOKEN
+    token: $$TOKEN
+KUBE_EOF
+  
+  # Validate kubeconfig before upload
+  echo "Validating kubeconfig..."
+  export KUBECONFIG=/tmp/gha-kubeconfig.yaml
+  kubectl version --short || echo "Version check failed"
+  kubectl get pods -n gha-access || echo "Pod access test failed"
+  
+  # Upload to S3 if validation passes
+  if [[ -n "$$S3_BUCKET" ]]; then
+    echo "Uploading validated kubeconfig to S3..."
+    aws s3 cp /tmp/gha-kubeconfig.yaml s3://$$S3_BUCKET/kubeconfig/$$ENVIRONMENT-gha.yaml
+    echo "SUCCESS: Service account kubeconfig uploaded"
+  fi
+else
+  echo "ERROR: Failed to generate token"
+fi
+
+# Local access
+mkdir -p /home/ubuntu/.kube
+cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+chown ubuntu:ubuntu /home/ubuntu/.kube/config
+
+echo "K3s cluster ready for $$ENVIRONMENT environment!"
 EOF
-      
-      # Validate kubeconfig before upload
-      echo "Validating kubeconfig..."
-      export KUBECONFIG=/tmp/gha-kubeconfig.yaml
-      kubectl version --short || echo "Version check failed"
-      kubectl get pods -n gha-access || echo "Pod access test failed"
-      
-      # Upload to S3 if validation passes
-      if [[ -n "${var.s3_bucket}" ]]; then
-        echo "Uploading validated kubeconfig to S3..."
-        aws s3 cp /tmp/gha-kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-gha.yaml
-        echo "SUCCESS: Service account kubeconfig uploaded"
-      fi
-    else
-      echo "ERROR: Failed to generate token"
-    fi
-    
-    # Make kubeconfig accessible locally
-    mkdir -p /home/ubuntu/.kube
-    cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-    chown ubuntu:ubuntu /home/ubuntu/.kube/config
-    
-    echo "K3s cluster ready for ${var.environment} environment!"
-  EOF
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-k3s-node-v2" })
 }

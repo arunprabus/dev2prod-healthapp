@@ -149,7 +149,7 @@ resource "aws_instance" "k3s" {
     chmod +x kubectl
     mv kubectl /usr/local/bin/
     
-    echo "K3s cluster ready for ${var.environment} environment!"
+    echo "K3s cluster ready for $${var.environment} environment!"
   EOF
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
