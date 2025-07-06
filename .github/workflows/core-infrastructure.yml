@@ -245,6 +245,40 @@ EOF
             echo "✅ SSH authentication successful"
           else
             echo "❌ SSH authentication failed"
+          fi
+          
+          echo "⚠️ Could not get token, using template without token"
+        fi
+        
+        echo "📄 Generated kubeconfig content:"
+        cat "$OUTPUT"
+        
+        # Upload to S3
+        aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
+        
+        case "${{ matrix.env }}" in
+          "lower")
+            aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml
+            aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml
+            ;;
+          "higher")
+            aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml
+            ;;
+        esac
+        
+        echo "✅ Kubeconfig upload completed"
+
+    - name: Summary
+      if: always()
+      working-directory: infra
+      run: |
+        echo "## 🏢 Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARYtKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH connection successful'" 2>/dev/null; then
+            echo "✅ SSH authentication successful"
+          else
+            echo "❌ SSH authentication failed"
             echo "SSH debug output:"
             ssh -i ~/.ssh/aws-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 -v ubuntu@$CLUSTER_IP "echo test" 2>&1 | head -20
           fi
