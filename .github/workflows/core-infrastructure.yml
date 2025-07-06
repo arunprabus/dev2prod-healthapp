@@ -105,9 +105,13 @@ jobs:
         echo "⏳ Waiting for instance to upload working kubeconfig..."
         sleep 90
         
-        # Debug: Check what's in S3
+        # Debug: Check what's in S3 with sizes
         echo "🔍 Checking S3 kubeconfig directory:"
-        aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/ || echo "No kubeconfig directory found"
+        aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/ --human-readable || echo "No kubeconfig directory found"
+        
+        # Check if files are being updated
+        echo "🔍 File timestamps and sizes:"
+        aws s3api head-object --bucket ${{ secrets.TF_STATE_BUCKET }} --key kubeconfig/dev-network.yaml --query 'LastModified,ContentLength' || echo "File not found"
         
         # Download existing kubeconfig from S3
         KUBECONFIG_FILE="${{ matrix.env }}-network.yaml"
