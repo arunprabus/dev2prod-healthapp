@@ -95,51 +95,27 @@ jobs:
           -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -auto-approve
 
-    - name: Generate and upload kubeconfig to S3
+    - name: Generate kubeconfig using SSM
       if: github.event.inputs.action == 'deploy' && steps.terraform-apply.outcome == 'success'
       working-directory: infra
       run: |
         echo "🔧 Starting kubeconfig generation for ${{ matrix.env }} environment"
         
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
+        INSTANCE_ID=$(terraform output -raw k3s_instance_id 2>/dev/null || echo "")
         OUTPUT="/tmp/kubeconfig.yaml"
         
-        echo "📡 Cluster IP: $CLUSTER_IP"
-        
-        # Wait for instance to generate kubeconfig
-        echo "⏳ Waiting for instance to generate kubeconfig..."
-        sleep 90
-        
-        # Try to download instance-generated kubeconfig
-        INSTANCE_KUBECONFIG="instance-generated-${{ matrix.env }}.yaml"
-        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$INSTANCE_KUBECONFIG "$OUTPUT" 2>/dev/null; then
-          echo "✅ Downloaded instance-generated kubeconfig"
-        else
-          echo "⚠️ Instance kubeconfig not found, creating fallback"
-          mkdir -p "$(dirname "$OUTPUT")"
-          cat > "$OUTPUT" << EOF
-apiVersion: v1
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://${CLUSTER_IP}:6443
-  name: k3s-cluster
-contexts:
-- context:
-    cluster: k3s-cluster
-    user: k3s-user
-  name: k3s-context
-current-context: k3s-context
-kind: Config
-preferences: {}
-users:
-- name: k3s-user
-  user:
-    token: TOKEN_PLACEHOLDER
-EOF
+        if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
+          echo "❌ No instance ID found"
+          exit 1
         fi
         
-        chmod 600 "$OUTPUT"
+        # Use SSM script to generate kubeconfig
+        chmod +x ../scripts/generate-kubeconfig-ssm.sh
+        ../scripts/generate-kubeconfig-ssm.sh "$CLUSTER_IP" "$INSTANCE_ID" "$OUTPUT"
+        
+        echo "📄 Generated kubeconfig:"
+        cat "$OUTPUT"
         
         # Upload to S3
         aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
@@ -154,7 +130,7 @@ EOF
             ;;
         esac
         
-        echo "✅ Kubeconfig upload completed"
+        echo "✅ Kubeconfig with real token uploaded successfully"
 
     - name: Summary
       if: always()

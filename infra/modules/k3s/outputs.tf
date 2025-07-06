@@ -3,6 +3,11 @@ output "instance_public_ip" {
   value       = aws_instance.k3s.public_ip
 }
 
+output "instance_id" {
+  description = "Instance ID of K3s instance"
+  value       = aws_instance.k3s.id
+}
+
 output "instance_private_ip" {
   description = "Private IP of K3s instance"
   value       = aws_instance.k3s.private_ip

@@ -79,6 +79,11 @@ resource "aws_iam_role" "k3s_role" {
   })
 }
 
+resource "aws_iam_role_policy_attachment" "k3s_ssm_policy" {
+  role       = aws_iam_role.k3s_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
 resource "aws_iam_role_policy" "k3s_s3_policy" {
   name = "${var.name_prefix}-k3s-s3-policy"
   role = aws_iam_role.k3s_role.id

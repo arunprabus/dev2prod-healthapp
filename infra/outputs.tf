@@ -25,6 +25,11 @@ output "k3s_instance_ip" {
   value       = module.k3s.instance_public_ip
 }
 
+output "k3s_instance_id" {
+  description = "Instance ID of the K3s instance"
+  value       = module.k3s.instance_id
+}
+
 output "k3s_cluster_endpoint" {
   description = "Endpoint for the K3s cluster API server"
   value       = module.k3s.cluster_endpoint
