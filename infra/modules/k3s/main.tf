@@ -92,7 +92,10 @@ resource "aws_iam_role_policy" "k3s_s3_policy" {
           "s3:PutObject",
           "s3:PutObjectAcl"
         ]
-        Resource = "arn:aws:s3:::${var.s3_bucket}/kubeconfig/*"
+        Resource = [
+          "arn:aws:s3:::${var.s3_bucket}/kubeconfig/*",
+          "arn:aws:s3:::${var.s3_bucket}/kubeconfig"
+        ]
       }
     ]
   })
@@ -120,8 +123,8 @@ resource "aws_instance" "k3s" {
     # Install AWS CLI
     apt-get install -y awscli
     
-    # Install K3s with anonymous auth enabled
-    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --kube-apiserver-arg=anonymous-auth=true --kube-apiserver-arg=authorization-mode=AlwaysAllow
+    # Install K3s with write permissions
+    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
     
     # Setup Docker
     systemctl enable docker
@@ -136,87 +139,65 @@ resource "aws_instance" "k3s" {
     # Wait for K3s to be ready
     sleep 60
     
-    # Create service account and upload kubeconfig
-    if [[ -n "${var.s3_bucket}" && -f /etc/rancher/k3s/k3s.yaml ]]; then
+    # Create service account with modern approach
+    export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+    
+    # Wait for K3s to be ready
+    sleep 30
+    
+    # Create namespace and service account
+    echo "Creating namespace and service account..."
+    kubectl create namespace gha-access || true
+    kubectl create serviceaccount gha-deployer -n gha-access
+    
+    # Create role with deployment permissions
+    echo "Creating role with deployment permissions..."
+    kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access
+    kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access
+    
+    # Generate dynamic token (no secrets needed)
+    echo "Generating dynamic token..."
+    TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=24h)
+    
+    if [[ -n "$TOKEN" ]]; then
       PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
       
-      # Wait for K3s to be fully ready
-      sleep 30
-      
-      # Create service account with debugging
-      echo "Creating service account gha-deployer..."
-      kubectl create serviceaccount gha-deployer -n kube-system --dry-run=client -o yaml | kubectl apply -f -
-      
-      echo "Creating cluster role binding..."
-      kubectl create clusterrolebinding gha-deployer-binding --clusterrole=cluster-admin --serviceaccount=kube-system:gha-deployer --dry-run=client -o yaml | kubectl apply -f -
-      
-      # Verify service account was created
-      echo "Verifying service account creation..."
-      kubectl get serviceaccount gha-deployer -n kube-system || echo "Service account not found"
-      kubectl get clusterrolebinding gha-deployer-binding || echo "Cluster role binding not found"
-      
-      # Wait for token to be created
-      echo "Waiting for service account token..."
-      sleep 20
-      
-      # List all secrets to debug
-      echo "Available secrets in kube-system:"
-      kubectl get secrets -n kube-system | grep gha-deployer || echo "No gha-deployer secrets found"
-      
-      # Get service account token (try multiple methods)
-      echo "Attempting to get service account token..."
-      TOKEN=$(kubectl get secret -n kube-system -o jsonpath="{.items[?(@.metadata.annotations['kubernetes\.io/service-account\.name']=='gha-deployer')].data.token}" | base64 -d)
-      
-      if [[ -z "$TOKEN" ]]; then
-        echo "First method failed, trying alternative..."
-        SECRET_NAME=$(kubectl get serviceaccount gha-deployer -n kube-system -o jsonpath='{.secrets[0].name}')
-        if [[ -n "$SECRET_NAME" ]]; then
-          TOKEN=$(kubectl get secret $SECRET_NAME -n kube-system -o jsonpath='{.data.token}' | base64 -d)
-        fi
-      fi
-      
-      if [[ -n "$TOKEN" ]]; then
-        # Create service account kubeconfig
-        cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
+      # Create kubeconfig with dynamic token
+      cat > /tmp/gha-kubeconfig.yaml << EOF
 apiVersion: v1
+kind: Config
 clusters:
 - cluster:
     insecure-skip-tls-verify: true
-    server: https://\$PUBLIC_IP:6443
+    server: https://$PUBLIC_IP:6443
   name: k3s-cluster
 contexts:
 - context:
     cluster: k3s-cluster
+    namespace: gha-access
     user: gha-deployer
   name: gha-context
 current-context: gha-context
-kind: Config
-preferences: {}
 users:
 - name: gha-deployer
   user:
-    token: \$TOKEN
-KUBE_EOF
-        
-        # Test AWS CLI access
-        echo "Testing AWS CLI access..."
-        aws sts get-caller-identity || echo "AWS CLI failed"
-        
-        # Upload service account kubeconfig with debugging
-        echo "Uploading service account kubeconfig to S3..."
-        if aws s3 cp /tmp/gha-kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-gha.yaml; then
-          echo "SUCCESS: Service account kubeconfig uploaded to S3"
-          
-          # Verify upload
-          aws s3 ls s3://${var.s3_bucket}/kubeconfig/ | grep gha || echo "Upload verification failed"
-        else
-          echo "ERROR: Failed to upload service account kubeconfig"
-        fi
-      else
-        echo "ERROR: Failed to get service account token after all attempts"
-        echo "Token length: $${#TOKEN}"
+    token: $TOKEN
+EOF
+      
+      # Validate kubeconfig before upload
+      echo "Validating kubeconfig..."
+      export KUBECONFIG=/tmp/gha-kubeconfig.yaml
+      kubectl version --short || echo "Version check failed"
+      kubectl get pods -n gha-access || echo "Pod access test failed"
+      
+      # Upload to S3 if validation passes
+      if [[ -n "${var.s3_bucket}" ]]; then
+        echo "Uploading validated kubeconfig to S3..."
+        aws s3 cp /tmp/gha-kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-gha.yaml
+        echo "SUCCESS: Service account kubeconfig uploaded"
       fi
+    else
+      echo "ERROR: Failed to generate token"
     fi
     
     # Make kubeconfig accessible locally
