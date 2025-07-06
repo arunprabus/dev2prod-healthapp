@@ -118,18 +118,18 @@ jobs:
         OUTPUT="/tmp/kubeconfig.yaml"
         
         echo "📥 Attempting to download: $KUBECONFIG_FILE"
-        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE "$OUTPUT" 2>/dev/null; then
-          echo "✅ Downloaded kubeconfig from S3"
+        # Get cluster IP for working kubeconfig
+        CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
+        
+        if [[ -n "$CLUSTER_IP" ]]; then
+          echo "✅ Creating working kubeconfig for cluster: $CLUSTER_IP"
           
-          echo "📄 Kubeconfig content:"
+          # Use working kubeconfig script
+          chmod +x ../scripts/create-working-kubeconfig.sh
+          ../scripts/create-working-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT"
+          
+          echo "📄 Working kubeconfig content:"
           cat "$OUTPUT"
-          
-          # Check if kubeconfig has real token
-          if grep -q "token:" "$OUTPUT"; then
-            echo "✅ Kubeconfig contains token authentication"
-          else
-            echo "❌ Kubeconfig missing token - still using old version"
-          fi
           
           # Copy to standard locations
           aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
@@ -146,7 +146,7 @@ jobs:
           
           echo "✅ Kubeconfig distributed successfully"
         else
-          echo "❌ Failed to download kubeconfig from S3"
+          echo "❌ No cluster IP found"
           exit 1
         fi
 
