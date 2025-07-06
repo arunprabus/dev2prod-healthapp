@@ -120,6 +120,13 @@ jobs:
           echo "📄 Kubeconfig content:"
           cat "$OUTPUT"
           
+          # Check if kubeconfig has real token
+          if grep -q "token:" "$OUTPUT"; then
+            echo "✅ Kubeconfig contains token authentication"
+          else
+            echo "❌ Kubeconfig missing token - still using old version"
+          fi
+          
           # Copy to standard locations
           aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
           
