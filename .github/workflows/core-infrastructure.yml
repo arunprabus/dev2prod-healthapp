@@ -121,14 +121,11 @@ jobs:
         # Get cluster IP for working kubeconfig
         CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
         
-        if [[ -n "$CLUSTER_IP" ]]; then
-          echo "✅ Creating working kubeconfig for cluster: $CLUSTER_IP"
+        if [[ -f ./gha-kubeconfig.yaml ]]; then
+          echo "✅ Using Terraform-generated service account kubeconfig"
+          cp ./gha-kubeconfig.yaml "$OUTPUT"
           
-          # Use working kubeconfig script
-          chmod +x ../scripts/create-working-kubeconfig.sh
-          ../scripts/create-working-kubeconfig.sh "$CLUSTER_IP" "$OUTPUT"
-          
-          echo "📄 Working kubeconfig content:"
+          echo "📄 Service account kubeconfig content:"
           cat "$OUTPUT"
           
           # Copy to standard locations
@@ -146,7 +143,7 @@ jobs:
           
           echo "✅ Kubeconfig distributed successfully"
         else
-          echo "❌ No cluster IP found"
+          echo "❌ No service account kubeconfig found"
           exit 1
         fi
 

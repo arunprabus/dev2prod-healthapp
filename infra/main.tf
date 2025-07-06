@@ -122,6 +122,44 @@ module "rds" {
 
 
 
+# Create service account for GitHub Actions
+resource "kubernetes_service_account" "gha_deployer" {
+  metadata {
+    name      = "gha-deployer"
+    namespace = "kube-system"
+  }
+  depends_on = [module.k3s]
+}
+
+resource "kubernetes_cluster_role_binding" "gha_deployer_bind" {
+  metadata {
+    name = "gha-deployer-binding"
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+  }
+  subject {
+    kind      = "ServiceAccount"
+    name      = kubernetes_service_account.gha_deployer.metadata[0].name
+    namespace = kubernetes_service_account.gha_deployer.metadata[0].namespace
+  }
+  depends_on = [kubernetes_service_account.gha_deployer]
+}
+
+# Generate kubeconfig with service account token
+resource "null_resource" "generate_gha_kubeconfig" {
+  provisioner "local-exec" {
+    command = <<EOT
+      sleep 30
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      ./scripts/generate-gha-kubeconfig.sh ${module.k3s.instance_public_ip} ./gha-kubeconfig.yaml
+    EOT
+  }
+  depends_on = [kubernetes_cluster_role_binding.gha_deployer_bind]
+}
+
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {
   source = "./modules/monitoring"
