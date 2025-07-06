@@ -160,6 +160,6 @@ resource "aws_instance" "k3s" {
     echo "K3s cluster ready for ${var.environment} environment!"
   EOF
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-k3s-node" })
+  tags = merge(var.tags, { Name = "${var.name_prefix}-k3s-node-v2" })
 }
 
