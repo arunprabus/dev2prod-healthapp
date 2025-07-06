@@ -17,7 +17,9 @@ provider "aws" {
 }
 
 provider "kubernetes" {
-  config_path = "/etc/rancher/k3s/k3s.yaml"
+  host                   = var.k3s_endpoint != "" ? var.k3s_endpoint : "https://127.0.0.1:6443"
+  insecure               = true
+  config_path            = null
 }
 
 locals {
@@ -122,50 +124,7 @@ module "rds" {
 
 
 
-# Create service account for GitHub Actions
-resource "kubernetes_service_account" "gha_deployer" {
-  metadata {
-    name      = "gha-deployer"
-    namespace = "kube-system"
-  }
-  depends_on = [module.k3s]
-}
 
-resource "kubernetes_cluster_role_binding" "gha_deployer_bind" {
-  metadata {
-    name = "gha-deployer-binding"
-  }
-  role_ref {
-    api_group = "rbac.authorization.k8s.io"
-    kind      = "ClusterRole"
-    name      = "cluster-admin"
-  }
-  subject {
-    kind      = "ServiceAccount"
-    name      = kubernetes_service_account.gha_deployer.metadata[0].name
-    namespace = kubernetes_service_account.gha_deployer.metadata[0].namespace
-  }
-  depends_on = [kubernetes_service_account.gha_deployer]
-}
-
-# Generate kubeconfig with service account token
-resource "null_resource" "generate_gha_kubeconfig" {
-  provisioner "local-exec" {
-    command = <<EOT
-      chmod +x ./scripts/generate-gha-kubeconfig.sh
-      ./scripts/generate-gha-kubeconfig.sh ${module.k3s.instance_public_ip} ./gha-kubeconfig.yaml
-    EOT
-  }
-  depends_on = [kubernetes_cluster_role_binding.gha_deployer_bind]
-}
-
-# Upload kubeconfig to S3
-resource "aws_s3_object" "gha_kubeconfig" {
-  bucket = var.tf_state_bucket
-  key    = "kubeconfig/${var.environment}-gha.yaml"
-  source = "./gha-kubeconfig.yaml"
-  depends_on = [null_resource.generate_gha_kubeconfig]
-}
 
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {

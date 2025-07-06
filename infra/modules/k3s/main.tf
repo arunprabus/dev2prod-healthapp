@@ -136,10 +136,55 @@ resource "aws_instance" "k3s" {
     # Wait for K3s to be ready
     sleep 60
     
-    # Make kubeconfig accessible for Terraform
-    chmod 644 /etc/rancher/k3s/k3s.yaml
-    
-    echo "K3s cluster ready - Terraform will handle service account creation"
+    # Create service account and upload kubeconfig
+    if [[ -n "${var.s3_bucket}" && -f /etc/rancher/k3s/k3s.yaml ]]; then
+      PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+      export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+      
+      # Wait for K3s to be fully ready
+      sleep 30
+      
+      # Create service account
+      kubectl create serviceaccount gha-deployer -n kube-system --dry-run=client -o yaml | kubectl apply -f -
+      kubectl create clusterrolebinding gha-deployer-binding --clusterrole=cluster-admin --serviceaccount=kube-system:gha-deployer --dry-run=client -o yaml | kubectl apply -f -
+      
+      # Wait for token to be created
+      sleep 15
+      
+      # Get service account token
+      TOKEN=$(kubectl get secret -n kube-system -o jsonpath="{.items[?(@.metadata.annotations['kubernetes\.io/service-account\.name']=='gha-deployer')].data.token}" | base64 -d)
+      
+      if [[ -n "$TOKEN" ]]; then
+        # Create service account kubeconfig
+        cat > /tmp/gha-kubeconfig.yaml << EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://$PUBLIC_IP:6443
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    user: gha-deployer
+  name: gha-context
+current-context: gha-context
+kind: Config
+preferences: {}
+users:
+- name: gha-deployer
+  user:
+    token: $TOKEN
+EOF
+        
+        # Upload service account kubeconfig
+        aws s3 cp /tmp/gha-kubeconfig.yaml s3://${var.s3_bucket}/kubeconfig/${var.environment}-gha.yaml
+        
+        echo "Service account kubeconfig uploaded to S3"
+      else
+        echo "Failed to get service account token"
+      fi
+    fi
     
     # Make kubeconfig accessible locally
     mkdir -p /home/ubuntu/.kube
