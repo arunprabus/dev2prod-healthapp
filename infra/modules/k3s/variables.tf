@@ -39,3 +39,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "s3_bucket" {
+  description = "S3 bucket for kubeconfig upload"
+  type        = string
+  default     = ""
+}

@@ -84,6 +84,7 @@ module "k3s" {
   k3s_instance_type = var.k3s_instance_type
   environment       = var.environment
   ssh_public_key    = var.ssh_public_key
+  s3_bucket         = var.tf_state_bucket
   tags              = local.tags
 }
 

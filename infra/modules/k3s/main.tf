@@ -61,6 +61,48 @@ resource "aws_key_pair" "main" {
   tags       = var.tags
 }
 
+# IAM role for S3 access
+resource "aws_iam_role" "k3s_role" {
+  name = "${var.name_prefix}-k3s-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "k3s_s3_policy" {
+  name = "${var.name_prefix}-k3s-s3-policy"
+  role = aws_iam_role.k3s_role.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl"
+        ]
+        Resource = "arn:aws:s3:::${var.s3_bucket}/kubeconfig/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "k3s_profile" {
+  name = "${var.name_prefix}-k3s-profile"
+  role = aws_iam_role.k3s_role.name
+}
+
 # K3s master node
 resource "aws_instance" "k3s" {
   ami                    = "ami-0f58b397bc5c1f2e8" # Ubuntu 22.04 LTS
@@ -68,11 +110,15 @@ resource "aws_instance" "k3s" {
   key_name              = aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
   subnet_id             = var.subnet_id
+  iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
 
   user_data = <<-EOF
     #!/bin/bash
     apt-get update
     apt-get install -y curl docker.io mysql-client
+    
+    # Install AWS CLI first
+    apt-get install -y awscli
     
     # Install K3s
     curl -sfL https://get.k3s.io | sh -
@@ -91,6 +137,43 @@ resource "aws_instance" "k3s" {
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
     chmod +x kubectl
     mv kubectl /usr/local/bin/
+    
+    # Wait for K3s to be fully ready
+    sleep 30
+    
+    # Upload kubeconfig to S3 (workaround for SSH issues)
+    if [[ -n "${var.s3_bucket}" ]]; then
+      echo "Uploading kubeconfig to S3..."
+      
+      # Get the token and create kubeconfig
+      TOKEN=$(cat /var/lib/rancher/k3s/server/node-token)
+      PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+      
+      # Create token-based kubeconfig
+      cat > /tmp/kubeconfig-from-instance.yaml << KUBE_EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://\$PUBLIC_IP:6443
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    user: k3s-user
+  name: k3s-context
+current-context: k3s-context
+kind: Config
+preferences: {}
+users:
+- name: k3s-user
+  user:
+    token: \$TOKEN
+KUBE_EOF
+      
+      # Upload to S3 with instance metadata
+      aws s3 cp /tmp/kubeconfig-from-instance.yaml s3://${var.s3_bucket}/kubeconfig/instance-generated-${var.environment}.yaml || echo "S3 upload failed"
+    fi
     
     echo "K3s cluster ready for ${var.environment} environment!"
   EOF
