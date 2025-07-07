@@ -114,7 +114,7 @@ resource "aws_security_group" "k3s" {
 # Key pair for SSH
 resource "aws_key_pair" "main" {
   key_name   = "${local.name_prefix}-key"
-  public_key = file("~/.ssh/id_rsa.pub")
+  public_key = var.ssh_public_key
   tags       = local.tags
 }
 
@@ -139,17 +139,18 @@ resource "aws_instance" "k3s" {
     systemctl start docker
     usermod -aG docker ubuntu
     
-    # Make kubeconfig accessible
+    # Make kubeconfig accessible for download
+    chmod 644 /etc/rancher/k3s/k3s.yaml
     mkdir -p /home/ubuntu/.kube
     cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
     chown ubuntu:ubuntu /home/ubuntu/.kube/config
     
-    # Install kubectl for ubuntu user
+    # Install kubectl
     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
     chmod +x kubectl
     mv kubectl /usr/local/bin/
     
-    echo "K3s cluster ready for $${var.environment} environment!"
+    echo "K3s cluster ready! Kubeconfig available at /etc/rancher/k3s/k3s.yaml"
   EOF
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })

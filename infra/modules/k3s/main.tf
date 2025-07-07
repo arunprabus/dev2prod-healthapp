@@ -181,15 +181,9 @@ users:
     token: $$TOKEN
 KUBE_EOF
   
-  # Validate kubeconfig before upload
-  echo "Validating kubeconfig..."
-  export KUBECONFIG=/tmp/gha-kubeconfig.yaml
-  kubectl version --short || echo "Version check failed"
-  kubectl get pods -n gha-access || echo "Pod access test failed"
-  
-  # Upload to S3 if validation passes
+  # Upload to S3
   if [[ -n "$$S3_BUCKET" ]]; then
-    echo "Uploading validated kubeconfig to S3..."
+    echo "Uploading kubeconfig to S3..."
     aws s3 cp /tmp/gha-kubeconfig.yaml s3://$$S3_BUCKET/kubeconfig/$$ENVIRONMENT-gha.yaml
     echo "SUCCESS: Service account kubeconfig uploaded"
   fi

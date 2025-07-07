@@ -41,6 +41,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -62,7 +63,7 @@ jobs:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
     - name: Terraform Init
-      working-directory: infra
+      working-directory: infra/two-network-setup
       run: |
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
@@ -70,91 +71,104 @@ jobs:
           -backend-config="region=$AWS_REGION"
 
     - name: Terraform Plan
-      working-directory: infra
+      working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
         terraform plan \
-          -var-file="environments/${{ matrix.env }}.tfvars" \
+          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+          -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -out=tfplan
 
     - name: Terraform Apply
       id: terraform-apply
-      working-directory: infra
+      working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'deploy'
       run: terraform apply -auto-approve tfplan
 
     - name: Terraform Destroy
-      working-directory: infra
+      working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
       run: |
         terraform destroy \
-          -var-file="environments/${{ matrix.env }}.tfvars" \
+          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+          -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -auto-approve
 
-    - name: Download kubeconfig from S3
+    - name: Setup kubeconfig and GitHub Secret
       if: github.event.inputs.action == 'deploy' && steps.terraform-apply.outcome == 'success'
-      working-directory: infra
+      working-directory: infra/two-network-setup
       run: |
-        echo "🔧 Downloading kubeconfig for ${{ matrix.env }} environment"
+        echo "🔧 Setting up kubeconfig for ${{ matrix.env }} environment"
         
-        # Wait for instance to upload kubeconfig
-        echo "⏳ Waiting for instance to upload working kubeconfig..."
-        sleep 90
+        # Get cluster IP from Terraform output
+        CLUSTER_IP=$(terraform output -raw k3s_public_ip)
+        echo "📡 Cluster IP: $CLUSTER_IP"
         
-        # Debug: Check what's in S3 with sizes
-        echo "🔍 Checking S3 kubeconfig directory:"
-        aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/ --human-readable || echo "No kubeconfig directory found"
+        # Wait for K3s to be ready
+        echo "⏳ Waiting for K3s to be ready..."
+        sleep 60
         
-        # Check if files are being updated
-        echo "🔍 File timestamps and sizes:"
-        aws s3api head-object --bucket ${{ secrets.TF_STATE_BUCKET }} --key kubeconfig/dev-network.yaml --query 'LastModified,ContentLength' || echo "File not found"
+        # Download kubeconfig via SSH
+        echo "📥 Downloading kubeconfig via SSH..."
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+        chmod 600 ~/.ssh/k3s-key
         
-        # Download service account kubeconfig from S3
-        KUBECONFIG_FILE="${{ matrix.env }}-gha.yaml"
-        OUTPUT="/tmp/kubeconfig.yaml"
+        # Download kubeconfig with retry
+        for i in {1..3}; do
+          if scp -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP:/etc/rancher/k3s/k3s.yaml kubeconfig-${{ matrix.env }}.yaml; then
+            echo "✅ Kubeconfig downloaded successfully"
+            break
+          else
+            echo "⚠️ Attempt $i failed, retrying in 30s..."
+            sleep 30
+          fi
+        done
         
-        echo "📥 Attempting to download: $KUBECONFIG_FILE"
-        # Get cluster IP for working kubeconfig
-        CLUSTER_IP=$(terraform output -raw k3s_instance_ip 2>/dev/null || echo "")
+        # Update server IP in kubeconfig
+        sed -i "s/127.0.0.1/$CLUSTER_IP/" kubeconfig-${{ matrix.env }}.yaml
         
-        # Try service account kubeconfig first, fallback to regular kubeconfig
-        if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE "$OUTPUT" 2>/dev/null; then
-          echo "✅ Downloaded service account kubeconfig from S3"
-          
-          echo "📄 Service account kubeconfig content:"
-          cat "$OUTPUT"
-        elif aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml "$OUTPUT" 2>/dev/null; then
-          echo "⚠️ Using fallback kubeconfig (service account failed)"
-          
-          echo "📄 Fallback kubeconfig content:"
-          cat "$OUTPUT"
-          
-          # Copy to standard locations
-          aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-network.yaml
-          
-          case "${{ matrix.env }}" in
-            "lower")
-              aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/dev-network.yaml
-              aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/test-network.yaml
-              ;;
-            "higher")
-              aws s3 cp "$OUTPUT" s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/prod-network.yaml
-              ;;
-          esac
-          
-          echo "✅ Kubeconfig distributed successfully"
+        # Test kubeconfig
+        export KUBECONFIG=$PWD/kubeconfig-${{ matrix.env }}.yaml
+        if kubectl get nodes --request-timeout=10s; then
+          echo "✅ Kubeconfig is working!"
         else
-          echo "❌ Failed to download any kubeconfig from S3"
+          echo "❌ Kubeconfig test failed"
           exit 1
         fi
+        
+        # Convert to base64 for GitHub Secret
+        KUBECONFIG_B64=$(base64 -w 0 kubeconfig-${{ matrix.env }}.yaml)
+        
+        # Create GitHub Secret based on environment
+        case "${{ matrix.env }}" in
+          "lower")
+            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_DEV --body -
+            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_TEST --body -
+            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_LOWER --body -
+            echo "✅ Created secrets: KUBECONFIG_DEV, KUBECONFIG_TEST, KUBECONFIG_LOWER"
+            ;;
+          "higher")
+            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_PROD --body -
+            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_HIGHER --body -
+            echo "✅ Created secrets: KUBECONFIG_PROD, KUBECONFIG_HIGHER"
+            ;;
+          "monitoring")
+            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_MONITORING --body -
+            echo "✅ Created secret: KUBECONFIG_MONITORING"
+            ;;
+        esac
+        
+        # Cleanup
+        rm -f ~/.ssh/k3s-key kubeconfig-${{ matrix.env }}.yaml
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Summary
       if: always()
-      working-directory: infra
+      working-directory: infra/two-network-setup
       run: |
         echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
         echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY

@@ -18,6 +18,11 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
+variable "ssh_public_key" {
+  description = "SSH public key for EC2 access"
+  type        = string
+}
+
 locals {
   # Network CIDR based on tier
   vpc_cidr = var.network_tier == "lower" ? "10.0.0.0/16" : "10.1.0.0/16"

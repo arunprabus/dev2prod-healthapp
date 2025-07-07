@@ -25,7 +25,22 @@ output "rds_endpoint" {
 
 output "ssh_command" {
   description = "SSH command to connect to K3s cluster"
-  value       = "ssh -i ~/.ssh/id_rsa ubuntu@${aws_instance.k3s.public_ip}"
+  value       = "ssh -i ~/.ssh/k3s-key ubuntu@${aws_instance.k3s.public_ip}"
+}
+
+output "kubeconfig_download_command" {
+  description = "Command to download kubeconfig from K3s cluster"
+  value       = "scp -i ~/.ssh/k3s-key ubuntu@${aws_instance.k3s.public_ip}:/etc/rancher/k3s/k3s.yaml kubeconfig-${var.environment}.yaml"
+}
+
+output "kubeconfig_setup_commands" {
+  description = "Commands to setup kubeconfig locally"
+  value = [
+    "scp -i ~/.ssh/k3s-key ubuntu@${aws_instance.k3s.public_ip}:/etc/rancher/k3s/k3s.yaml kubeconfig-${var.environment}.yaml",
+    "sed -i 's/127.0.0.1/${aws_instance.k3s.public_ip}/' kubeconfig-${var.environment}.yaml",
+    "export KUBECONFIG=$PWD/kubeconfig-${var.environment}.yaml",
+    "kubectl get nodes"
+  ]
 }
 
 output "frontend_url" {
