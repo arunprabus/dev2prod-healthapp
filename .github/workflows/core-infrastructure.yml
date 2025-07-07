@@ -41,7 +41,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -142,29 +141,48 @@ jobs:
         # Convert to base64 for GitHub Secret
         KUBECONFIG_B64=$(base64 -w 0 kubeconfig-${{ matrix.env }}.yaml)
         
-        # Create GitHub Secret based on environment
+        # Print kubeconfig for manual secret creation
+        echo "📋 COPY THE FOLLOWING BASE64 KUBECONFIG TO GITHUB SECRETS:"
+        echo "==========================================="
         case "${{ matrix.env }}" in
           "lower")
-            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_DEV --body -
-            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_TEST --body -
-            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_LOWER --body -
-            echo "✅ Created secrets: KUBECONFIG_DEV, KUBECONFIG_TEST, KUBECONFIG_LOWER"
+            echo "🔑 Secret Name: KUBECONFIG_DEV"
+            echo "📄 Secret Value:"
+            echo "$KUBECONFIG_B64"
+            echo "==========================================="
+            echo "🔑 Secret Name: KUBECONFIG_TEST"
+            echo "📄 Secret Value:"
+            echo "$KUBECONFIG_B64"
+            echo "==========================================="
+            echo "🔑 Secret Name: KUBECONFIG_LOWER"
+            echo "📄 Secret Value:"
+            echo "$KUBECONFIG_B64"
             ;;
           "higher")
-            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_PROD --body -
-            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_HIGHER --body -
-            echo "✅ Created secrets: KUBECONFIG_PROD, KUBECONFIG_HIGHER"
+            echo "🔑 Secret Name: KUBECONFIG_PROD"
+            echo "📄 Secret Value:"
+            echo "$KUBECONFIG_B64"
+            echo "==========================================="
+            echo "🔑 Secret Name: KUBECONFIG_HIGHER"
+            echo "📄 Secret Value:"
+            echo "$KUBECONFIG_B64"
             ;;
           "monitoring")
-            echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_MONITORING --body -
-            echo "✅ Created secret: KUBECONFIG_MONITORING"
+            echo "🔑 Secret Name: KUBECONFIG_MONITORING"
+            echo "📄 Secret Value:"
+            echo "$KUBECONFIG_B64"
             ;;
         esac
+        echo "==========================================="
+        echo "📝 Manual Steps:"
+        echo "1. Go to Settings → Secrets and variables → Actions"
+        echo "2. Click 'New repository secret'"
+        echo "3. Copy secret name and value from above"
+        echo "4. Repeat for each secret listed"
         
         # Cleanup
         rm -f ~/.ssh/k3s-key kubeconfig-${{ matrix.env }}.yaml
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
     - name: Summary
       if: always()
