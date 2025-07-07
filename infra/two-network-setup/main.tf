@@ -11,24 +11,32 @@ provider "aws" {
   region = var.aws_region
 }
 
-# VPC for the network tier
-resource "aws_vpc" "main" {
-  cidr_block           = local.vpc_cidr
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-  tags = merge(local.tags, { Name = "${local.name_prefix}-vpc" })
+# Use default VPC to avoid VPC limits
+data "aws_vpc" "default" {
+  default = true
 }
 
+# VPC for the network tier (commented out to use default VPC)
+# resource "aws_vpc" "main" {
+#   cidr_block           = local.vpc_cidr
+#   enable_dns_hostnames = true
+#   enable_dns_support   = true
+#   tags = merge(local.tags, { Name = "${local.name_prefix}-vpc" })
+# }
+
 # Internet Gateway
-resource "aws_internet_gateway" "main" {
-  vpc_id = aws_vpc.main.id
-  tags = merge(local.tags, { Name = "${local.name_prefix}-igw" })
+# Use default internet gateway
+data "aws_internet_gateway" "default" {
+  filter {
+    name   = "attachment.vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
 }
 
 # Public subnet (no NAT Gateway cost)
 resource "aws_subnet" "public" {
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = cidrsubnet(local.vpc_cidr, 8, 1)
+  vpc_id                  = data.aws_vpc.default.id
+  cidr_block              = cidrsubnet(data.aws_vpc.default.cidr_block, 8, 1)
   availability_zone       = local.az
   map_public_ip_on_launch = true
   tags = merge(local.tags, { Name = "${local.name_prefix}-public-subnet" })
@@ -36,31 +44,31 @@ resource "aws_subnet" "public" {
 
 # Additional subnet for RDS (requires 2 AZs)
 resource "aws_subnet" "db" {
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = cidrsubnet(local.vpc_cidr, 8, 2)
+  vpc_id            = data.aws_vpc.default.id
+  cidr_block        = cidrsubnet(data.aws_vpc.default.cidr_block, 8, 2)
   availability_zone = "${var.aws_region}b"
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet" })
 }
 
 # Route table for public subnet
-resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.main.id
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.main.id
+# Use default route table
+data "aws_route_table" "default" {
+  vpc_id = data.aws_vpc.default.id
+  filter {
+    name   = "association.main"
+    values = ["true"]
   }
-  tags = merge(local.tags, { Name = "${local.name_prefix}-public-rt" })
 }
 
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
-  route_table_id = aws_route_table.public.id
+  route_table_id = data.aws_route_table.default.id
 }
 
 # Security group for K3s cluster
 resource "aws_security_group" "k3s" {
   name_prefix = "${local.name_prefix}-k3s-"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = data.aws_vpc.default.id
 
   # SSH
   ingress {
@@ -166,7 +174,7 @@ resource "aws_db_subnet_group" "main" {
 # Security group for RDS
 resource "aws_security_group" "rds" {
   name_prefix = "${local.name_prefix}-rds-"
-  vpc_id      = aws_vpc.main.id
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
     from_port       = 3306

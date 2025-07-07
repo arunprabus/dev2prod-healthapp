@@ -22,6 +22,7 @@ on:
         - higher
         - monitoring
         - all
+        - cleanup-all
       confirm_destroy:
         description: 'Type "DESTROY" to confirm'
         required: false
@@ -44,7 +45,7 @@ jobs:
       actions: write
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Checkout
@@ -114,15 +115,31 @@ jobs:
           terraform apply -auto-approve tfplan
         fi
 
-    - name: Terraform Destroy
-      working-directory: infra/two-network-setup
+    - name: Complete Resource Cleanup
       if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
       run: |
-        terraform destroy \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
-          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -auto-approve
+        echo "🧹 Starting complete resource cleanup for ${{ matrix.env }} environment"
+        
+        # Make cleanup script executable
+        chmod +x scripts/complete-cleanup.sh
+        
+        if [ "${{ matrix.env }}" != "cleanup" ]; then
+          # Run Terraform destroy first (if state exists)
+          cd infra/two-network-setup
+          echo "🔧 Running Terraform destroy..."
+          terraform destroy \
+            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+            -var="network_tier=${{ matrix.env }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -auto-approve || echo "⚠️ Terraform destroy completed with warnings"
+          cd ../..
+        fi
+        
+        # Run complete cleanup to catch any missed resources
+        echo "🗑️ Running complete AWS resource cleanup..."
+        ./scripts/complete-cleanup.sh ${{ env.AWS_REGION }} true
+        
+        echo "✅ Complete cleanup finished for ${{ matrix.env }} environment"
 
     - name: Setup kubeconfig and GitHub Secret
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')

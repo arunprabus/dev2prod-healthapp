@@ -1,11 +1,11 @@
 output "vpc_id" {
   description = "VPC ID"
-  value       = aws_vpc.main.id
+  value       = data.aws_vpc.default.id
 }
 
 output "vpc_cidr" {
   description = "VPC CIDR block"
-  value       = aws_vpc.main.cidr_block
+  value       = data.aws_vpc.default.cidr_block
 }
 
 output "k3s_public_ip" {
