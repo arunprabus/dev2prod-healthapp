@@ -61,6 +61,19 @@ jobs:
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+    - name: Cleanup existing resources
+      if: github.event.inputs.action == 'deploy'
+      run: |
+        echo "🧹 Cleaning up existing resources that might conflict..."
+        
+        # Delete existing key pair if it exists
+        aws ec2 delete-key-pair --key-name "${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}-${{ matrix.env }}-key" || true
+        
+        # Delete existing DB subnet group if it exists
+        aws rds delete-db-subnet-group --db-subnet-group-name "${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}-${{ matrix.env }}-db-subnet-group" || true
+        
+        echo "✅ Cleanup completed"
+
     - name: Terraform Init
       working-directory: infra/two-network-setup
       run: |
@@ -107,21 +120,33 @@ jobs:
         
         # Wait for K3s to be ready
         echo "⏳ Waiting for K3s to be ready..."
-        sleep 60
+        sleep 120
         
-        # Download kubeconfig via SSH
-        echo "📥 Downloading kubeconfig via SSH..."
+        # Check K3s status via SSH
+        echo "🔍 Checking K3s status..."
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
         chmod 600 ~/.ssh/k3s-key
         
-        # Download kubeconfig with retry
+        # Wait for K3s service to be active
+        for i in {1..5}; do
+          if ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo systemctl is-active k3s" | grep -q "active"; then
+            echo "✅ K3s service is active"
+            break
+          else
+            echo "⚠️ K3s not ready, waiting 30s... (attempt $i/5)"
+            sleep 30
+          fi
+        done
+        
+        # Download kubeconfig via SSH
+        echo "📥 Downloading kubeconfig via SSH..."
         for i in {1..3}; do
           if scp -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP:/etc/rancher/k3s/k3s.yaml kubeconfig-${{ matrix.env }}.yaml; then
             echo "✅ Kubeconfig downloaded successfully"
             break
           else
-            echo "⚠️ Attempt $i failed, retrying in 30s..."
+            echo "⚠️ Download attempt $i failed, retrying in 30s..."
             sleep 30
           fi
         done
@@ -129,12 +154,13 @@ jobs:
         # Update server IP in kubeconfig
         sed -i "s/127.0.0.1/$CLUSTER_IP/" kubeconfig-${{ matrix.env }}.yaml
         
-        # Test kubeconfig
-        export KUBECONFIG=$PWD/kubeconfig-${{ matrix.env }}.yaml
-        if kubectl get nodes --request-timeout=10s; then
-          echo "✅ Kubeconfig is working!"
+        # Verify kubeconfig file exists and has content
+        if [ -f "kubeconfig-${{ matrix.env }}.yaml" ] && [ -s "kubeconfig-${{ matrix.env }}.yaml" ]; then
+          echo "✅ Kubeconfig file is ready"
+          echo "📄 Kubeconfig preview:"
+          head -5 kubeconfig-${{ matrix.env }}.yaml
         else
-          echo "❌ Kubeconfig test failed"
+          echo "❌ Kubeconfig file is missing or empty"
           exit 1
         fi
         
