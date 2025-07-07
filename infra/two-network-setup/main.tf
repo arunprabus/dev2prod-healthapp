@@ -192,7 +192,7 @@ resource "aws_db_instance" "main" {
   
   db_name  = "healthapp"
   username = "admin"
-  password = "${var.environment}123!" # Simple password for learning
+  password = "${var.environment}Password123!" # AWS requires 8+ characters
   
   vpc_security_group_ids = [aws_security_group.rds.id]
   db_subnet_group_name   = aws_db_subnet_group.main.name
