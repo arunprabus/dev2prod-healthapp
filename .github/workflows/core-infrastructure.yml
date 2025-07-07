@@ -61,26 +61,27 @@ jobs:
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-    - name: Cleanup existing resources
+    - name: Import existing resources
       if: github.event.inputs.action == 'deploy'
-      run: |
-        echo "🧹 Cleaning up existing resources that might conflict..."
-        
-        # Delete existing key pair if it exists
-        aws ec2 delete-key-pair --key-name "${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}-${{ matrix.env }}-key" || true
-        
-        # Delete existing DB subnet group if it exists
-        aws rds delete-db-subnet-group --db-subnet-group-name "${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}-${{ matrix.env }}-db-subnet-group" || true
-        
-        echo "✅ Cleanup completed"
-
-    - name: Terraform Init
       working-directory: infra/two-network-setup
       run: |
+        echo "📥 Importing existing resources into Terraform state..."
+        
+        ENV_NAME="${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}"
+        
+        # Initialize first
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
           -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
           -backend-config="region=$AWS_REGION"
+        
+        # Import existing DB subnet group if it exists
+        echo "🗄️ Importing DB subnet group: $ENV_NAME-${{ matrix.env }}-db-subnet-group"
+        terraform import aws_db_subnet_group.main "$ENV_NAME-${{ matrix.env }}-db-subnet-group" 2>/dev/null || echo "DB subnet group not found or already imported"
+        
+        echo "✅ Import completed"
+
+
 
     - name: Terraform Plan
       working-directory: infra/two-network-setup
