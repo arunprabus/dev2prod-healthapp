@@ -31,18 +31,27 @@ jobs:
       - name: Terraform Init
         run: |
           cd simple-ec2
+          echo "Initializing Terraform..."
           terraform init
+          echo "Terraform initialized successfully"
 
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
         run: |
           cd simple-ec2
+          echo "Starting Terraform apply..."
+          terraform plan -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
           terraform apply -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
-          echo "INSTANCE_IP=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
+          echo "Getting instance IP..."
+          terraform output
+          INSTANCE_IP=$(terraform output -raw instance_ip)
+          echo "Instance IP: $INSTANCE_IP"
+          echo "INSTANCE_IP=$INSTANCE_IP" >> $GITHUB_ENV
 
       - name: SSH Commands
         if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'ssh'
         run: |
+          echo "Setting up SSH..."
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
@@ -50,21 +59,31 @@ jobs:
           if [ "${{ github.event.inputs.action }}" == "ssh" ]; then
             cd simple-ec2
             INSTANCE_IP=$(terraform output -raw instance_ip)
+            echo "Using existing instance IP: $INSTANCE_IP"
           fi
           
+          echo "Waiting for instance to be ready..."
           sleep 30
+          echo "Adding host to known_hosts..."
           ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts
           
+          echo "Connecting to instance..."
           ssh -i ~/.ssh/id_rsa ubuntu@$INSTANCE_IP << 'EOF'
+          echo "=== Connected successfully ==="
           echo "=== System Info ==="
           uname -a
           echo "=== Installing Docker ==="
           sudo apt update && sudo apt install -y docker.io
+          echo "=== Docker Version ==="
           docker --version
+          echo "=== Setup Complete ==="
           EOF
+          echo "SSH commands completed successfully"
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
         run: |
           cd simple-ec2
+          echo "Starting Terraform destroy..."
           terraform destroy -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
+          echo "Resources destroyed successfully"
