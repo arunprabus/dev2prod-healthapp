@@ -20,7 +20,7 @@ env:
 
 jobs:
   terraform:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, ARUNPRABUSIVA, mylocallaptop]
     steps:
       - uses: actions/checkout@v4
       

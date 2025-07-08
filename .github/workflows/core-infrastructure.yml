@@ -39,7 +39,7 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, windows, x64, ARUNPRABUSIVA, mylocallaptop]
     permissions:
       contents: read
       actions: write
