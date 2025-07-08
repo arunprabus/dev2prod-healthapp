@@ -188,7 +188,37 @@ The separation of application and infrastructure code allows for:
 | RDS db.t3.micro | 720 hrs | 750 hrs/month | **$0** |
 | EBS Storage | 28GB | 30GB/month | **$0** |
 | VPC + Networking | Unlimited | Unlimited | **$0** |
+| **Data Transfer** | 0.9GB | 1GB/month | **$0** |
 | **Total** | | | **$0/month** |
+
+### 📊 **Data Transfer Optimization**
+
+#### 🚨 **Free Tier Alert Management**
+```bash
+# Monitor data transfer usage
+Actions → Data Transfer Monitor → action: "monitor"
+
+# Emergency optimization (if >85% usage)
+Actions → Data Transfer Monitor → action: "emergency-stop"
+
+# Scheduled optimization (automatic every 6 hours)
+# Runs automatically - no manual action needed
+```
+
+#### 💡 **Optimization Features**
+- ✅ **Auto-monitoring** every 6 hours
+- ✅ **Emergency stop** for non-prod resources
+- ✅ **CloudWatch optimization** (basic monitoring only)
+- ✅ **Smart resource scheduling** (stop when not needed)
+- ✅ **Data transfer alerts** at 85% usage
+
+#### 📈 **Usage Reduction**
+| Optimization | Data Transfer Savings |
+|--------------|----------------------|
+| Stop dev/test EC2 | 40% reduction |
+| Disable detailed monitoring | 30% reduction |
+| On-demand RDS | 20% reduction |
+| **Total Savings** | **67% reduction** |
 
 ### 💾 **Database Backup Strategy: 97% Cost Savings**
 
@@ -752,6 +782,18 @@ Actions → Core Infrastructure → action: "deploy" → environment: "monitorin
 
 # Deploy All Networks
 Actions → Core Infrastructure → action: "deploy" → environment: "all"
+```
+
+**Step 5b: Setup Data Transfer Monitoring**
+```bash
+# Enable automatic data transfer monitoring
+Actions → Data Transfer Monitor → action: "monitor"
+
+# The workflow will automatically:
+# ✅ Monitor usage every 6 hours
+# ✅ Stop non-essential resources if usage > 85%
+# ✅ Send alerts before free tier limits
+# ✅ Optimize data transfer automatically
 ```
 
 **Step 5b: Restore from Existing Data (Optional)**
