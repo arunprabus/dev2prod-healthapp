@@ -39,7 +39,7 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: [self-hosted, windows, x64, ARUNPRABUSIVA, mylocallaptop]
+    runs-on: [self-hosted, mylocallaptop]
     permissions:
       contents: read
       actions: write
