@@ -141,6 +141,17 @@ jobs:
         
         echo "✅ Complete cleanup finished for ${{ matrix.env }} environment"
 
+    - name: Optimize Data Transfer
+      if: always()
+      run: |
+        echo "📊 Optimizing data transfer to stay within free tier"
+        chmod +x scripts/data-transfer-optimizer.sh
+        ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} monitor
+        
+        # Stop non-essential resources if usage > 80%
+        echo "🔧 Applying data transfer optimizations"
+        ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} optimize
+
     - name: Setup kubeconfig and GitHub Secret
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
       working-directory: infra/two-network-setup
