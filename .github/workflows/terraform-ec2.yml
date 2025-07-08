@@ -1,0 +1,70 @@
+name: Terraform EC2
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - apply
+          - destroy
+          - ssh
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ap-south-1
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: Terraform Init
+        run: |
+          cd simple-ec2
+          terraform init
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        run: |
+          cd simple-ec2
+          terraform apply -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
+          echo "INSTANCE_IP=$(terraform output -raw instance_ip)" >> $GITHUB_ENV
+
+      - name: SSH Commands
+        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'ssh'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          if [ "${{ github.event.inputs.action }}" == "ssh" ]; then
+            cd simple-ec2
+            INSTANCE_IP=$(terraform output -raw instance_ip)
+          fi
+          
+          sleep 30
+          ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts
+          
+          ssh -i ~/.ssh/id_rsa ubuntu@$INSTANCE_IP << 'EOF'
+          echo "=== System Info ==="
+          uname -a
+          echo "=== Installing Docker ==="
+          sudo apt update && sudo apt install -y docker.io
+          docker --version
+          EOF
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          cd simple-ec2
+          terraform destroy -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
