@@ -89,7 +89,7 @@ chown ubuntu:ubuntu /home/ubuntu/.kube
 cat > /home/ubuntu/get-kubeconfig.sh << 'EOF'
 #!/bin/bash
 # Get kubeconfig from K3s cluster in same network
-K3S_IP=$(aws ec2 describe-instances --region ${AWS_REGION:-ap-south-1} \
+K3S_IP=$(aws ec2 describe-instances --region $${AWS_REGION:-ap-south-1} \
   --filters "Name=tag:Name,Values=*k3s-node" "Name=instance-state-name,Values=running" \
   --query "Reservations[].Instances[0].PrivateIpAddress" --output text)
 
