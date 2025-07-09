@@ -56,14 +56,20 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          sleep 60
-          ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts
+          # Wait for SSH with retry
+          for i in {1..10}; do
+            if ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts 2>/dev/null; then
+              echo "SSH ready after ${i}0s"
+              break
+            fi
+            echo "Waiting for SSH... attempt $i/10"
+            sleep 10
+          done
           
-          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=30 ubuntu@$INSTANCE_IP '
+          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP '
             echo "Connected to $(hostname)"
             uname -a
-            sudo apt update -qq
-            sudo apt install -y docker.io
+            sudo apt update -qq && sudo apt install -y docker.io
             docker --version
           '
 
