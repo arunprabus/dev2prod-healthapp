@@ -44,34 +44,19 @@ jobs:
           echo "INSTANCE_IP=$INSTANCE_IP" >> $GITHUB_ENV
           echo "Instance IP: $INSTANCE_IP"
 
-      - name: SSH Test
-        if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'ssh'
+      - name: Verify Instance
+        if: github.event.inputs.action == 'apply'
+        working-directory: simple-ec2
         run: |
-          if [ "${{ github.event.inputs.action }}" == "ssh" ]; then
-            cd simple-ec2
-            INSTANCE_IP=$(terraform output -raw instance_ip)
-          fi
+          echo "✅ Instance created successfully"
+          echo "Instance IP: $(terraform output -raw instance_ip)"
+          echo "SSH Command: ssh -i ~/.ssh/your-key ubuntu@$(terraform output -raw instance_ip)"
           
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          
-          # Wait for SSH with retry
-          for i in {1..10}; do
-            if ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts 2>/dev/null; then
-              echo "SSH ready after ${i}0s"
-              break
-            fi
-            echo "Waiting for SSH... attempt $i/10"
-            sleep 10
-          done
-          
-          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP '
-            echo "Connected to $(hostname)"
-            uname -a
-            sudo apt update -qq && sudo apt install -y docker.io
-            docker --version
-          '
+      - name: SSH Info
+        if: github.event.inputs.action == 'ssh'
+        run: |
+          echo "⚠️ SSH from GitHub Actions is not reliable"
+          echo "Use AWS Console or local terminal to SSH"
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'

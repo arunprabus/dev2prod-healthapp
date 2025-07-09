@@ -82,6 +82,10 @@ output "instance_ip" {
   value = aws_instance.simple.public_ip
 }
 
+output "instance_id" {
+  value = aws_instance.simple.id
+}
+
 variable "ssh_public_key" {
   type = string
 }
