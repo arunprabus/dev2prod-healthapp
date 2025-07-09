@@ -22,6 +22,20 @@ data "aws_subnets" "public" {
     name   = "vpc-id"
     values = [data.aws_vpc.first.id]
   }
+  filter {
+    name   = "map-public-ip-on-launch"
+    values = ["true"]
+  }
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+  
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
 }
 
 resource "aws_security_group" "simple" {
@@ -44,12 +58,19 @@ resource "aws_security_group" "simple" {
 }
 
 resource "aws_instance" "simple" {
-  ami                    = "ami-0ad21ae1d0696ad58"
-  instance_type          = "t2.micro"
-  key_name              = aws_key_pair.simple.key_name
-  vpc_security_group_ids = [aws_security_group.simple.id]
-  subnet_id             = tolist(data.aws_subnets.public.ids)[0]
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = "t2.micro"
+  key_name                   = aws_key_pair.simple.key_name
+  vpc_security_group_ids     = [aws_security_group.simple.id]
+  subnet_id                  = tolist(data.aws_subnets.public.ids)[0]
   associate_public_ip_address = true
+  
+  user_data = <<-EOF
+    #!/bin/bash
+    apt-get update
+    systemctl enable ssh
+    systemctl start ssh
+  EOF
   
   tags = {
     Name = "simple-ec2-free-${random_id.suffix.hex}"
