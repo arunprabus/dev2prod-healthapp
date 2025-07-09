@@ -45,6 +45,11 @@ on:
         required: false
         default: false
         type: boolean
+      cleanup_all_regions:
+        description: 'Cleanup all AWS regions (for destroy only)'
+        required: false
+        default: false
+        type: boolean
 
 env:
   AWS_REGION: ap-south-1
@@ -161,7 +166,13 @@ jobs:
         # Run VPC cleanup
         echo "🧹 Running VPC cleanup..."
         chmod +x scripts/vpc-cleanup.sh
-        ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }}
+        if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
+          echo "🌍 Cleaning ALL regions..."
+          ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }} true
+        else
+          echo "📍 Cleaning current region only..."
+          ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }}
+        fi
         
         echo "✅ Complete cleanup finished for ${{ matrix.env }} environment"
 
