@@ -13,77 +13,61 @@ on:
           - destroy
           - ssh
 
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_DEFAULT_REGION: ap-south-1
-
 jobs:
   terraform:
-    runs-on: [self-hosted, mylocallaptop]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
       
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.0
 
       - name: Terraform Init
-        run: |
-          cd simple-ec2
-          echo "Initializing Terraform..."
-          terraform init
-          echo "Terraform initialized successfully"
+        working-directory: simple-ec2
+        run: terraform init
 
       - name: Terraform Apply
         if: github.event.inputs.action == 'apply'
+        working-directory: simple-ec2
         run: |
-          cd simple-ec2
-          echo "Starting Terraform apply..."
           terraform plan -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
           terraform apply -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
-          echo "Getting instance IP..."
-          terraform output
           INSTANCE_IP=$(terraform output -raw instance_ip)
-          echo "Instance IP: $INSTANCE_IP"
           echo "INSTANCE_IP=$INSTANCE_IP" >> $GITHUB_ENV
+          echo "Instance IP: $INSTANCE_IP"
 
-      - name: SSH Commands
+      - name: SSH Test
         if: github.event.inputs.action == 'apply' || github.event.inputs.action == 'ssh'
         run: |
-          echo "Setting up SSH..."
+          if [ "${{ github.event.inputs.action }}" == "ssh" ]; then
+            cd simple-ec2
+            INSTANCE_IP=$(terraform output -raw instance_ip)
+          fi
+          
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          if [ "${{ github.event.inputs.action }}" == "ssh" ]; then
-            cd simple-ec2
-            INSTANCE_IP=$(terraform output -raw instance_ip)
-            echo "Using existing instance IP: $INSTANCE_IP"
-          fi
-          
-          echo "Waiting for instance to be ready..."
-          sleep 30
-          echo "Adding host to known_hosts..."
+          sleep 60
           ssh-keyscan -H $INSTANCE_IP >> ~/.ssh/known_hosts
           
-          echo "Connecting to instance..."
-          ssh -i ~/.ssh/id_rsa ubuntu@$INSTANCE_IP << 'EOF'
-          echo "=== Connected successfully ==="
-          echo "=== System Info ==="
-          uname -a
-          echo "=== Installing Docker ==="
-          sudo apt update && sudo apt install -y docker.io
-          echo "=== Docker Version ==="
-          docker --version
-          echo "=== Setup Complete ==="
-          EOF
-          echo "SSH commands completed successfully"
+          ssh -i ~/.ssh/id_rsa -o ConnectTimeout=30 ubuntu@$INSTANCE_IP '
+            echo "Connected to $(hostname)"
+            uname -a
+            sudo apt update -qq
+            sudo apt install -y docker.io
+            docker --version
+          '
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
-        run: |
-          cd simple-ec2
-          echo "Starting Terraform destroy..."
-          terraform destroy -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
-          echo "Resources destroyed successfully"
+        working-directory: simple-ec2
+        run: terraform destroy -auto-approve -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"

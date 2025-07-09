@@ -2,13 +2,13 @@ provider "aws" {
   region = "ap-south-1"
 }
 
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+
 resource "aws_key_pair" "simple" {
   key_name   = "simple-ec2-key-${random_id.suffix.hex}"
   public_key = var.ssh_public_key
-}
-
-resource "random_id" "suffix" {
-  byte_length = 4
 }
 
 data "aws_vpc" "default" {
