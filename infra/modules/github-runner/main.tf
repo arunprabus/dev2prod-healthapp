@@ -12,9 +12,9 @@ resource "aws_instance" "github_runner" {
   }))
   
   tags = {
-    Name = "github-runner-${var.environment}"
+    Name = "github-runner-${var.network_tier}"
     Type = "github-runner"
-    Environment = var.environment
+    NetworkTier = var.network_tier
   }
 }
 
@@ -29,7 +29,7 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_security_group" "runner" {
-  name_prefix = "github-runner-sg-${var.environment}-"
+  name_prefix = "github-runner-sg-${var.network_tier}-"
   vpc_id = var.vpc_id
   
   egress {

@@ -57,7 +57,7 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsrunnerlocal]' || 'ubuntu-latest' }}
     permissions:
       contents: read
       actions: write
