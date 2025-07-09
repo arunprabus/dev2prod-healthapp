@@ -1090,12 +1090,12 @@ Green (New) ──┘
 
 ## 🌐 Network Architecture Access
 
-| Network | CIDR | Environments | K8s Clusters | Database | Snapshot Restore | Cost |
-|---------|------|--------------|--------------|----------|------------------|------|
-| **Lower** | 10.0.0.0/16 | Dev + Test | 2x t2.micro | 1x Shared RDS (db.t3.micro) | ✅ healthapidb-snapshot | **$0** |
-| **Higher** | 10.1.0.0/16 | Production | 1x t2.micro | 1x Dedicated RDS (db.t3.micro) | ✅ healthapidb-snapshot | **$0** |
-| **Monitoring** | 10.3.0.0/16 | Monitoring | 1x t2.micro | None | N/A | **$0** |
-| **Total** | | | **4 clusters** | **2 databases** | **Existing Data** | **$0/month** |
+| Network | CIDR | Environments | K8s Clusters | GitHub Runners | Database | Cost |
+|---------|------|--------------|--------------|----------------|----------|------|
+| **Lower** | Default VPC | Dev + Test | 2x t2.micro | 2x t2.micro | 1x Shared RDS | **$0** |
+| **Higher** | Default VPC | Production | 1x t2.micro | 1x t2.micro | 1x Dedicated RDS | **$0** |
+| **Monitoring** | Default VPC | Monitoring | 1x t2.micro | 1x t2.micro | None | **$0** |
+| **Total** | | | **4 K3s clusters** | **4 GitHub runners** | **2 databases** | **$0/month** |
 
 ---
 

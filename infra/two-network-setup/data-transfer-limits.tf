@@ -19,13 +19,13 @@ resource "aws_cloudwatch_metric_alarm" "data_transfer_alarm" {
     ServiceName = "AmazonEC2"
   }
 
-  tags = local.common_tags
+  tags = local.tags
 }
 
 # SNS topic for alerts
 resource "aws_sns_topic" "alerts" {
   name = "health-app-alerts-${var.network_tier}"
-  tags = local.common_tags
+  tags = local.tags
 }
 
 # Lambda function for auto-optimization
@@ -44,7 +44,7 @@ resource "aws_lambda_function" "data_optimizer" {
     }
   }
 
-  tags = local.common_tags
+  tags = local.tags
 }
 
 # IAM role for Lambda
@@ -64,7 +64,7 @@ resource "aws_iam_role" "lambda_role" {
     ]
   })
 
-  tags = local.common_tags
+  tags = local.tags
 }
 
 # Lambda policy for EC2 and RDS management
@@ -99,7 +99,7 @@ resource "aws_cloudwatch_event_rule" "optimize_schedule" {
   name                = "health-app-optimize-${var.network_tier}"
   description         = "Trigger data transfer optimization"
   schedule_expression = "rate(6 hours)"
-  tags               = local.common_tags
+  tags               = local.tags
 }
 
 # EventBridge target
