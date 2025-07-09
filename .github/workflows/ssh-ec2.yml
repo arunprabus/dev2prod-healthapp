@@ -25,9 +25,21 @@ jobs:
       - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "❌ SSH_PRIVATE_KEY secret not found"
+            exit 1
+          fi
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ github.event.inputs.host }} >> ~/.ssh/known_hosts
+          echo "✅ SSH key configured"
+          
+          HOST="${{ github.event.inputs.host }}"
+          echo "🔍 Testing connection to $HOST..."
+          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts 2>/dev/null || {
+            echo "❌ Cannot reach $HOST on port 22"
+            exit 1
+          }
+          echo "✅ SSH connection ready"
 
       - name: Run Commands
         run: |
