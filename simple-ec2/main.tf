@@ -11,56 +11,22 @@ resource "aws_key_pair" "simple" {
   public_key = var.ssh_public_key
 }
 
-resource "aws_vpc" "simple" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-  
-  tags = {
-    Name = "simple-vpc-${random_id.suffix.hex}"
-  }
+data "aws_vpcs" "existing" {}
+
+data "aws_vpc" "first" {
+  id = tolist(data.aws_vpcs.existing.ids)[0]
 }
 
-resource "aws_internet_gateway" "simple" {
-  vpc_id = aws_vpc.simple.id
-  
-  tags = {
-    Name = "simple-igw-${random_id.suffix.hex}"
+data "aws_subnets" "public" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.first.id]
   }
-}
-
-resource "aws_subnet" "simple" {
-  vpc_id                  = aws_vpc.simple.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "ap-south-1a"
-  map_public_ip_on_launch = true
-  
-  tags = {
-    Name = "simple-subnet-${random_id.suffix.hex}"
-  }
-}
-
-resource "aws_route_table" "simple" {
-  vpc_id = aws_vpc.simple.id
-  
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.simple.id
-  }
-  
-  tags = {
-    Name = "simple-rt-${random_id.suffix.hex}"
-  }
-}
-
-resource "aws_route_table_association" "simple" {
-  subnet_id      = aws_subnet.simple.id
-  route_table_id = aws_route_table.simple.id
 }
 
 resource "aws_security_group" "simple" {
   name   = "simple-ec2-sg-${random_id.suffix.hex}"
-  vpc_id = aws_vpc.simple.id
+  vpc_id = data.aws_vpc.first.id
   
   ingress {
     from_port   = 22
@@ -82,7 +48,8 @@ resource "aws_instance" "simple" {
   instance_type          = "t2.micro"
   key_name              = aws_key_pair.simple.key_name
   vpc_security_group_ids = [aws_security_group.simple.id]
-  subnet_id             = aws_subnet.simple.id
+  subnet_id             = tolist(data.aws_subnets.public.ids)[0]
+  associate_public_ip_address = true
   
   tags = {
     Name = "simple-ec2-free-${random_id.suffix.hex}"

@@ -41,9 +41,10 @@ optimize_data_transfer() {
     aws rds describe-db-instances \
         --region $REGION \
         --query "DBInstances[?DBInstanceStatus=='available'].DBInstanceIdentifier" \
-        --output text | while read db; do
-        if [ ! -z "$db" ]; then
-            aws rds stop-db-instance --region $REGION --db-instance-identifier $db
+        --output text | while read -r db; do
+        if [ -n "$db" ]; then
+            echo "Stopping RDS: $db"
+            aws rds stop-db-instance --region $REGION --db-instance-identifier "$db" || echo "Failed to stop $db"
         fi
     done
 }
