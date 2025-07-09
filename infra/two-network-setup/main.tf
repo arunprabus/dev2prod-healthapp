@@ -18,13 +18,7 @@ data "aws_vpc" "first" {
   id = tolist(data.aws_vpcs.available.ids)[0]
 }
 
-# Get existing internet gateway
-data "aws_internet_gateways" "existing" {
-  filter {
-    name   = "attachment.vpc-id"
-    values = [data.aws_vpc.first.id]
-  }
-}
+
 
 # Get existing subnets
 data "aws_subnets" "existing" {
