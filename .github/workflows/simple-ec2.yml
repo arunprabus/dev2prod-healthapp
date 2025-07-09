@@ -20,7 +20,7 @@ env:
 
 jobs:
   ec2-management:
-    runs-on: [self-hosted, mylocallaptop]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
