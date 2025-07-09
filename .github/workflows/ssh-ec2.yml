@@ -1,0 +1,62 @@
+name: SSH to EC2
+
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'EC2 IP Address'
+        required: false
+        default: '13.235.42.62'
+        type: string
+      commands:
+        description: 'Commands to run'
+        required: false
+        default: 'basic'
+        type: choice
+        options:
+          - basic
+          - docker
+          - system-info
+
+jobs:
+  ssh-ec2:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ github.event.inputs.host }} >> ~/.ssh/known_hosts
+
+      - name: Run Commands
+        run: |
+          HOST="${{ github.event.inputs.host }}"
+          COMMANDS="${{ github.event.inputs.commands }}"
+          
+          case $COMMANDS in
+            "basic")
+              ssh -i ~/.ssh/id_rsa ubuntu@$HOST '
+                echo "✅ Connected to $(hostname)"
+                whoami && uptime
+              '
+              ;;
+            "docker")
+              ssh -i ~/.ssh/id_rsa ubuntu@$HOST '
+                echo "🐳 Installing Docker..."
+                sudo apt update -qq
+                sudo apt install -y docker.io
+                docker --version
+                sudo systemctl status docker
+              '
+              ;;
+            "system-info")
+              ssh -i ~/.ssh/id_rsa ubuntu@$HOST '
+                echo "📊 System Information"
+                uname -a
+                df -h
+                free -h
+                ps aux --sort=-%cpu | head -10
+              '
+              ;;
+          esac
