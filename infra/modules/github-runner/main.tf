@@ -28,7 +28,7 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_security_group" "runner" {
-  name   = "github-runner-sg-${var.environment}"
+  name_prefix = "github-runner-sg-${var.environment}-"
   vpc_id = var.vpc_id
   
   egress {

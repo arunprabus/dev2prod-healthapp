@@ -40,6 +40,11 @@ on:
         options:
         - aws
         - github
+      optimize_data_transfer:
+        description: 'Run data transfer optimization'
+        required: false
+        default: false
+        type: boolean
 
 env:
   AWS_REGION: ap-south-1
@@ -156,13 +161,13 @@ jobs:
         echo "✅ Complete cleanup finished for ${{ matrix.env }} environment"
 
     - name: Optimize Data Transfer
-      if: always()
+      if: github.event.inputs.optimize_data_transfer == 'true'
       run: |
         echo "📊 Optimizing data transfer to stay within free tier"
+        echo "⚠️ WARNING: This will stop non-production resources!"
         chmod +x scripts/data-transfer-optimizer.sh
         ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} monitor
         
-        # Stop non-essential resources if usage > 80%
         echo "🔧 Applying data transfer optimizations"
         ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} optimize
 
