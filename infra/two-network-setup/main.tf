@@ -11,9 +11,11 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Use default VPC to avoid VPC limits
-data "aws_vpc" "default" {
-  default = true
+# Get first available VPC
+data "aws_vpcs" "available" {}
+
+data "aws_vpc" "first" {
+  id = tolist(data.aws_vpcs.available.ids)[0]
 }
 
 # VPC for the network tier (commented out to use default VPC)
@@ -29,14 +31,14 @@ data "aws_vpc" "default" {
 data "aws_internet_gateway" "default" {
   filter {
     name   = "attachment.vpc-id"
-    values = [data.aws_vpc.default.id]
+    values = [data.aws_vpc.first.id]
   }
 }
 
 # Public subnet (no NAT Gateway cost)
 resource "aws_subnet" "public" {
-  vpc_id                  = data.aws_vpc.default.id
-  cidr_block              = cidrsubnet(data.aws_vpc.default.cidr_block, 8, 1)
+  vpc_id                  = data.aws_vpc.first.id
+  cidr_block              = cidrsubnet(data.aws_vpc.first.cidr_block, 8, 1)
   availability_zone       = local.az
   map_public_ip_on_launch = true
   tags = merge(local.tags, { Name = "${local.name_prefix}-public-subnet" })
@@ -44,8 +46,8 @@ resource "aws_subnet" "public" {
 
 # Additional subnet for RDS (requires 2 AZs)
 resource "aws_subnet" "db" {
-  vpc_id            = data.aws_vpc.default.id
-  cidr_block        = cidrsubnet(data.aws_vpc.default.cidr_block, 8, 2)
+  vpc_id            = data.aws_vpc.first.id
+  cidr_block        = cidrsubnet(data.aws_vpc.first.cidr_block, 8, 2)
   availability_zone = "${var.aws_region}b"
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet" })
 }
@@ -53,7 +55,7 @@ resource "aws_subnet" "db" {
 # Route table for public subnet
 # Use default route table
 data "aws_route_table" "default" {
-  vpc_id = data.aws_vpc.default.id
+  vpc_id = data.aws_vpc.first.id
   filter {
     name   = "association.main"
     values = ["true"]
@@ -68,7 +70,7 @@ resource "aws_route_table_association" "public" {
 # Security group for K3s cluster
 resource "aws_security_group" "k3s" {
   name_prefix = "${local.name_prefix}-k3s-"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.first.id
 
   # SSH
   ingress {
@@ -164,6 +166,18 @@ resource "aws_instance" "k3s" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
 
+# GitHub Runner
+module "github_runner" {
+  source = "../modules/github-runner"
+  
+  environment   = var.environment
+  vpc_id        = data.aws_vpc.first.id
+  subnet_id     = aws_subnet.public.id
+  ssh_key_name  = aws_key_pair.main.key_name
+  repo_pat      = var.repo_pat
+  repo_name     = var.repo_name
+}
+
 # RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
   name       = "${local.name_prefix}-db-subnet-group"
@@ -174,7 +188,7 @@ resource "aws_db_subnet_group" "main" {
 # Security group for RDS
 resource "aws_security_group" "rds" {
   name_prefix = "${local.name_prefix}-rds-"
-  vpc_id      = data.aws_vpc.default.id
+  vpc_id      = data.aws_vpc.first.id
 
   ingress {
     from_port       = 3306
@@ -184,18 +198,6 @@ resource "aws_security_group" "rds" {
   }
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-rds-sg" })
-}
-
-# GitHub Runner
-module "github_runner" {
-  source = "../modules/github-runner"
-  
-  environment   = var.environment
-  vpc_id        = data.aws_vpc.default.id
-  subnet_id     = aws_subnet.public.id
-  ssh_key_name  = aws_key_pair.main.key_name
-  repo_pat      = var.repo_pat
-  repo_name     = var.repo_name
 }
 
 # RDS MySQL (FREE TIER)
