@@ -26,13 +26,10 @@ data "aws_vpc" "first" {
 #   tags = merge(local.tags, { Name = "${local.name_prefix}-vpc" })
 # }
 
-# Internet Gateway
-# Use default internet gateway
-data "aws_internet_gateway" "default" {
-  filter {
-    name   = "attachment.vpc-id"
-    values = [data.aws_vpc.first.id]
-  }
+# Create Internet Gateway
+resource "aws_internet_gateway" "main" {
+  vpc_id = data.aws_vpc.first.id
+  tags = merge(local.tags, { Name = "${local.name_prefix}-igw" })
 }
 
 # Public subnet (no NAT Gateway cost)
@@ -54,17 +51,21 @@ resource "aws_subnet" "db" {
 
 # Route table for public subnet
 # Use default route table
-data "aws_route_table" "default" {
+# Route table for public subnet
+resource "aws_route_table" "public" {
   vpc_id = data.aws_vpc.first.id
-  filter {
-    name   = "association.main"
-    values = ["true"]
+  
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.main.id
   }
+  
+  tags = merge(local.tags, { Name = "${local.name_prefix}-rt" })
 }
 
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
-  route_table_id = data.aws_route_table.default.id
+  route_table_id = aws_route_table.public.id
 }
 
 # Security group for K3s cluster
