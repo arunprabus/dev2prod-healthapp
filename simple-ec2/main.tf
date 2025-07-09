@@ -11,13 +11,8 @@ resource "aws_key_pair" "simple" {
   public_key = var.ssh_public_key
 }
 
-data "aws_vpc" "default" {
-  default = true
-}
-
 resource "aws_security_group" "simple" {
-  name   = "simple-ec2-sg-${random_id.suffix.hex}"
-  vpc_id = data.aws_vpc.default.id
+  name = "simple-ec2-sg-${random_id.suffix.hex}"
   
   ingress {
     from_port   = 22
@@ -38,7 +33,7 @@ resource "aws_instance" "simple" {
   ami                    = "ami-0ad21ae1d0696ad58"  # Ubuntu 22.04 LTS
   instance_type          = "t2.micro"              # FREE TIER
   key_name              = aws_key_pair.simple.key_name
-  vpc_security_group_ids = [aws_security_group.simple.id]
+  security_groups = [aws_security_group.simple.name]
   
   tags = {
     Name = "simple-ec2-free-${random_id.suffix.hex}"
