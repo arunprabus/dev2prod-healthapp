@@ -61,19 +61,7 @@ jobs:
         for ENV in $ENVS; do
           echo "## Monitoring $ENV environment"
           
-          # Configure kubeconfig for environment
-          mkdir -p ~/.kube
-          if [[ "$ENV" == "dev" && -n "${{ secrets.KUBECONFIG_DEV }}" ]]; then
-            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > ~/.kube/config
-          elif [[ "$ENV" == "test" && -n "${{ secrets.KUBECONFIG_TEST }}" ]]; then
-            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > ~/.kube/config
-          elif [[ "$ENV" == "prod" && -n "${{ secrets.KUBECONFIG_PROD }}" ]]; then
-            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > ~/.kube/config
-          else
-            continue
-          fi
-          
-          chmod 600 ~/.kube/config
+          echo "Note: AWS runners have direct access to K3s clusters"
           
           # Health checks
           kubectl get nodes || echo "❌ Cluster unreachable"

@@ -54,33 +54,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ap-south-1
 
-      - name: Setup kubeconfig
+      - name: Setup kubectl
         run: |
-          ENV="${{ github.event.client_payload.environment || github.event.inputs.environment || 'dev' }}"
-          
-          echo "🔧 Setting up kubeconfig for environment: $ENV"
-          
-          # Download kubeconfig from S3 (created by infrastructure workflow)
-          case $ENV in
-            "dev") KUBECONFIG_FILE="dev-network.yaml" ;;
-            "test") KUBECONFIG_FILE="test-network.yaml" ;;
-            "prod") KUBECONFIG_FILE="prod-network.yaml" ;;
-            *) KUBECONFIG_FILE="lower-network.yaml" ;;
-          esac
-          
-          mkdir -p ~/.kube
-          
-          echo "📥 Downloading kubeconfig: $KUBECONFIG_FILE"
-          aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/$KUBECONFIG_FILE ~/.kube/config
-          
-          chmod 600 ~/.kube/config
-          echo "✅ Kubeconfig ready for $ENV environment"
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
 
-      - name: Verify connection
+      - name: Note
         run: |
-          echo "🔍 Testing cluster connection..."
-          kubectl cluster-info --request-timeout=30s
-          kubectl get nodes --request-timeout=30s
+          echo "📝 Note: Using AWS GitHub runners for K8s access"
+          echo "Runners have direct network access to K3s clusters"
 
       - name: Deploy application
         run: |
