@@ -95,6 +95,7 @@ jobs:
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
+        echo "📋 Planning infrastructure changes..."
         terraform plan \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
@@ -102,6 +103,9 @@ jobs:
           -var="repo_pat=${{ secrets.REPO_PAT }}" \
           -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
+        
+        echo "📊 Plan Summary:"
+        terraform show -no-color tfplan | grep -E "Plan:|No changes"
 
     - name: Terraform Destroy (for redeploy)
       working-directory: infra/two-network-setup
@@ -134,7 +138,9 @@ jobs:
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       run: |
         if [ "${{ github.event.inputs.action }}" = "deploy" ]; then
+          echo "🚀 Applying infrastructure changes..."
           terraform apply -auto-approve tfplan
+          echo "✅ Infrastructure deployment completed"
         fi
 
     - name: Complete Resource Cleanup

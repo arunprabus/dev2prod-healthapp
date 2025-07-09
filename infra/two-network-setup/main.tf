@@ -40,6 +40,10 @@ data "aws_subnet" "db" {
 resource "aws_security_group" "k3s" {
   name_prefix = "${local.name_prefix}-k3s-"
   vpc_id      = data.aws_vpc.first.id
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 
   ingress {
     from_port   = 22
@@ -104,6 +108,10 @@ resource "aws_instance" "k3s" {
   key_name              = aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
   subnet_id             = data.aws_subnet.public.id
+  
+  lifecycle {
+    ignore_changes = [ami]
+  }
 
   user_data = <<-EOF
     #!/bin/bash
@@ -137,7 +145,7 @@ resource "aws_instance" "k3s" {
 module "github_runner" {
   source = "../modules/github-runner"
   
-  environment   = var.environment
+  network_tier  = var.network_tier
   vpc_id        = data.aws_vpc.first.id
   subnet_id     = data.aws_subnet.public.id
   ssh_key_name  = aws_key_pair.main.key_name
@@ -161,6 +169,10 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_security_group" "rds" {
   name_prefix = "${local.name_prefix}-rds-"
   vpc_id      = data.aws_vpc.first.id
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 
   ingress {
     from_port       = 3306

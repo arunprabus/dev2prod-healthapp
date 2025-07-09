@@ -103,8 +103,10 @@ cleanup_region() {
 }
 
 if [ "$ALL_REGIONS" = "true" ]; then
-    echo "🌍 Cleaning up ALL regions..."
-    aws ec2 describe-regions --query "Regions[].RegionName" --output text | tr '\t' '\n' | while read -r region; do
+    echo "🌍 Cleaning up common regions only..."
+    # Only clean commonly used regions to avoid infinite loop
+    for region in "us-east-1" "us-west-2" "eu-west-1" "ap-south-1" "ap-southeast-1"; do
+        echo "🌍 Cleaning region: $region"
         cleanup_region "$region"
     done
 else

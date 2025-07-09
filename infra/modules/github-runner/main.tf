@@ -8,6 +8,7 @@ resource "aws_instance" "github_runner" {
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     github_token = var.repo_pat
     github_repo  = var.repo_name
+    network_tier = var.network_tier
   }))
   
   tags = {

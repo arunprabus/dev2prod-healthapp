@@ -159,11 +159,27 @@ The separation of application and infrastructure code allows for:
 
 ### 🔒 **Enhanced Security Architecture**
 
-| Network | CIDR | Environments | Database | Monitoring Access |
-|---------|------|--------------|----------|------------------|
-| **Lower** | 10.0.0.0/16 | Dev + Test | Shared RDS | ✅ Via VPC Peering |
-| **Higher** | 10.1.0.0/16 | Production | Dedicated RDS | ✅ Via VPC Peering |
-| **Monitoring** | 10.3.0.0/16 | Monitoring | None | ✅ Access to Both |
+| Network | CIDR | Environments | Database | Runner Labels | K3s Access |
+|---------|------|--------------|----------|---------------|------------|
+| **Lower** | Default VPC | Dev + Test | Shared RDS | `aws-lower`, `aws-dev`, `aws-test` | ✅ Direct Private IP |
+| **Higher** | Default VPC | Production | Dedicated RDS | `aws-higher`, `aws-prod` | ✅ Direct Private IP |
+| **Monitoring** | Default VPC | Monitoring | None | `aws-monitoring`, `aws-dev`, `aws-test`, `aws-prod` | ✅ Access to All |
+
+### 🤖 **GitHub Runner Configuration**
+
+| Network | Runner Name | Labels | K3s Connectivity | Software Installed |
+|---------|-------------|--------|------------------|--------------------|
+| **Lower** | `awsrunner-lower-devtest-xxx` | `awsrunnerlocal`, `aws-lower`, `aws-dev`, `aws-test` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker |
+| **Higher** | `awsrunner-higher-prod-xxx` | `awsrunnerlocal`, `aws-higher`, `aws-prod` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker |
+| **Monitoring** | `awsrunner-monitoring-xxx` | `awsrunnerlocal`, `aws-monitoring`, `aws-dev`, `aws-test`, `aws-prod` | ✅ All Networks | Terraform, kubectl, AWS CLI, Docker |
+
+### 🌐 **Network Communication Matrix**
+
+| From Runner → To K3s | Lower K3s | Higher K3s | Monitoring K3s |
+|---------------------|-----------|------------|----------------|
+| **Lower Runner** | ✅ Direct Private IP | ❌ Network Isolated | ❌ Network Isolated |
+| **Higher Runner** | ❌ Network Isolated | ✅ Direct Private IP | ❌ Network Isolated |
+| **Monitoring Runner** | ✅ Via Network Access | ✅ Via Network Access | ✅ Direct Private IP |
 
 ### 🛡️ **Isolation Benefits**
 - ✅ **Complete Prod Isolation**: No direct dev/test → prod access
@@ -183,15 +199,17 @@ The separation of application and infrastructure code allows for:
 
 ## 💰 Cost Comparison & Database Backup Strategy
 
-### 🆓 **Current Setup: 100% FREE TIER**
-| Resource | Usage | Free Tier Limit | Monthly Cost |
-|----------|-------|-----------------|-------------|
-| EC2 t2.micro | 720 hrs | 750 hrs/month | **$0** |
-| RDS db.t3.micro | 720 hrs | 750 hrs/month | **$0** |
-| EBS Storage | 28GB | 30GB/month | **$0** |
-| VPC + Networking | Unlimited | Unlimited | **$0** |
-| **Data Transfer** | 0.9GB | 1GB/month | **$0** |
-| **Total** | | | **$0/month** |
+### 🆓 **Enhanced Setup: 100% FREE TIER with GitHub Runners**
+| Resource | Lower Network | Higher Network | Monitoring | Free Tier Limit | Monthly Cost |
+|----------|---------------|----------------|------------|-----------------|-------------|
+| **EC2 t2.micro (K3s)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
+| **EC2 t2.micro (Runner)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
+| **RDS db.t3.micro** | 1 shared | 1 dedicated | 0 | 750 hrs each | **$0** |
+| **EBS Storage** | ~40GB | ~20GB | ~20GB | 30GB each | **$0** |
+| **VPC + Networking** | Default VPC | Default VPC | Default VPC | Always free | **$0** |
+| **Data Transfer** | <0.3GB | <0.3GB | <0.3GB | 1GB/month | **$0** |
+| **Total per Network** | **$0** | **$0** | **$0** | | **$0/month** |
+| **Grand Total** | | | | | **$0/month** |
 
 ### 📊 **Data Transfer Optimization**
 
@@ -1090,12 +1108,22 @@ Green (New) ──┘
 
 ## 🌐 Network Architecture Access
 
-| Network | CIDR | Environments | K8s Clusters | GitHub Runners | Database | Cost |
+| Network | CIDR | Environments | K3s Clusters | GitHub Runners | Database | Cost |
 |---------|------|--------------|--------------|----------------|----------|------|
-| **Lower** | Default VPC | Dev + Test | 2x t2.micro | 2x t2.micro | 1x Shared RDS | **$0** |
+| **Lower** | Default VPC | Dev + Test | 1x t2.micro | 1x t2.micro | 1x Shared RDS | **$0** |
 | **Higher** | Default VPC | Production | 1x t2.micro | 1x t2.micro | 1x Dedicated RDS | **$0** |
 | **Monitoring** | Default VPC | Monitoring | 1x t2.micro | 1x t2.micro | None | **$0** |
-| **Total** | | | **4 K3s clusters** | **4 GitHub runners** | **2 databases** | **$0/month** |
+| **Total** | | | **3 K3s clusters** | **3 GitHub runners** | **2 databases** | **$0/month** |
+
+### 💰 **Enhanced Cost Breakdown**
+
+| Resource Category | Lower | Higher | Monitoring | Total Instances | Free Tier Limit | Cost |
+|-------------------|-------|--------|------------|-----------------|-----------------|------|
+| **K3s Clusters** | 1 | 1 | 1 | 3x t2.micro | 750h each | **$0** |
+| **GitHub Runners** | 1 | 1 | 1 | 3x t2.micro | 750h each | **$0** |
+| **RDS Databases** | 1 shared | 1 dedicated | 0 | 2x db.t3.micro | 750h each | **$0** |
+| **Pre-installed Software** | ✅ | ✅ | ✅ | Terraform, kubectl, AWS CLI, Docker | Free | **$0** |
+| **Monthly Total** | **$0** | **$0** | **$0** | **6 EC2 + 2 RDS** | **100% Free Tier** | **$0** |
 
 ---
 

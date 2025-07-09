@@ -1,5 +1,5 @@
-variable "environment" {
-  description = "Environment name"
+variable "network_tier" {
+  description = "Network tier (lower/higher/monitoring)"
   type        = string
 }
 
