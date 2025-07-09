@@ -32,21 +32,20 @@ resource "aws_internet_gateway" "main" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-igw" })
 }
 
-# Public subnet (no NAT Gateway cost)
-resource "aws_subnet" "public" {
-  vpc_id                  = data.aws_vpc.first.id
-  cidr_block              = cidrsubnet(data.aws_vpc.first.cidr_block, 8, 1)
-  availability_zone       = local.az
-  map_public_ip_on_launch = true
-  tags = merge(local.tags, { Name = "${local.name_prefix}-public-subnet" })
+# Get existing subnets
+data "aws_subnets" "existing" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.first.id]
+  }
 }
 
-# Additional subnet for RDS (requires 2 AZs)
-resource "aws_subnet" "db" {
-  vpc_id            = data.aws_vpc.first.id
-  cidr_block        = cidrsubnet(data.aws_vpc.first.cidr_block, 8, 2)
-  availability_zone = "${var.aws_region}b"
-  tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet" })
+data "aws_subnet" "public" {
+  id = tolist(data.aws_subnets.existing.ids)[0]
+}
+
+data "aws_subnet" "db" {
+  id = length(data.aws_subnets.existing.ids) > 1 ? tolist(data.aws_subnets.existing.ids)[1] : tolist(data.aws_subnets.existing.ids)[0]
 }
 
 # Route table for public subnet
@@ -64,7 +63,7 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route_table_association" "public" {
-  subnet_id      = aws_subnet.public.id
+  subnet_id      = data.aws_subnet.public.id
   route_table_id = aws_route_table.public.id
 }
 
@@ -135,7 +134,7 @@ resource "aws_instance" "k3s" {
   instance_type          = "t2.micro"              # FREE TIER
   key_name              = aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
-  subnet_id             = aws_subnet.public.id
+  subnet_id             = data.aws_subnet.public.id
 
   user_data = <<-EOF
     #!/bin/bash
@@ -173,7 +172,7 @@ module "github_runner" {
   
   environment   = var.environment
   vpc_id        = data.aws_vpc.first.id
-  subnet_id     = aws_subnet.public.id
+  subnet_id     = data.aws_subnet.public.id
   ssh_key_name  = aws_key_pair.main.key_name
   repo_pat      = var.repo_pat
   repo_name     = var.repo_name
@@ -182,7 +181,7 @@ module "github_runner" {
 # RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
   name       = "${local.name_prefix}-db-subnet-group"
-  subnet_ids = [aws_subnet.public.id, aws_subnet.db.id]
+  subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
 }
 
