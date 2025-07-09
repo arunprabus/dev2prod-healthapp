@@ -26,10 +26,18 @@ on:
         - test
         - prod
         - all
+      runner_type:
+        description: 'Runner Type'
+        required: false
+        default: 'aws'
+        type: choice
+        options:
+        - aws
+        - github
 
 jobs:
   monitor:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     if: github.event.schedule || github.event.inputs.action == 'monitor' || github.event.inputs.action == 'all'
     
     steps:
@@ -74,7 +82,7 @@ jobs:
         done
 
   scale:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'scale' || github.event.inputs.action == 'all'
     
     steps:
@@ -93,7 +101,7 @@ jobs:
         ./scripts/k8s-auto-scale.sh
 
   backup:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'backup' || github.event.inputs.action == 'all'
     
     steps:
@@ -106,7 +114,7 @@ jobs:
         # Add your backup logic
 
   cleanup:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'cleanup'
     
     steps:
@@ -119,7 +127,7 @@ jobs:
         # Add cleanup logic
 
   health-check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'health-check' || github.event.inputs.action == 'all'
     
     steps:
@@ -132,7 +140,7 @@ jobs:
         ./scripts/k8s-health-check.sh
 
   summary:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     needs: [monitor, scale, backup, cleanup, health-check]
     if: always()
     

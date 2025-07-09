@@ -24,10 +24,18 @@ on:
           - dev
           - test
           - prod
+      runner_type:
+        description: 'Runner Type'
+        required: false
+        default: 'aws'
+        type: choice
+        options:
+        - aws
+        - github
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     
     steps:
       - name: Checkout

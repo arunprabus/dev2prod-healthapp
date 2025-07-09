@@ -32,6 +32,14 @@ on:
         required: false
         default: false
         type: boolean
+      runner_type:
+        description: 'Runner Type'
+        required: false
+        default: 'aws'
+        type: choice
+        options:
+        - aws
+        - github
 
 env:
   AWS_REGION: ap-south-1
@@ -39,7 +47,7 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
     permissions:
       contents: read
       actions: write
@@ -81,6 +89,8 @@ jobs:
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="repo_pat=${{ secrets.REPO_PAT }}" \
+          -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
 
     - name: Terraform Destroy (for redeploy)
@@ -92,6 +102,8 @@ jobs:
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="repo_pat=${{ secrets.REPO_PAT }}" \
+          -var="repo_name=${{ secrets.REPO_NAME }}" \
           -auto-approve || echo "No existing resources to destroy"
         
         echo "⏳ Waiting for cleanup to complete..."
@@ -131,6 +143,8 @@ jobs:
             -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
             -var="network_tier=${{ matrix.env }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="repo_pat=${{ secrets.REPO_PAT }}" \
+            -var="repo_name=${{ secrets.REPO_NAME }}" \
             -auto-approve || echo "⚠️ Terraform destroy completed with warnings"
           cd ../..
         fi

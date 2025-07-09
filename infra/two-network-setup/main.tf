@@ -186,6 +186,18 @@ resource "aws_security_group" "rds" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-rds-sg" })
 }
 
+# GitHub Runner
+module "github_runner" {
+  source = "../modules/github-runner"
+  
+  environment   = var.environment
+  vpc_id        = data.aws_vpc.default.id
+  subnet_id     = aws_subnet.public.id
+  ssh_key_name  = aws_key_pair.main.key_name
+  repo_pat      = var.repo_pat
+  repo_name     = var.repo_name
+}
+
 # RDS MySQL (FREE TIER)
 resource "aws_db_instance" "main" {
   identifier     = "${local.name_prefix}-db"

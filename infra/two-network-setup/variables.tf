@@ -23,6 +23,17 @@ variable "ssh_public_key" {
   type        = string
 }
 
+variable "repo_pat" {
+  description = "GitHub PAT for runner registration"
+  type        = string
+  sensitive   = true
+}
+
+variable "repo_name" {
+  description = "GitHub repository (owner/repo)"
+  type        = string
+}
+
 locals {
   # Network CIDR based on tier
   vpc_cidr = var.network_tier == "lower" ? "10.0.0.0/16" : "10.1.0.0/16"
