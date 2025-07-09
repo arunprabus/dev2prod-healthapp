@@ -6,6 +6,29 @@ REGION=${1:-ap-south-1}
 echo "🧹 VPC Cleanup for region: $REGION"
 
 # Get all VPCs except default
+# Force delete all RDS instances first
+echo "🗄️ Force deleting all RDS instances..."
+aws rds describe-db-instances --region $REGION --query "DBInstances[].DBInstanceIdentifier" --output text | tr '\t' '\n' | while read -r db; do
+    if [ -n "$db" ]; then
+        echo "Deleting RDS: $db"
+        aws rds delete-db-instance --region $REGION --db-instance-identifier "$db" --skip-final-snapshot --delete-automated-backups || true
+    fi
+done
+
+# Wait for RDS deletion
+echo "⏳ Waiting for RDS instances to be deleted..."
+sleep 60
+
+# Delete DB subnet groups
+echo "🗑️ Deleting DB subnet groups..."
+aws rds describe-db-subnet-groups --region $REGION --query "DBSubnetGroups[].DBSubnetGroupName" --output text | tr '\t' '\n' | while read -r sg; do
+    if [ -n "$sg" ]; then
+        echo "Deleting DB subnet group: $sg"
+        aws rds delete-db-subnet-group --region $REGION --db-subnet-group-name "$sg" || true
+    fi
+done
+
+# Now clean VPCs
 VPC_IDS=$(aws ec2 describe-vpcs --region $REGION --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text)
 
 for VPC_ID in $VPC_IDS; do

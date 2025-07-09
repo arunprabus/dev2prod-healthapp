@@ -158,6 +158,11 @@ jobs:
         echo "🗑️ Running complete AWS resource cleanup..."
         ./scripts/complete-cleanup.sh ${{ env.AWS_REGION }} true
         
+        # Run VPC cleanup
+        echo "🧹 Running VPC cleanup..."
+        chmod +x scripts/vpc-cleanup.sh
+        ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }}
+        
         echo "✅ Complete cleanup finished for ${{ matrix.env }} environment"
 
     - name: Optimize Data Transfer

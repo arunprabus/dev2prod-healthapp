@@ -147,8 +147,13 @@ module "github_runner" {
 
 # RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
-  name       = "${local.name_prefix}-db-subnet-group-${random_id.suffix.hex}"
+  name       = "${local.name_prefix}-db-subnet-group"
   subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
+  
+  lifecycle {
+    ignore_changes = [name]
+  }
+  
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
 }
 
@@ -189,6 +194,10 @@ resource "aws_db_instance" "main" {
   backup_retention_period = 0
   skip_final_snapshot     = true
   deletion_protection     = false
+  
+  lifecycle {
+    ignore_changes = [identifier]
+  }
   
   tags = merge(local.tags, { Name = "${local.name_prefix}-rds" })
 }
