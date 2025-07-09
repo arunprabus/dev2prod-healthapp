@@ -147,7 +147,7 @@ module "github_runner" {
 
 # RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
-  name       = "${local.name_prefix}-db-subnet-group"
+  name       = "${local.name_prefix}-db-subnet-group-${random_id.suffix.hex}"
   subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
 }
