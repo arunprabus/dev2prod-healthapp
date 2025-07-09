@@ -11,11 +11,15 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Get first available VPC
-data "aws_vpcs" "available" {}
+# Get or create default VPC
+resource "aws_default_vpc" "default" {
+  tags = {
+    Name = "Default VPC"
+  }
+}
 
 data "aws_vpc" "first" {
-  id = tolist(data.aws_vpcs.available.ids)[0]
+  id = aws_default_vpc.default.id
 }
 
 
