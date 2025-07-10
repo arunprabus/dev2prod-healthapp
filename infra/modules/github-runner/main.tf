@@ -13,6 +13,23 @@ resource "aws_key_pair" "github_runner" {
   }
 }
 
+# EBS volume for runner logs
+resource "aws_ebs_volume" "runner_logs" {
+  availability_zone = data.aws_ami.ubuntu.id != "" ? data.aws_subnet.runner_subnet.availability_zone : "${var.aws_region}a"
+  size              = 10  # 10GB for logs (FREE TIER)
+  type              = "gp2"
+  encrypted         = false
+  
+  tags = {
+    Name = "github-runner-logs-${var.network_tier}"
+    Purpose = "Runner logs storage"
+  }
+}
+
+data "aws_subnet" "runner_subnet" {
+  id = var.subnet_id
+}
+
 resource "aws_instance" "github_runner" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type              = "t2.micro"
@@ -20,6 +37,7 @@ resource "aws_instance" "github_runner" {
   vpc_security_group_ids     = [aws_security_group.runner.id]
   subnet_id                  = var.subnet_id
   associate_public_ip_address = true  # Ensure public IP for internet access
+  iam_instance_profile       = aws_iam_instance_profile.runner_profile.name
   
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     github_token = var.repo_pat
@@ -32,6 +50,13 @@ resource "aws_instance" "github_runner" {
     Type = "github-runner"
     NetworkTier = var.network_tier
   }
+}
+
+# Attach EBS volume to runner
+resource "aws_volume_attachment" "runner_logs" {
+  device_name = "/dev/sdf"
+  volume_id   = aws_ebs_volume.runner_logs.id
+  instance_id = aws_instance.github_runner.id
 }
 
 data "aws_ami" "ubuntu" {
@@ -87,4 +112,58 @@ output "runner_ip" {
 
 output "runner_public_ip" {
   value = aws_instance.github_runner.public_ip
+}
+
+# IAM role for S3 log access
+resource "aws_iam_role" "runner_role" {
+  name = "github-runner-role-${var.network_tier}-${random_id.key_suffix.hex}"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "runner_s3_policy" {
+  name = "github-runner-s3-policy-${var.network_tier}"
+  role = aws_iam_role.runner_role.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+          "s3:GetObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.s3_bucket}/runner-logs/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.s3_bucket}"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "runner_profile" {
+  name = "github-runner-profile-${var.network_tier}-${random_id.key_suffix.hex}"
+  role = aws_iam_role.runner_role.name
 }

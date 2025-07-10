@@ -162,6 +162,8 @@ module "github_runner" {
   ssh_public_key   = var.ssh_public_key
   repo_pat         = var.repo_pat
   repo_name        = var.repo_name
+  s3_bucket        = "health-app-terraform-state"
+  aws_region       = var.aws_region
 }
 
 # RDS Subnet Group with unique name

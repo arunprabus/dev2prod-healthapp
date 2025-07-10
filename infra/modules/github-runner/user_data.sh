@@ -120,9 +120,69 @@ echo 'echo "=== Runner Logs ==="' >> /home/ubuntu/debug-runner.sh
 echo 'journalctl -u actions.runner.* --no-pager -n 20' >> /home/ubuntu/debug-runner.sh
 echo 'echo "=== Config Log ==="' >> /home/ubuntu/debug-runner.sh
 echo 'cat /var/log/runner-config.log' >> /home/ubuntu/debug-runner.sh
+echo 'echo "=== EBS Volume Status ==="' >> /home/ubuntu/debug-runner.sh
+echo 'df -h /var/log/runner-logs' >> /home/ubuntu/debug-runner.sh
+echo 'echo "=== Recent Log Files ==="' >> /home/ubuntu/debug-runner.sh
+echo 'ls -la /var/log/runner-logs/ | head -10' >> /home/ubuntu/debug-runner.sh
+echo 'echo "=== S3 Log Shipping Status ==="' >> /home/ubuntu/debug-runner.sh
+echo 'tail -5 /var/log/runner-logs/ship.log 2>/dev/null || echo "No shipping log yet"' >> /home/ubuntu/debug-runner.sh
 
 chmod +x /home/ubuntu/debug-runner.sh
 chown ubuntu:ubuntu /home/ubuntu/debug-runner.sh
 
+# Mount EBS volume for logs
+echo "💾 Setting up EBS volume for logs..."
+while [ ! -e /dev/xvdf ]; do
+  echo "Waiting for EBS volume to attach..."
+  sleep 5
+done
+
+# Format and mount EBS volume
+if ! blkid /dev/xvdf; then
+  echo "Formatting EBS volume..."
+  mkfs.ext4 /dev/xvdf
+fi
+
+mkdir -p /var/log/runner-logs
+mount /dev/xvdf /var/log/runner-logs
+echo "/dev/xvdf /var/log/runner-logs ext4 defaults 0 2" >> /etc/fstab
+chown ubuntu:ubuntu /var/log/runner-logs
+
+# Setup log shipping to S3
+echo "📤 Setting up log shipping to S3..."
+cat > /home/ubuntu/ship-logs-to-s3.sh << 'LOGEOF'
+#!/bin/bash
+LOG_DATE=$(date +%Y-%m-%d)
+S3_BUCKET="health-app-terraform-state"
+NETWORK_TIER="${network_tier}"
+INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
+# Create daily log archive
+tar -czf /tmp/runner-logs-$LOG_DATE.tar.gz -C /var/log/runner-logs . 2>/dev/null || true
+tar -czf /tmp/system-logs-$LOG_DATE.tar.gz /var/log/runner-config.log /var/log/cloud-init-output.log 2>/dev/null || true
+
+# Upload to S3
+aws s3 cp /tmp/runner-logs-$LOG_DATE.tar.gz s3://$S3_BUCKET/runner-logs/$NETWORK_TIER/$INSTANCE_ID/runner-logs-$LOG_DATE.tar.gz 2>/dev/null || true
+aws s3 cp /tmp/system-logs-$LOG_DATE.tar.gz s3://$S3_BUCKET/runner-logs/$NETWORK_TIER/$INSTANCE_ID/system-logs-$LOG_DATE.tar.gz 2>/dev/null || true
+
+# Cleanup old local files (keep last 3 days)
+find /var/log/runner-logs -name "*.log" -mtime +3 -delete 2>/dev/null || true
+rm -f /tmp/*logs-*.tar.gz
+
+echo "$(date): Logs shipped to S3" >> /var/log/runner-logs/ship.log
+LOGEOF
+
+chmod +x /home/ubuntu/ship-logs-to-s3.sh
+chown ubuntu:ubuntu /home/ubuntu/ship-logs-to-s3.sh
+
+# Setup cron job for daily log shipping
+echo "0 2 * * * /home/ubuntu/ship-logs-to-s3.sh" | crontab -u ubuntu -
+
+# Redirect runner logs to EBS volume
+mkdir -p /var/log/runner-logs/github-actions
+ln -sf /var/log/runner-logs/github-actions /home/ubuntu/actions-runner/_diag
+
 echo "📋 Debug script: /home/ubuntu/debug-runner.sh"
 echo "📋 Config log: /var/log/runner-config.log"
+echo "💾 Runner logs: /var/log/runner-logs/"
+echo "📤 Log shipping: /home/ubuntu/ship-logs-to-s3.sh (runs daily at 2 AM)"

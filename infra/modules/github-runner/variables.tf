@@ -30,6 +30,18 @@ variable "repo_name" {
   type        = string
 }
 
+variable "s3_bucket" {
+  description = "S3 bucket for log storage"
+  type        = string
+  default     = "health-app-terraform-state"
+}
+
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "ap-south-1"
+}
+
 output "key_pair_name" {
   description = "Name of the created key pair"
   value       = aws_key_pair.github_runner.key_name
