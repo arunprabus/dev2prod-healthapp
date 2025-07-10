@@ -149,12 +149,12 @@ resource "aws_instance" "k3s" {
 module "github_runner" {
   source = "../modules/github-runner"
   
-  network_tier  = var.network_tier
-  vpc_id        = data.aws_vpc.first.id
-  subnet_id     = data.aws_subnet.public.id
-  ssh_key_name  = aws_key_pair.main.key_name
-  repo_pat      = var.repo_pat
-  repo_name     = var.repo_name
+  network_tier     = var.network_tier
+  vpc_id           = data.aws_vpc.first.id
+  subnet_id        = data.aws_subnet.public.id
+  ssh_public_key   = var.ssh_public_key
+  repo_pat         = var.repo_pat
+  repo_name        = var.repo_name
 }
 
 # RDS Subnet Group
