@@ -4,11 +4,11 @@ variable "environment" {
 }
 
 variable "network_tier" {
-  description = "Network tier (lower, higher)"
+  description = "Network tier (lower, higher, monitoring, cleanup)"
   type        = string
   validation {
-    condition     = contains(["lower", "higher"], var.network_tier)
-    error_message = "Network tier must be either 'lower' or 'higher'."
+    condition     = contains(["lower", "higher", "monitoring", "cleanup"], var.network_tier)
+    error_message = "Network tier must be one of: lower, higher, monitoring, cleanup."
   }
 }
 
