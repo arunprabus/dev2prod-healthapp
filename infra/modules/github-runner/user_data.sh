@@ -59,7 +59,7 @@ echo "Repository: ${github_repo}"
 # Get registration token
 echo "Getting registration token..."
 REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | jq -r '.token')
-echo "Token obtained: ${REG_TOKEN:0:10}..."
+echo "Token obtained: $${REG_TOKEN:0:10}..."
 
 # Create service with network-specific name
 if [ "${network_tier}" = "lower" ]; then
