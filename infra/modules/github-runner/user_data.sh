@@ -123,14 +123,14 @@ chown ubuntu:ubuntu /home/ubuntu/.kube
 cat > /home/ubuntu/get-kubeconfig.sh << 'EOF'
 #!/bin/bash
 # Get kubeconfig from K3s cluster in same network
-K3S_IP=$(aws ec2 describe-instances --region $${AWS_REGION:-ap-south-1} \
+K3S_IP=$(aws ec2 describe-instances --region ap-south-1 \
   --filters "Name=tag:Name,Values=*k3s-node" "Name=instance-state-name,Values=running" \
   --query "Reservations[].Instances[0].PrivateIpAddress" --output text)
 
-if [ "$K3S_IP" != "None" ] && [ -n "$K3S_IP" ]; then
-  echo "Found K3s cluster at: $K3S_IP"
+if [ "\$K3S_IP" != "None" ] && [ -n "\$K3S_IP" ]; then
+  echo "Found K3s cluster at: \$K3S_IP"
   # Direct access via private IP (same VPC)
-  kubectl --server=https://$K3S_IP:6443 --insecure-skip-tls-verify get nodes
+  kubectl --server=https://\$K3S_IP:6443 --insecure-skip-tls-verify get nodes
 else
   echo "K3s cluster not found or not running"
 fi
@@ -187,10 +187,10 @@ echo "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
 cat > /home/ubuntu/debug-runner.sh << 'DEBUGEOF'
 #!/bin/bash
 echo "=== GitHub Runner Debug Info ==="
-echo "Date: $(date)"
-echo "Hostname: $(hostname)"
-echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
-echo "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
+echo "Date: \$(date)"
+echo "Hostname: \$(hostname)"
+echo "Public IP: \$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+echo "Private IP: \$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
 echo ""
 echo "=== Service Status ==="
 systemctl status actions.runner.* --no-pager
