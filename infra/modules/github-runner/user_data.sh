@@ -82,11 +82,13 @@ sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url http
 CONFIG_EXIT_CODE=$?
 echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 
-# Install and start service as ubuntu user
+# Install and start service (needs sudo from ubuntu user)
 echo "Installing runner service..."
 cd /home/ubuntu/actions-runner
-sudo -u ubuntu ./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
-sudo -u ubuntu ./svc.sh start >> /var/log/runner-config.log 2>&1
+# Add ubuntu to sudoers for service management
+echo "ubuntu ALL=(ALL) NOPASSWD: /home/ubuntu/actions-runner/svc.sh" >> /etc/sudoers.d/github-runner
+sudo -u ubuntu sudo ./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
+sudo -u ubuntu sudo ./svc.sh start >> /var/log/runner-config.log 2>&1
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
