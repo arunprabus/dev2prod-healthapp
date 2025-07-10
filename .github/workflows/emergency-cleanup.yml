@@ -87,9 +87,9 @@ jobs:
         # Delete EBS volumes
         echo "💾 Deleting EBS volumes..."
         if [ "${{ github.event.inputs.cleanup_scope }}" = "health-app-only" ]; then
-          VOLUMES=$(aws ec2 describe-volumes --filters "Name=tag:Name,Values=*health-app*" "Name=state,Values=available" --query "Volumes[].VolumeId" --output text)
+          VOLUMES=$(aws ec2 describe-volumes --filters "Name=tag:Name,Values=*health-app*" "Name=status,Values=available" --query "Volumes[].VolumeId" --output text)
         else
-          VOLUMES=$(aws ec2 describe-volumes --filters "Name=state,Values=available" --query "Volumes[].VolumeId" --output text)
+          VOLUMES=$(aws ec2 describe-volumes --filters "Name=status,Values=available" --query "Volumes[].VolumeId" --output text)
         fi
         
         if [ -n "$VOLUMES" ]; then
@@ -163,7 +163,7 @@ jobs:
         
         echo ""
         echo "📊 Remaining EBS volumes:"
-        aws ec2 describe-volumes --filters "Name=state,Values=available,in-use" --query "Volumes[].[VolumeId,State,Size]" --output table || echo "No volumes found"
+        aws ec2 describe-volumes --filters "Name=status,Values=available,in-use" --query "Volumes[].[VolumeId,State,Size]" --output table || echo "No volumes found"
         
         echo ""
         echo "📊 Remaining security groups:"
