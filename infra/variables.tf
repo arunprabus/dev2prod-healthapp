@@ -155,3 +155,22 @@ variable "tf_state_bucket" {
   type        = string
   default     = "health-app-terraform-state"
 }
+
+# GitHub Runner Configuration
+variable "ssh_key_name" {
+  description = "Name of the SSH key pair for EC2 instances"
+  type        = string
+  default     = "health-app-key"
+}
+
+variable "github_pat" {
+  description = "GitHub Personal Access Token for runner registration"
+  type        = string
+  sensitive   = true
+}
+
+variable "github_repo" {
+  description = "GitHub repository in format owner/repo"
+  type        = string
+  default     = "arunprabus/dev2prod-healthapp"
+}

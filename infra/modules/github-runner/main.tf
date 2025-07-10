@@ -1,9 +1,10 @@
 resource "aws_instance" "github_runner" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = "t2.micro"
-  key_name              = var.ssh_key_name
-  vpc_security_group_ids = [aws_security_group.runner.id]
-  subnet_id             = var.subnet_id
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type              = "t2.micro"
+  key_name                   = var.ssh_key_name
+  vpc_security_group_ids     = [aws_security_group.runner.id]
+  subnet_id                  = var.subnet_id
+  associate_public_ip_address = true  # Ensure public IP for internet access
   
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     github_token = var.repo_pat
@@ -32,21 +33,43 @@ resource "aws_security_group" "runner" {
   name_prefix = "github-runner-sg-${var.network_tier}-"
   vpc_id = var.vpc_id
   
+  # Allow all outbound traffic (needed for github.com, package downloads, etc.)
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "All outbound traffic for GitHub API and package downloads"
   }
   
+  # SSH access from VPC
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["10.0.0.0/8"]
+    description = "SSH access from VPC"
+  }
+  
+  # HTTPS outbound specifically for GitHub (redundant but explicit)
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS for GitHub API access"
+  }
+  
+  tags = {
+    Name = "github-runner-sg-${var.network_tier}"
+    Purpose = "GitHub runner internet access"
   }
 }
 
 output "runner_ip" {
   value = aws_instance.github_runner.private_ip
+}
+
+output "runner_public_ip" {
+  value = aws_instance.github_runner.public_ip
 }

@@ -125,6 +125,22 @@ docker-compose --version
 node --version
 python3 --version
 
+# Test GitHub connectivity
+echo "🔍 Testing GitHub connectivity..."
+if ping -c 3 8.8.8.8 > /dev/null 2>&1; then
+    echo "✅ Internet connectivity: OK"
+else
+    echo "❌ Internet connectivity: FAILED"
+fi
+
+if curl -s --connect-timeout 10 https://api.github.com/rate_limit > /dev/null; then
+    echo "✅ GitHub API connectivity: OK"
+else
+    echo "❌ GitHub API connectivity: FAILED"
+fi
+
 echo "🎉 GitHub runner configured successfully with custom software!"
 echo "Runner name: $RUNNER_NAME"
 echo "Labels: $LABELS"
+echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+echo "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"

@@ -126,6 +126,20 @@ module "rds" {
 
 
 
+# Deploy GitHub runner for CI/CD
+module "github_runner" {
+  source = "./modules/github-runner"
+
+  network_tier   = var.environment
+  vpc_id         = module.vpc.vpc_id
+  subnet_id      = module.vpc.public_subnet_ids[0]  # Use public subnet for internet access
+  ssh_key_name   = var.ssh_key_name
+  repo_pat       = var.github_pat
+  repo_name      = var.github_repo
+
+  depends_on = [module.vpc]
+}
+
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {
   source = "./modules/monitoring"
@@ -170,4 +184,15 @@ module "monitoring_to_higher_peering" {
   tags                    = local.tags
 
   depends_on = [module.vpc]
+}
+
+# Output GitHub runner information
+output "github_runner_private_ip" {
+  description = "Private IP of GitHub runner"
+  value       = module.github_runner.runner_ip
+}
+
+output "github_runner_public_ip" {
+  description = "Public IP of GitHub runner"
+  value       = module.github_runner.runner_public_ip
 }

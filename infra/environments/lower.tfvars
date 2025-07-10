@@ -37,6 +37,11 @@ database_config = {
   # snapshot_identifier = "healthapidb-snapshot"
 }
 
+# GitHub Runner Configuration
+ssh_key_name = "health-app-key"
+github_repo = "arunprabus/dev2prod-healthapp"
+# github_pat will be provided via environment variable or CLI
+
 # Tags
 tags = {
   Project = "health-app"
