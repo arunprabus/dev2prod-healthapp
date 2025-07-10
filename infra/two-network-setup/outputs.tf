@@ -19,8 +19,30 @@ output "k3s_instance_id" {
 }
 
 output "github_runner_ip" {
-  description = "GitHub runner IP"
+  description = "GitHub runner private IP"
   value       = module.github_runner.runner_ip
+}
+
+output "github_runner_public_ip" {
+  description = "GitHub runner public IP"
+  value       = module.github_runner.runner_public_ip
+}
+
+output "github_runner_ssh_command" {
+  description = "SSH command to connect to GitHub runner"
+  value       = "ssh -i ~/.ssh/your-key ubuntu@${module.github_runner.runner_public_ip}"
+}
+
+output "github_runner_debug_commands" {
+  description = "Commands to debug GitHub runner"
+  value = {
+    ssh_connect = "ssh -i ~/.ssh/your-key ubuntu@${module.github_runner.runner_public_ip}"
+    debug_script = "sudo /home/ubuntu/debug-runner.sh"
+    service_status = "systemctl status actions.runner.*"
+    service_logs = "journalctl -u actions.runner.* -f"
+    cloud_init_logs = "sudo tail -f /var/log/cloud-init-output.log"
+    config_logs = "cat /var/log/runner-config.log"
+  }
 }
 
 output "rds_endpoint" {

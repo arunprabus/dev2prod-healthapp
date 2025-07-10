@@ -54,7 +54,20 @@ chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 
 # Get registration token using PAT
 echo "🔐 Registering runner with GitHub..."
-REG_TOKEN=$(curl -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+echo "Repository: ${github_repo}"
+echo "Testing GitHub API access..."
+
+# Test API access first
+API_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo})
+echo "API Test Response: $API_RESPONSE"
+
+# Get registration token with full logging
+echo "Getting registration token..."
+TOKEN_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token)
+echo "Token Response: $TOKEN_RESPONSE"
+
+REG_TOKEN=$(echo "$TOKEN_RESPONSE" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
+echo "Extracted Token Length: ${#REG_TOKEN}"
 
 # Create service with network-specific name
 if [ "${network_tier}" = "lower" ]; then
@@ -71,11 +84,32 @@ else
     LABELS="awsrunnerlocal,aws-${network_tier},self-hosted,terraform,kubectl,docker"
 fi
 
-sudo -u ubuntu ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name "$RUNNER_NAME" --labels "$LABELS" --unattended
+echo "Configuring runner with:"
+echo "- Name: $RUNNER_NAME"
+echo "- Labels: $LABELS"
+echo "- URL: https://github.com/${github_repo}"
+echo "- Token present: $([ -n "$REG_TOKEN" ] && echo 'YES' || echo 'NO')"
 
-# Install and start service
-./svc.sh install ubuntu
-./svc.sh start
+# Configure runner with detailed logging
+sudo -u ubuntu ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name "$RUNNER_NAME" --labels "$LABELS" --unattended 2>&1 | tee /var/log/runner-config.log
+CONFIG_EXIT_CODE=$?
+echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
+
+# Install and start service with logging
+echo "Installing runner service..."
+./svc.sh install ubuntu 2>&1 | tee -a /var/log/runner-config.log
+SVC_INSTALL_EXIT_CODE=$?
+echo "Service install exit code: $SVC_INSTALL_EXIT_CODE"
+
+echo "Starting runner service..."
+./svc.sh start 2>&1 | tee -a /var/log/runner-config.log
+SVC_START_EXIT_CODE=$?
+echo "Service start exit code: $SVC_START_EXIT_CODE"
+
+# Wait and check service status
+sleep 10
+echo "Checking service status..."
+systemctl status actions.runner.* --no-pager 2>&1 | tee -a /var/log/runner-config.log
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
@@ -113,6 +147,9 @@ alias tf='terraform'
 alias dc='docker-compose'
 alias ll='ls -la'
 alias k3s-connect='/home/ubuntu/get-kubeconfig.sh'
+alias debug-runner='/home/ubuntu/debug-runner.sh'
+alias runner-logs='journalctl -u actions.runner.* -f'
+alias runner-status='systemctl status actions.runner.*'
 EOF
 
 # Verify installations
@@ -139,8 +176,44 @@ else
     echo "❌ GitHub API connectivity: FAILED"
 fi
 
-echo "🎉 GitHub runner configured successfully with custom software!"
+# Final status check
+echo "🎉 GitHub runner setup completed!"
 echo "Runner name: $RUNNER_NAME"
 echo "Labels: $LABELS"
 echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
 echo "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
+
+# Create debugging script
+cat > /home/ubuntu/debug-runner.sh << 'DEBUGEOF'
+#!/bin/bash
+echo "=== GitHub Runner Debug Info ==="
+echo "Date: $(date)"
+echo "Hostname: $(hostname)"
+echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+echo "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
+echo ""
+echo "=== Service Status ==="
+systemctl status actions.runner.* --no-pager
+echo ""
+echo "=== Runner Logs ==="
+journalctl -u actions.runner.* --no-pager -n 50
+echo ""
+echo "=== Configuration Log ==="
+cat /var/log/runner-config.log 2>/dev/null || echo "No config log found"
+echo ""
+echo "=== Cloud-init Log ==="
+tail -50 /var/log/cloud-init-output.log
+echo ""
+echo "=== Runner Directory ==="
+ls -la /home/ubuntu/actions-runner/
+echo ""
+echo "=== Network Test ==="
+curl -s https://api.github.com/rate_limit | head -5
+DEBUGEOF
+
+chmod +x /home/ubuntu/debug-runner.sh
+chown ubuntu:ubuntu /home/ubuntu/debug-runner.sh
+
+echo "📋 Debug script created at /home/ubuntu/debug-runner.sh"
+echo "📋 Configuration log at /var/log/runner-config.log"
+echo "📋 Run 'sudo /home/ubuntu/debug-runner.sh' to troubleshoot"
