@@ -1,15 +1,13 @@
 # Create key pair from GitHub secrets
-resource "random_id" "key_suffix" {
-  byte_length = 4
-}
-
 resource "aws_key_pair" "github_runner" {
-  key_name   = "health-app-key-${var.network_tier}-${random_id.key_suffix.hex}"
+  key_name   = "health-app-key-${var.network_tier}"
   public_key = var.ssh_public_key
 
   tags = {
     Name = "health-app-key-${var.network_tier}"
     Purpose = "GitHub runner SSH access"
+    Environment = var.network_tier
+    Project = "health-app"
   }
 }
 
@@ -23,6 +21,8 @@ resource "aws_ebs_volume" "runner_logs" {
   tags = {
     Name = "github-runner-logs-${var.network_tier}"
     Purpose = "Runner logs storage"
+    Environment = var.network_tier
+    Project = "health-app"
   }
 }
 
@@ -49,6 +49,8 @@ resource "aws_instance" "github_runner" {
     Name = "github-runner-${var.network_tier}"
     Type = "github-runner"
     NetworkTier = var.network_tier
+    Environment = var.network_tier
+    Project = "health-app"
   }
 }
 
@@ -103,6 +105,8 @@ resource "aws_security_group" "runner" {
   tags = {
     Name = "github-runner-sg-${var.network_tier}"
     Purpose = "GitHub runner internet access"
+    Environment = var.network_tier
+    Project = "health-app"
   }
 }
 
@@ -116,7 +120,7 @@ output "runner_public_ip" {
 
 # IAM role for S3 log access
 resource "aws_iam_role" "runner_role" {
-  name = "github-runner-role-${var.network_tier}-${random_id.key_suffix.hex}"
+  name = "github-runner-role-${var.network_tier}"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -164,6 +168,6 @@ resource "aws_iam_role_policy" "runner_s3_policy" {
 }
 
 resource "aws_iam_instance_profile" "runner_profile" {
-  name = "github-runner-profile-${var.network_tier}-${random_id.key_suffix.hex}"
+  name = "github-runner-profile-${var.network_tier}"
   role = aws_iam_role.runner_role.name
 }

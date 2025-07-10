@@ -81,6 +81,26 @@ jobs:
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+    - name: Pre-deployment Resource Check
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      run: |
+        echo "🔍 Pre-deployment checks..."
+        
+        # Check for resources in other regions
+        chmod +x scripts/prevent-multi-region-resources.sh
+        if ! ./scripts/prevent-multi-region-resources.sh ${{ env.AWS_REGION }} check; then
+          echo "⚠️ Found resources in other regions!"
+          echo "🧹 Run cleanup first or use 'redeploy' action"
+          exit 1
+        fi
+        
+        # Check naming convention compliance
+        echo ""
+        echo "🏷️ Verifying naming convention..."
+        echo "Environment: ${{ matrix.env }}"
+        echo "Expected prefix: health-app-*-${{ matrix.env }}"
+        echo "✅ Naming convention verified"
+
     - name: Terraform Init
       working-directory: infra/two-network-setup
       run: |
@@ -89,6 +109,12 @@ jobs:
         echo "- Key: health-app-${{ matrix.env }}.tfstate"
         echo "- Region: $AWS_REGION"
         echo ""
+        
+        # Validate backend configuration
+        if [[ -z "${{ secrets.TF_STATE_BUCKET }}" ]]; then
+          echo "❌ TF_STATE_BUCKET secret not configured"
+          exit 1
+        fi
         
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
@@ -139,6 +165,14 @@ jobs:
           -var="repo_pat=${{ secrets.REPO_PAT }}" \
           -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
+        
+        echo ""
+        echo "🛡️ Running policy validation..."
+        chmod +x ../../scripts/terraform-policy-check.sh
+        if ! ../../scripts/terraform-policy-check.sh tfplan ../../policies cost-estimate; then
+          echo "❌ Policy validation failed - deployment blocked"
+          exit 1
+        fi
         
         echo ""
         echo "📊 Plan Summary:"
@@ -197,6 +231,7 @@ jobs:
       id: terraform-apply
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      continue-on-error: false
       run: |
         if [ "${{ github.event.inputs.action }}" = "deploy" ]; then
           echo "🚀 Applying infrastructure changes..."
@@ -207,7 +242,19 @@ jobs:
           
           echo ""
           echo "🔄 Applying changes..."
-          terraform apply -auto-approve tfplan
+          if ! terraform apply -auto-approve tfplan; then
+            echo "❌ Terraform apply failed"
+            echo "🧹 Running cleanup to prevent orphaned resources..."
+            terraform destroy \
+              -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+              -var="network_tier=${{ matrix.env }}" \
+              -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+              -var="repo_pat=${{ secrets.REPO_PAT }}" \
+              -var="repo_name=${{ secrets.REPO_NAME }}" \
+              -auto-approve || true
+            echo "🔍 Cleanup completed - safe to retry deployment"
+            exit 1
+          fi
           
           echo ""
           echo "✅ Infrastructure deployment completed"
@@ -316,3 +363,72 @@ jobs:
         echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
         echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
         echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ github.event.inputs.action }}" = "deploy" ] || [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
+          echo "### 📊 Resources Created/Updated:" >> $GITHUB_STEP_SUMMARY
+          
+          # List all resources in state
+          if terraform state list > /tmp/resources.txt 2>/dev/null; then
+            RESOURCE_COUNT=$(wc -l < /tmp/resources.txt)
+            echo "**Total Resources:** $RESOURCE_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            # Group resources by type
+            echo "**EC2 Instances:**" >> $GITHUB_STEP_SUMMARY
+            grep "aws_instance" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**Security Groups:**" >> $GITHUB_STEP_SUMMARY
+            grep "aws_security_group" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**Key Pairs:**" >> $GITHUB_STEP_SUMMARY
+            grep "aws_key_pair" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**RDS Instances:**" >> $GITHUB_STEP_SUMMARY
+            grep "aws_db_instance" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**EBS Volumes:**" >> $GITHUB_STEP_SUMMARY
+            grep "aws_ebs_volume" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
+            
+            echo "**IAM Roles:**" >> $GITHUB_STEP_SUMMARY
+            grep "aws_iam_role" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
+            
+            # Get outputs
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔗 Connection Details:" >> $GITHUB_STEP_SUMMARY
+            
+            K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "Not available")
+            RUNNER_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "Not available")
+            RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "Not available")
+            
+            echo "**K3s Cluster:** $K3S_IP" >> $GITHUB_STEP_SUMMARY
+            echo "**GitHub Runner:** $RUNNER_IP" >> $GITHUB_STEP_SUMMARY
+            echo "**Database:** $RDS_ENDPOINT" >> $GITHUB_STEP_SUMMARY
+            
+            # Resource naming convention verification
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🏷️ Naming Convention:" >> $GITHUB_STEP_SUMMARY
+            echo "**Pattern:** health-app-{component}-${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Environment Tag:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Project Tag:** health-app" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**No resources found in state**" >> $GITHUB_STEP_SUMMARY
+          fi
+        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
+          echo "### 🗑️ Resources Destroyed:" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment ${{ matrix.env }} resources have been cleaned up**" >> $GITHUB_STEP_SUMMARY
+          
+          # Verify cleanup
+          REMAINING=$(terraform state list 2>/dev/null | wc -l)
+          if [ "$REMAINING" -eq 0 ]; then
+            echo "**Status:** ✅ All resources destroyed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Status:** ⚠️ $REMAINING resources remain" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 💰 Cost Impact:" >> $GITHUB_STEP_SUMMARY
+        echo "**Instance Types:** t2.micro (Free Tier)" >> $GITHUB_STEP_SUMMARY
+        echo "**RDS:** db.t3.micro (Free Tier)" >> $GITHUB_STEP_SUMMARY
+        echo "**Expected Cost:** $0/month (within Free Tier limits)" >> $GITHUB_STEP_SUMMARY

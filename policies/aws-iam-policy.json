@@ -1,21 +1,104 @@
 {
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "budgets:*",
-                "ce:GetCostAndUsage",
-                "ce:GetUsageReport",
-                "ce:GetDimensionValues",
-                "ce:GetReservationCoverage",
-                "ce:GetReservationPurchaseRecommendation",
-                "ce:GetReservationUtilization",
-                "ce:GetRightsizingRecommendation",
-                "ce:ListCostCategoryDefinitions",
-                "ce:DescribeCostCategoryDefinition"
-            ],
-            "Resource": "*"
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowOnlyApSouth1",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "rds:CreateDBInstance",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateVpc",
+        "ec2:CreateSubnet"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedRegion": "ap-south-1"
         }
-    ]
+      }
+    },
+    {
+      "Sid": "AllowOnlyFreeTierInstances",
+      "Effect": "Deny",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:*:*:instance/*",
+      "Condition": {
+        "StringNotEquals": {
+          "ec2:InstanceType": [
+            "t2.micro",
+            "t2.nano"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowOnlyFreeTierRDS",
+      "Effect": "Deny",
+      "Action": "rds:CreateDBInstance",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "rds:db-instance-class": [
+            "db.t3.micro",
+            "db.t2.micro"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyExpensiveResources",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateNatGateway",
+        "elasticloadbalancing:CreateLoadBalancer",
+        "elasticloadbalancing:CreateTargetGroup"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RequireProjectTag",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "rds:CreateDBInstance",
+        "ec2:CreateSecurityGroup"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestedTag/Project": "health-app"
+        }
+      }
+    },
+    {
+      "Sid": "LimitEBSVolumeSize",
+      "Effect": "Deny",
+      "Action": "ec2:CreateVolume",
+      "Resource": "*",
+      "Condition": {
+        "NumericGreaterThan": {
+          "ec2:VolumeSize": "20"
+        }
+      }
+    },
+    {
+      "Sid": "AllowHealthAppActions",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*",
+        "rds:*",
+        "iam:*",
+        "s3:*",
+        "logs:*",
+        "ssm:*"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-south-1"
+        }
+      }
+    }
+  ]
 }
