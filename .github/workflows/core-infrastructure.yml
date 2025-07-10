@@ -98,6 +98,17 @@ jobs:
         echo ""
         echo "📋 Terraform workspace: $(terraform workspace show)"
         echo "📋 Backend config verified"
+        
+        # Verify S3 backend is working
+        echo ""
+        echo "🔍 Verifying S3 backend..."
+        if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ > /dev/null 2>&1; then
+          echo "✅ S3 bucket accessible"
+          echo "📋 Existing state files:"
+          aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ | grep ".tfstate" || echo "No state files found yet"
+        else
+          echo "❌ S3 bucket not accessible - check bucket name and permissions"
+        fi
 
 
 
@@ -106,6 +117,21 @@ jobs:
       if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
         echo "📋 Planning infrastructure changes..."
+        
+        # Check current state first
+        echo "🔍 Checking current state..."
+        if terraform state list > /tmp/current_state.txt 2>/dev/null; then
+          echo "✅ Found existing state with $(wc -l < /tmp/current_state.txt) resources:"
+          head -10 /tmp/current_state.txt
+          if [ $(wc -l < /tmp/current_state.txt) -gt 10 ]; then
+            echo "... and $(($(wc -l < /tmp/current_state.txt) - 10)) more resources"
+          fi
+        else
+          echo "ℹ️ No existing state found - will create new resources"
+        fi
+        
+        echo ""
+        echo "📋 Planning changes..."
         terraform plan \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
@@ -114,21 +140,44 @@ jobs:
           -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
         
+        echo ""
         echo "📊 Plan Summary:"
-        terraform show -no-color tfplan | grep -E "Plan:|No changes"
+        terraform show -no-color tfplan | grep -E "Plan:|No changes|will be created|will be updated|will be destroyed" | head -20
 
     - name: Terraform Destroy (for redeploy)
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'redeploy'
       run: |
         echo "🧹 Destroying existing resources first..."
+        
+        # Check what will be destroyed
+        if terraform state list > /dev/null 2>&1; then
+          echo "📋 Resources to be destroyed:"
+          terraform state list | head -10
+          RESOURCE_COUNT=$(terraform state list | wc -l)
+          echo "Total: $RESOURCE_COUNT resources"
+        else
+          echo "ℹ️ No existing resources found to destroy"
+        fi
+        
+        echo ""
         terraform destroy \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -var="repo_pat=${{ secrets.REPO_PAT }}" \
           -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -auto-approve || echo "No existing resources to destroy"
+          -auto-approve || echo "Destroy completed with warnings"
+        
+        # Verify state is empty
+        echo ""
+        echo "🔍 Verifying cleanup..."
+        REMAINING=$(terraform state list 2>/dev/null | wc -l)
+        if [ "$REMAINING" -eq 0 ]; then
+          echo "✅ All resources destroyed successfully"
+        else
+          echo "⚠️ Warning: $REMAINING resources remain in state"
+        fi
         
         echo "⏳ Waiting for cleanup to complete..."
         sleep 30
@@ -138,6 +187,8 @@ jobs:
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="repo_pat=${{ secrets.REPO_PAT }}" \
+          -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
         
         terraform apply -auto-approve tfplan
@@ -149,8 +200,31 @@ jobs:
       run: |
         if [ "${{ github.event.inputs.action }}" = "deploy" ]; then
           echo "🚀 Applying infrastructure changes..."
+          
+          # Show what will be applied
+          echo "📋 Resources to be modified:"
+          terraform show -no-color tfplan | grep -E "# .* will be" | head -10
+          
+          echo ""
+          echo "🔄 Applying changes..."
           terraform apply -auto-approve tfplan
+          
+          echo ""
           echo "✅ Infrastructure deployment completed"
+          
+          # Show final state
+          echo "📋 Final state summary:"
+          terraform state list | wc -l | xargs echo "Total resources managed:"
+          
+          # Verify state is in S3
+          echo ""
+          echo "🔍 Verifying state storage..."
+          if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate > /dev/null 2>&1; then
+            STATE_SIZE=$(aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate --human-readable | awk '{print $3 " " $4}')
+            echo "✅ State file saved to S3 (Size: $STATE_SIZE)"
+          else
+            echo "⚠️ Warning: State file not found in S3"
+          fi
         fi
 
     - name: Complete Resource Cleanup
