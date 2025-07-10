@@ -170,3 +170,34 @@ variable "github_repo" {
   type        = string
   default     = "arunprabus/dev2prod-healthapp"
 }
+
+# Additional variables for locals.tf
+variable "team_name" {
+  description = "Team name for tagging"
+  type        = string
+  default     = "devops-team"
+}
+
+variable "cost_center" {
+  description = "Cost center for billing"
+  type        = string
+  default     = "engineering"
+}
+
+variable "backup_required" {
+  description = "Whether backup is required"
+  type        = string
+  default     = "true"
+}
+
+variable "data_classification" {
+  description = "Data classification level"
+  type        = string
+  default     = "internal"
+}
+
+variable "compliance_scope" {
+  description = "Compliance scope"
+  type        = string
+  default     = "hipaa"
+}
