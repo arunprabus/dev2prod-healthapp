@@ -118,7 +118,7 @@ output "runner_public_ip" {
   value = aws_instance.github_runner.public_ip
 }
 
-# IAM role for S3 log access
+# IAM role for S3 log access and Session Manager
 resource "aws_iam_role" "runner_role" {
   name = "github-runner-role-${var.network_tier}"
   
@@ -134,6 +134,12 @@ resource "aws_iam_role" "runner_role" {
       }
     ]
   })
+}
+
+# Attach Session Manager policy
+resource "aws_iam_role_policy_attachment" "runner_ssm" {
+  role       = aws_iam_role.runner_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_role_policy" "runner_s3_policy" {
