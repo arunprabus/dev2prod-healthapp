@@ -1,6 +1,10 @@
 # Create key pair from GitHub secrets
+resource "random_id" "key_suffix" {
+  byte_length = 4
+}
+
 resource "aws_key_pair" "github_runner" {
-  key_name   = "health-app-key-${var.network_tier}"
+  key_name   = "health-app-key-${var.network_tier}-${random_id.key_suffix.hex}"
   public_key = var.ssh_public_key
 
   tags = {

@@ -186,7 +186,7 @@ resource "aws_security_group" "rds" {
 
 # RDS MySQL
 resource "aws_db_instance" "main" {
-  identifier     = "${local.name_prefix}-db"
+  identifier     = "${local.name_prefix}-db-${random_id.suffix.hex}"
   engine         = "mysql"
   engine_version = "8.0"
   instance_class = "db.t3.micro"
