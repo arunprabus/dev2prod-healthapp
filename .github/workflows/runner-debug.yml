@@ -57,9 +57,23 @@ jobs:
           -backend-config="key=health-app-${{ github.event.inputs.environment }}.tfstate" \
           -backend-config="region=$AWS_REGION"
         
+        echo "🔍 Checking Terraform state..."
+        echo "Backend bucket: ${{ secrets.TF_STATE_BUCKET }}"
+        echo "State key: health-app-${{ github.event.inputs.environment }}.tfstate"
+        echo "Region: $AWS_REGION"
+        
         # Check if state exists
-        if ! terraform state list > /dev/null 2>&1; then
-          echo "❌ No Terraform state found. Infrastructure not deployed for ${{ github.event.inputs.environment }} environment."
+        echo "🔍 Listing Terraform state..."
+        if terraform state list > /tmp/state_list.txt 2>&1; then
+          echo "✅ Terraform state found with resources:"
+          cat /tmp/state_list.txt | head -10
+        else
+          echo "❌ Terraform state check failed:"
+          cat /tmp/state_list.txt
+          echo ""
+          echo "📋 Checking if state file exists in S3..."
+          aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ github.event.inputs.environment }}.tfstate || echo "State file not found in S3"
+          echo ""
           echo "💡 Deploy infrastructure first using: Actions → Core Infrastructure → deploy → ${{ github.event.inputs.environment }}"
           exit 1
         fi

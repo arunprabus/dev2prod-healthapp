@@ -84,10 +84,20 @@ jobs:
     - name: Terraform Init
       working-directory: infra/two-network-setup
       run: |
+        echo "🔍 Backend Configuration:"
+        echo "- Bucket: ${{ secrets.TF_STATE_BUCKET }}"
+        echo "- Key: health-app-${{ matrix.env }}.tfstate"
+        echo "- Region: $AWS_REGION"
+        echo ""
+        
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
           -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
           -backend-config="region=$AWS_REGION"
+        
+        echo ""
+        echo "📋 Terraform workspace: $(terraform workspace show)"
+        echo "📋 Backend config verified"
 
 
 
@@ -199,10 +209,29 @@ jobs:
       run: |
         echo "✅ Infrastructure deployed successfully for ${{ matrix.env }} environment"
         echo "📊 Resources created:"
-        echo "- K3s Cluster IP: $(terraform output -raw k3s_public_ip)"
-        echo "- GitHub Runner IP: $(terraform output -raw github_runner_ip)"
-        echo "- RDS Endpoint: $(terraform output -raw rds_endpoint)"
-        echo "🚀 GitHub Runner is now available with label: awsgithubrunner"
+        
+        # Get outputs with error handling
+        K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "Not available")
+        RUNNER_PRIVATE_IP=$(terraform output -raw github_runner_ip 2>/dev/null || echo "Not available")
+        RUNNER_PUBLIC_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "Not available")
+        RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "Not available")
+        
+        echo "- K3s Cluster IP: $K3S_IP"
+        echo "- GitHub Runner Private IP: $RUNNER_PRIVATE_IP"
+        echo "- GitHub Runner Public IP: $RUNNER_PUBLIC_IP"
+        echo "- RDS Endpoint: $RDS_ENDPOINT"
+        
+        echo ""
+        echo "🔍 All available outputs:"
+        terraform output 2>/dev/null || echo "No outputs available"
+        
+        echo ""
+        echo "🚀 GitHub Runner is now available with labels: awsrunnerlocal, aws-${{ matrix.env }}"
+        
+        if [ "$RUNNER_PUBLIC_IP" != "Not available" ]; then
+          echo "📋 SSH to runner: ssh -i ~/.ssh/your-key ubuntu@$RUNNER_PUBLIC_IP"
+          echo "🔧 Debug runner: sudo /home/ubuntu/debug-runner.sh"
+        fi
 
 
     - name: Summary
