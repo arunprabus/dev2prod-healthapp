@@ -43,28 +43,23 @@ pip3 install --upgrade pip
 # Install GitHub Actions runner
 echo "🏃 Installing GitHub Actions runner..."
 cd /home/ubuntu
-mkdir actions-runner && cd actions-runner
+mkdir -p actions-runner && cd actions-runner
 
 # Download latest runner
 curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
 tar xzf ./actions-runner-linux-x64-2.311.0.tar.gz
 
-# Configure runner
+# Fix ownership
 chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 
 # Get registration token using PAT
 echo "🔐 Registering runner with GitHub..."
 echo "Repository: ${github_repo}"
 
-# Test GitHub API access
-echo "Testing GitHub API access..."
-curl -s -H "Authorization: token ${github_token}" https://api.github.com/repos/${github_repo} > /tmp/api_test.log 2>&1
-echo "API test completed"
-
 # Get registration token
 echo "Getting registration token..."
-REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-echo "Token obtained, length: $${#REG_TOKEN}"
+REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | jq -r '.token')
+echo "Token obtained: ${REG_TOKEN:0:10}..."
 
 # Create service with network-specific name
 if [ "${network_tier}" = "lower" ]; then
@@ -81,15 +76,17 @@ fi
 echo "Configuring runner: $RUNNER_NAME"
 echo "Labels: $LABELS"
 
-# Configure runner
-sudo -u ubuntu ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name "$RUNNER_NAME" --labels "$LABELS" --unattended > /var/log/runner-config.log 2>&1
+# Configure runner as ubuntu user
+echo "Running configuration as ubuntu user..."
+sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended" > /var/log/runner-config.log 2>&1
 CONFIG_EXIT_CODE=$?
 echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 
-# Install and start service
+# Install and start service as ubuntu user
 echo "Installing runner service..."
-./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
-./svc.sh start >> /var/log/runner-config.log 2>&1
+cd /home/ubuntu/actions-runner
+sudo -u ubuntu ./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
+sudo -u ubuntu ./svc.sh start >> /var/log/runner-config.log 2>&1
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
