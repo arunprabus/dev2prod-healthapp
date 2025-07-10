@@ -50,5 +50,5 @@ locals {
   }
   
   # Resource naming
-  name_prefix = "${var.environment}-${var.network_tier}"
+  name_prefix = "health-app-${var.network_tier}"
 }
