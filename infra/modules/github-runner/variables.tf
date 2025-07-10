@@ -13,9 +13,10 @@ variable "subnet_id" {
   type        = string
 }
 
-variable "ssh_key_name" {
-  description = "SSH key name"
+variable "ssh_public_key" {
+  description = "SSH public key content"
   type        = string
+  sensitive   = true
 }
 
 variable "repo_pat" {
@@ -27,4 +28,9 @@ variable "repo_pat" {
 variable "repo_name" {
   description = "GitHub repository (owner/repo)"
   type        = string
+}
+
+output "key_pair_name" {
+  description = "Name of the created key pair"
+  value       = aws_key_pair.github_runner.key_name
 }

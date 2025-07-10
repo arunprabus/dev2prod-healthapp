@@ -38,9 +38,8 @@ database_config = {
 }
 
 # GitHub Runner Configuration
-ssh_key_name = "health-app-key"
 github_repo = "arunprabus/dev2prod-healthapp"
-# github_pat will be provided via environment variable or CLI
+# ssh_public_key and github_pat will be provided via GitHub Actions secrets
 
 # Tags
 tags = {

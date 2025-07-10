@@ -157,11 +157,7 @@ variable "tf_state_bucket" {
 }
 
 # GitHub Runner Configuration
-variable "ssh_key_name" {
-  description = "Name of the SSH key pair for EC2 instances"
-  type        = string
-  default     = "health-app-key"
-}
+
 
 variable "github_pat" {
   description = "GitHub Personal Access Token for runner registration"

@@ -1,7 +1,18 @@
+# Create key pair from GitHub secrets
+resource "aws_key_pair" "github_runner" {
+  key_name   = "health-app-key-${var.network_tier}"
+  public_key = var.ssh_public_key
+
+  tags = {
+    Name = "health-app-key-${var.network_tier}"
+    Purpose = "GitHub runner SSH access"
+  }
+}
+
 resource "aws_instance" "github_runner" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type              = "t2.micro"
-  key_name                   = var.ssh_key_name
+  key_name                   = aws_key_pair.github_runner.key_name
   vpc_security_group_ids     = [aws_security_group.runner.id]
   subnet_id                  = var.subnet_id
   associate_public_ip_address = true  # Ensure public IP for internet access

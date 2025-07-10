@@ -130,12 +130,12 @@ module "rds" {
 module "github_runner" {
   source = "./modules/github-runner"
 
-  network_tier   = var.environment
-  vpc_id         = module.vpc.vpc_id
-  subnet_id      = module.vpc.public_subnet_ids[0]  # Use public subnet for internet access
-  ssh_key_name   = var.ssh_key_name
-  repo_pat       = var.github_pat
-  repo_name      = var.github_repo
+  network_tier     = var.environment
+  vpc_id           = module.vpc.vpc_id
+  subnet_id        = module.vpc.public_subnet_ids[0]  # Use public subnet for internet access
+  ssh_public_key   = var.ssh_public_key
+  repo_pat         = var.github_pat
+  repo_name        = var.github_repo
 
   depends_on = [module.vpc]
 }
