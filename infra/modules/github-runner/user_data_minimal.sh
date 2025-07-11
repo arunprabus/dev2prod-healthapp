@@ -2,8 +2,12 @@
 set -e
 exec > >(tee /var/log/runner-setup.log) 2>&1
 
-echo "🚀 Setting up GitHub Runner..."
+echo "=== USER DATA SCRIPT STARTED ==="
 echo "Time: $(date)"
+echo "Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)"
+echo "Instance Type: $(curl -s http://169.254.169.254/latest/meta-data/instance-type)"
+echo "Availability Zone: $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)"
+echo "🚀 Setting up GitHub Runner..."
 
 # Update system
 echo "Updating system..."
@@ -40,6 +44,10 @@ usermod -aG docker ubuntu
 echo "✅ Setup completed at $(date)"
 echo "Runner: $RUNNER_NAME"
 echo "Labels: $LABELS"
+
+# Create completion marker
+echo "SUCCESS: $(date)" > /var/log/user-data-complete
+echo "=== USER DATA SCRIPT COMPLETED SUCCESSFULLY ==="
 
 # Create debug script
 cat > /home/ubuntu/debug-runner.sh << 'EOF'
