@@ -212,5 +212,9 @@ resource "aws_db_instance" "main" {
   skip_final_snapshot     = true
   deletion_protection     = false
   
+  lifecycle {
+    prevent_destroy = true
+  }
+  
   tags = merge(local.tags, { Name = "${local.name_prefix}-rds" })
 }
