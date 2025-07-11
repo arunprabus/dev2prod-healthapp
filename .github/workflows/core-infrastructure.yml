@@ -303,22 +303,35 @@ jobs:
         echo "🤖 Test 2: GitHub Runner Status"
         RUNNER_STATUS="❌ FAIL"
         if [ -n "$RUNNER_IP" ]; then
-          # Wait for runner to come online
-          echo "⏳ Waiting for runner to come online..."
-          sleep 60
-          
           RUNNER_NAME="github-runner-${{ matrix.env }}"
-          RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-            jq -r ".runners[] | select(.name | contains(\"$RUNNER_NAME\")) | .status" | head -1)
           
-          if [ "$RUNNER_ONLINE" = "online" ]; then
-            echo "✅ GitHub runner is online and ready" >> $GITHUB_STEP_SUMMARY
-            RUNNER_STATUS="✅ PASS"
-          else
-            echo "❌ GitHub runner is offline (Status: $RUNNER_ONLINE)" >> $GITHUB_STEP_SUMMARY
-            RUNNER_STATUS="❌ FAIL"
+          # Progressive wait with status checks
+          for i in {1..8}; do
+            echo "⏳ Checking runner status (attempt $i/8)..."
+            
+            RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
+              -H "Accept: application/vnd.github.v3+json" \
+              https://api.github.com/repos/${{ github.repository }}/actions/runners | \
+              jq -r ".runners[] | select(.name | contains(\"$RUNNER_NAME\")) | .status" | head -1)
+            
+            if [ "$RUNNER_ONLINE" = "online" ]; then
+              echo "✅ GitHub runner is online and ready" >> $GITHUB_STEP_SUMMARY
+              RUNNER_STATUS="✅ PASS"
+              break
+            elif [ -n "$RUNNER_ONLINE" ]; then
+              echo "Runner found but status: $RUNNER_ONLINE (waiting...)"
+            else
+              echo "Runner not found yet (still initializing...)"
+            fi
+            
+            # Wait longer on each attempt (30s, 45s, 60s, etc.)
+            WAIT_TIME=$((30 + i * 15))
+            echo "Waiting ${WAIT_TIME}s before next check..."
+            sleep $WAIT_TIME
+          done
+          
+          if [ "$RUNNER_STATUS" = "❌ FAIL" ]; then
+            echo "❌ GitHub runner failed to come online (Final status: $RUNNER_ONLINE)" >> $GITHUB_STEP_SUMMARY
           fi
         else
           echo "❌ GitHub runner IP not found" >> $GITHUB_STEP_SUMMARY
