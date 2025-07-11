@@ -1,0 +1,146 @@
+name: Test Runner Connectivity
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: 'Environment to test'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+        - lower
+        - higher
+        - monitoring
+
+jobs:
+  test-connectivity:
+    runs-on: [self-hosted, awsrunnerlocal]
+    
+    steps:
+    - name: Test Basic Connectivity
+      run: |
+        echo "🔍 Testing runner connectivity..."
+        echo "Runner hostname: $(hostname)"
+        echo "Runner IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
+        echo "AWS Region: $(curl -s http://169.254.169.254/latest/meta-data/placement/region)"
+        
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Get K3s Node IP
+      id: get-ip
+      run: |
+        echo "🔍 Finding K3s node for environment: ${{ github.event.inputs.target_environment }}"
+        
+        # Get K3s node IP based on environment
+        if [ "${{ github.event.inputs.target_environment }}" = "lower" ]; then
+          TAG_VALUE="health-app-k3s-master-dev"
+        elif [ "${{ github.event.inputs.target_environment }}" = "higher" ]; then
+          TAG_VALUE="health-app-k3s-master-prod"
+        else
+          TAG_VALUE="health-app-k3s-master-monitoring"
+        fi
+        
+        K3S_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=$TAG_VALUE" "Name=instance-state-name,Values=running" \
+          --query 'Reservations[0].Instances[0].PublicIpAddress' \
+          --output text)
+        
+        if [ "$K3S_IP" = "None" ] || [ -z "$K3S_IP" ]; then
+          echo "❌ K3s node not found or not running"
+          exit 1
+        fi
+        
+        echo "✅ Found K3s node: $K3S_IP"
+        echo "k3s_ip=$K3S_IP" >> $GITHUB_OUTPUT
+
+    - name: Test Network Connectivity
+      run: |
+        K3S_IP="${{ steps.get-ip.outputs.k3s_ip }}"
+        echo "🔍 Testing network connectivity to K3s node: $K3S_IP"
+        
+        # Test ping
+        echo "📡 Testing ping..."
+        if ping -c 3 $K3S_IP; then
+          echo "✅ Ping successful"
+        else
+          echo "❌ Ping failed"
+        fi
+        
+        # Test SSH port
+        echo "🔐 Testing SSH port (22)..."
+        if timeout 5 bash -c "</dev/tcp/$K3S_IP/22"; then
+          echo "✅ SSH port accessible"
+        else
+          echo "❌ SSH port not accessible"
+        fi
+        
+        # Test K3s API port
+        echo "🎯 Testing K3s API port (6443)..."
+        if timeout 5 bash -c "</dev/tcp/$K3S_IP/6443"; then
+          echo "✅ K3s API port accessible"
+        else
+          echo "❌ K3s API port not accessible"
+        fi
+
+    - name: Test SSH Connection
+      run: |
+        K3S_IP="${{ steps.get-ip.outputs.k3s_ip }}"
+        echo "🔐 Testing SSH connection to K3s node..."
+        
+        # Setup SSH key
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+        chmod 600 ~/.ssh/k3s-key
+        
+        # Test SSH connection
+        if ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH connection successful'"; then
+          echo "✅ SSH connection successful"
+        else
+          echo "❌ SSH connection failed"
+          exit 1
+        fi
+
+    - name: Test K3s Cluster Access
+      run: |
+        K3S_IP="${{ steps.get-ip.outputs.k3s_ip }}"
+        echo "🎯 Testing K3s cluster access..."
+        
+        # Download kubeconfig
+        scp -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml ./kubeconfig
+        
+        # Update server IP
+        sed -i "s/127.0.0.1/$K3S_IP/g" ./kubeconfig
+        export KUBECONFIG=./kubeconfig
+        
+        # Test kubectl connection
+        echo "📋 Testing kubectl connection..."
+        if kubectl get nodes; then
+          echo "✅ K3s cluster accessible"
+          echo "📊 Cluster info:"
+          kubectl cluster-info
+        else
+          echo "❌ K3s cluster not accessible"
+          exit 1
+        fi
+        
+        # Cleanup
+        rm -f ~/.ssh/k3s-key ./kubeconfig
+
+    - name: Connectivity Summary
+      run: |
+        echo "🎉 Connectivity Test Summary"
+        echo "=========================="
+        echo "✅ Runner is online and functional"
+        echo "✅ AWS credentials working"
+        echo "✅ K3s node discovered via AWS API"
+        echo "✅ Network connectivity established"
+        echo "✅ SSH connection successful"
+        echo "✅ K3s cluster accessible"
+        echo ""
+        echo "🚀 Runner is ready for deployments!"
