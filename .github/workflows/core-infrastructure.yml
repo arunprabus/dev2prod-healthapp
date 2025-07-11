@@ -246,13 +246,6 @@ jobs:
           -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
         
-        terraform apply -auto-approve tfplan" \
-          -var="network_tier=${{ matrix.env }}" \
-          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -out=tfplan
-        
         terraform apply -auto-approve tfplan
 
     - name: Terraform Apply
@@ -359,15 +352,7 @@ jobs:
           exit 1
         else
           echo "✅ All PIV tests passed - infrastructure is ready!"
-        fi || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-              -var="network_tier=${{ matrix.env }}" \
-              -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-              -var="repo_pat=${{ secrets.REPO_PAT }}" \
-              -var="repo_name=${{ secrets.REPO_NAME }}" \
-              -auto-approve || true
-            echo "🔍 Cleanup completed - safe to retry deployment"
-            exit 1
-          fi
+        fi
           
           echo ""
           echo "✅ Infrastructure deployment completed"
