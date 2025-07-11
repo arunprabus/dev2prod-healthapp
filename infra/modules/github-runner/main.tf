@@ -19,7 +19,7 @@ resource "aws_ebs_volume" "runner_logs" {
   encrypted         = false
   
   tags = {
-    Name = "github-runner-logs-${var.network_tier}"
+    Name = "health-app-runner-logs-${var.network_tier}"
     Purpose = "Runner logs storage"
     Environment = var.network_tier
     Project = "health-app"
@@ -46,7 +46,7 @@ resource "aws_instance" "github_runner" {
   }))
   
   tags = {
-    Name = "github-runner-${var.network_tier}"
+    Name = "health-app-runner-${var.network_tier}"
     Type = "github-runner"
     NetworkTier = var.network_tier
     Environment = var.network_tier
@@ -103,7 +103,7 @@ resource "aws_security_group" "runner" {
   }
   
   tags = {
-    Name = "github-runner-sg-${var.network_tier}"
+    Name = "health-app-runner-sg-${var.network_tier}"
     Purpose = "GitHub runner internet access"
     Environment = var.network_tier
     Project = "health-app"
