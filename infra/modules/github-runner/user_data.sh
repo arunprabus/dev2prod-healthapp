@@ -56,25 +56,34 @@ chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 echo "🔐 Registering runner with GitHub..."
 echo "Repository: ${github_repo}"
 
+# Clean up ALL old runners for this network tier (aggressive cleanup)
+echo "🧹 Cleaning up ALL old runners for network: ${network_tier}..."
+ALL_RUNNERS=$(curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners | jq -r ".runners[] | select(.name | contains(\"github-runner-${network_tier}\")) | .id")
+
+echo "Found existing runners for ${network_tier}: $ALL_RUNNERS"
+for runner_id in $ALL_RUNNERS; do
+    if [ ! -z "$runner_id" ] && [ "$runner_id" != "null" ]; then
+        echo "🗑️ Removing runner ID: $runner_id"
+        curl -s -X DELETE -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/$runner_id
+        sleep 2
+    fi
+done
+
+echo "⏳ Waiting for cleanup to complete..."
+sleep 10
+
 # Get registration token
 echo "Getting registration token..."
 REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | jq -r '.token')
 echo "Token obtained: $${REG_TOKEN:0:10}..."
 
-# Create service with network-specific name
-if [ "${network_tier}" = "lower" ]; then
-    RUNNER_NAME="awsrunner-lower-devtest-$(hostname | cut -d'-' -f3-)"
-    LABELS="awsrunnerlocal,aws-lower,aws-dev,aws-test,self-hosted,terraform,kubectl,docker"
-elif [ "${network_tier}" = "higher" ]; then
-    RUNNER_NAME="awsrunner-higher-prod-$(hostname | cut -d'-' -f3-)"
-    LABELS="awsrunnerlocal,aws-higher,aws-prod,self-hosted,terraform,kubectl,docker"
-else
-    RUNNER_NAME="awsrunner-${network_tier}-$(hostname | cut -d'-' -f3-)"
-    LABELS="awsrunnerlocal,aws-${network_tier},self-hosted,terraform,kubectl,docker"
-fi
+# Create service with clean naming
+RUNNER_NAME="github-runner-${network_tier}-$(hostname | cut -d'-' -f3-)"
+LABELS="github-runner-${network_tier}"
 
-echo "Configuring runner: $RUNNER_NAME"
-echo "Labels: $LABELS"
+echo "🚀 Configuring NEW runner: $RUNNER_NAME"
+echo "🏷️ Labels: $LABELS"
+echo "🌐 Network tier: ${network_tier}"
 
 # Configure runner as ubuntu user
 echo "Running configuration as ubuntu user..."

@@ -103,13 +103,9 @@ resource "aws_security_group" "k3s" {
 
 # Key pair for SSH
 resource "aws_key_pair" "main" {
-  key_name   = "${local.name_prefix}-key-${random_id.suffix.hex}"
+  key_name   = "${local.name_prefix}-key"
   public_key = var.ssh_public_key
   tags       = local.tags
-}
-
-resource "random_id" "suffix" {
-  byte_length = 4
 }
 
 # EC2 instance for K3s cluster
@@ -166,9 +162,9 @@ module "github_runner" {
   aws_region       = var.aws_region
 }
 
-# RDS Subnet Group with unique name
+# RDS Subnet Group
 resource "aws_db_subnet_group" "main" {
-  name       = "${local.name_prefix}-db-subnet-group-${random_id.suffix.hex}"
+  name       = "${local.name_prefix}-db-subnet-group"
   subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
   
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
@@ -195,7 +191,7 @@ resource "aws_security_group" "rds" {
 
 # RDS MySQL
 resource "aws_db_instance" "main" {
-  identifier     = "${local.name_prefix}-db-${random_id.suffix.hex}"
+  identifier     = "${local.name_prefix}-db"
   engine         = "mysql"
   engine_version = "8.0"
   instance_class = "db.t3.micro"
@@ -215,10 +211,6 @@ resource "aws_db_instance" "main" {
   backup_retention_period = 0
   skip_final_snapshot     = true
   deletion_protection     = false
-  
-  lifecycle {
-    ignore_changes = [identifier]
-  }
   
   tags = merge(local.tags, { Name = "${local.name_prefix}-rds" })
 }

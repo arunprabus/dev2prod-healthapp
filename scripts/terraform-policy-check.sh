@@ -86,7 +86,7 @@ validate_plan_against_policies() {
     
     # Check 6: Naming convention
     echo "  Checking naming convention..."
-    local bad_names=$(jq -r '.resource_changes[]? | select(.type | test("aws_instance|aws_key_pair|aws_security_group")) | select(.change.after.tags.Name | test("^health-app-") | not) | "\(.address): \(.change.after.tags.Name)"' /tmp/tfplan.json 2>/dev/null || echo "")
+    local bad_names=$(jq -r '.resource_changes[]? | select(.type | test("aws_instance|aws_key_pair|aws_security_group")) | select(.change.after.tags.Name // "" | test("^health-app-") | not) | "\(.address): \(.change.after.tags.Name // "no-name")"' /tmp/tfplan.json 2>/dev/null || echo "")
     if [[ -n "$bad_names" ]]; then
         echo "    ❌ Resources with incorrect naming:"
         echo "$bad_names" | sed 's/^/      /'

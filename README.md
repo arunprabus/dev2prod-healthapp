@@ -169,9 +169,9 @@ The separation of application and infrastructure code allows for:
 
 | Network | Runner Name | Labels | K3s Connectivity | Software Installed |
 |---------|-------------|--------|------------------|--------------------|
-| **Lower** | `awsrunner-lower-devtest-xxx` | `awsrunnerlocal`, `aws-lower`, `aws-dev`, `aws-test` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker |
-| **Higher** | `awsrunner-higher-prod-xxx` | `awsrunnerlocal`, `aws-higher`, `aws-prod` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker |
-| **Monitoring** | `awsrunner-monitoring-xxx` | `awsrunnerlocal`, `aws-monitoring`, `aws-dev`, `aws-test`, `aws-prod` | ✅ All Networks | Terraform, kubectl, AWS CLI, Docker |
+| **Lower** | `github-runner-lower-{id}` | `github-runner-lower` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker, Node.js, Python |
+| **Higher** | `github-runner-higher-{id}` | `github-runner-higher` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker, Node.js, Python |
+| **Monitoring** | `github-runner-monitoring-{id}` | `github-runner-monitoring` | ✅ All Networks | Terraform, kubectl, AWS CLI, Docker, Node.js, Python |
 
 ### 🌐 **Network Communication Matrix**
 
@@ -203,7 +203,7 @@ The separation of application and infrastructure code allows for:
 | Resource | Lower Network | Higher Network | Monitoring | Free Tier Limit | Monthly Cost |
 |----------|---------------|----------------|------------|-----------------|-------------|
 | **EC2 t2.micro (K3s)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
-| **EC2 t2.micro (Runner)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
+| **EC2 t2.micro (GitHub Runner)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
 | **RDS db.t3.micro** | 1 shared | 1 dedicated | 0 | 750 hrs each | **$0** |
 | **EBS Storage** | ~40GB | ~20GB | ~20GB | 30GB each | **$0** |
 | **VPC + Networking** | Default VPC | Default VPC | Default VPC | Always free | **$0** |
@@ -428,15 +428,24 @@ AutoShutdown: "enabled"
 ```yaml
 # Format: {project}-{component}-{environment}
 AWS Resources:
-  VPC: "health-app-vpc-dev"
-  EC2: "health-app-k8s-master-dev"
-  RDS: "health-app-db-dev"
-  S3: "health-app-terraform-state-dev"
+  VPC: "health-app-vpc-{network_tier}"
+  K3s Master: "health-app-k3s-master-{environment}"
+  GitHub Runner: "github-runner-{network_tier}"
+  RDS: "health-app-db-{environment}"
+  S3: "health-app-terraform-state"
+  Key Pair: "health-app-runner-{network_tier}"
+  Security Groups: "github-runner-sg-{network_tier}"
+  IAM Role: "github-runner-role-{network_tier}"
+
+GitHub Runner Names:
+  Lower Network: "github-runner-lower-{instance_id}"
+  Higher Network: "github-runner-higher-{instance_id}"
+  Monitoring: "github-runner-monitoring-{instance_id}"
 
 K8s Resources:
-  Namespace: "health-app-dev"
-  Deployment: "health-api-backend-dev"
-  Service: "health-api-service-dev"
+  Namespace: "health-app-{environment}"
+  Deployment: "health-api-backend-{environment}"
+  Service: "health-api-service-{environment}"
 ```
 
 ### **Benefits**

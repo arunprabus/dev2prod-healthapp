@@ -1,10 +1,10 @@
 # Create key pair from GitHub secrets
 resource "aws_key_pair" "github_runner" {
-  key_name   = "health-app-key-${var.network_tier}"
+  key_name   = "health-app-runner-${var.network_tier}"
   public_key = var.ssh_public_key
 
   tags = {
-    Name = "health-app-key-${var.network_tier}"
+    Name = "health-app-runner-${var.network_tier}"
     Purpose = "GitHub runner SSH access"
     Environment = var.network_tier
     Project = "health-app"
@@ -13,7 +13,7 @@ resource "aws_key_pair" "github_runner" {
 
 # EBS volume for runner logs
 resource "aws_ebs_volume" "runner_logs" {
-  availability_zone = data.aws_ami.ubuntu.id != "" ? data.aws_subnet.runner_subnet.availability_zone : "${var.aws_region}a"
+  availability_zone = data.aws_subnet.runner_subnet.availability_zone
   size              = 10  # 10GB for logs (FREE TIER)
   type              = "gp2"
   encrypted         = false
@@ -110,13 +110,7 @@ resource "aws_security_group" "runner" {
   }
 }
 
-output "runner_ip" {
-  value = aws_instance.github_runner.private_ip
-}
 
-output "runner_public_ip" {
-  value = aws_instance.github_runner.public_ip
-}
 
 # IAM role for S3 log access and Session Manager
 resource "aws_iam_role" "runner_role" {

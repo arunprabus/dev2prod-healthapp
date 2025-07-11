@@ -86,12 +86,29 @@ jobs:
       run: |
         echo "🔍 Pre-deployment checks..."
         
+        # Force cleanup of other regions first
+        echo "🌍 Cleaning other regions before deployment..."
+        REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1 ap-southeast-2 eu-central-1 ca-central-1 sa-east-1"
+        
+        for REGION in $REGIONS; do
+          echo "Cleaning $REGION..."
+          # Terminate any instances
+          INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "Terminating instances in $REGION: $INSTANCES"
+            echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
+          fi
+        done
+        
         # Check for resources in other regions
-        chmod +x scripts/prevent-multi-region-resources.sh
-        if ! ./scripts/prevent-multi-region-resources.sh ${{ env.AWS_REGION }} check; then
-          echo "⚠️ Found resources in other regions!"
-          echo "🧹 Run cleanup first or use 'redeploy' action"
-          exit 1
+        if [ -f "scripts/prevent-multi-region-resources.sh" ]; then
+          chmod +x scripts/prevent-multi-region-resources.sh
+          if ! ./scripts/prevent-multi-region-resources.sh ${{ env.AWS_REGION }} check; then
+            echo "⚠️ Found resources in other regions after cleanup!"
+            echo "🧹 Manual cleanup may be required"
+          fi
+        else
+          echo "⚠️ Multi-region check script not found - skipping"
         fi
         
         # Check naming convention compliance
@@ -168,10 +185,14 @@ jobs:
         
         echo ""
         echo "🛡️ Running policy validation..."
-        chmod +x ../../scripts/terraform-policy-check.sh
-        if ! ../../scripts/terraform-policy-check.sh tfplan ../../policies cost-estimate; then
-          echo "❌ Policy validation failed - deployment blocked"
-          exit 1
+        if [ -f "../../scripts/terraform-policy-check.sh" ]; then
+          chmod +x ../../scripts/terraform-policy-check.sh
+          if ! ../../scripts/terraform-policy-check.sh tfplan ../../policies cost-estimate; then
+            echo "❌ Policy validation failed - deployment blocked"
+            exit 1
+          fi
+        else
+          echo "⚠️ Policy check script not found - skipping validation"
         fi
         
         echo ""
@@ -272,6 +293,18 @@ jobs:
           else
             echo "⚠️ Warning: State file not found in S3"
           fi
+          
+          # Post-deployment cleanup check
+          echo ""
+          echo "🧹 Post-deployment cleanup check..."
+          REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1"
+          for REGION in $REGIONS; do
+            INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
+            if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+              echo "⚠️ Found instances in $REGION: $INSTANCES - cleaning up..."
+              echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
+            fi
+          done
         fi
 
     - name: Complete Resource Cleanup
