@@ -347,7 +347,11 @@ jobs:
           if [ -n "$RUNNER_IP" ]; then
             echo "### GitHub Runner Setup Logs" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            ssh -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "tail -100 /var/log/cloud-init-output.log" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Could not retrieve runner logs" >> $GITHUB_STEP_SUMMARY
+            # Create temporary SSH key file
+            echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+            chmod 600 /tmp/ssh_key
+            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "tail -100 /var/log/cloud-init-output.log" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Could not retrieve runner logs" >> $GITHUB_STEP_SUMMARY
+            rm -f /tmp/ssh_key
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
           
