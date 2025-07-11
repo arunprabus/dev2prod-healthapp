@@ -246,28 +246,116 @@ jobs:
           -var="repo_name=${{ secrets.REPO_NAME }}" \
           -out=tfplan
         
+        terraform apply -auto-approve tfplan" \
+          -var="network_tier=${{ matrix.env }}" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="repo_pat=${{ secrets.REPO_PAT }}" \
+          -var="repo_name=${{ secrets.REPO_NAME }}" \
+          -out=tfplan
+        
         terraform apply -auto-approve tfplan
 
     - name: Terraform Apply
       id: terraform-apply
       working-directory: infra/two-network-setup
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      if: github.event.inputs.action == 'deploy'
       continue-on-error: false
       run: |
-        if [ "${{ github.event.inputs.action }}" = "deploy" ]; then
-          echo "🚀 Applying infrastructure changes..."
+        echo "🚀 Applying infrastructure changes..."
+        
+        # Show what will be applied
+        echo "📋 Resources to be modified:"
+        terraform show -no-color tfplan | grep -E "# .* will be" | head -10
+        
+        echo ""
+        echo "🔄 Applying changes..."
+        if ! terraform apply -auto-approve tfplan; then
+          echo "❌ Terraform apply failed"
+          exit 1
+        fi
+
+    - name: Post-Infrastructure Verification (PIV)
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      run: |
+        echo "🔍 Post-Infrastructure Verification (PIV)..."
+        
+        # Get infrastructure outputs
+        cd infra/two-network-setup
+        K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+        RUNNER_IP=$(terraform output -raw runner_public_ip 2>/dev/null || echo "")
+        
+        echo "📊 PIV Summary" >> $GITHUB_STEP_SUMMARY
+        echo "===============" >> $GITHUB_STEP_SUMMARY
+        echo "Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "K3s Server IP: $K3S_IP" >> $GITHUB_STEP_SUMMARY
+        echo "GitHub Runner IP: $RUNNER_IP" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Test 1: K3s Server Reachability
+        echo "🎯 Test 1: K3s Server Reachability"
+        if [ -n "$K3S_IP" ]; then
+          if ping -c 3 $K3S_IP > /dev/null 2>&1; then
+            echo "✅ K3s server ($K3S_IP) is reachable" >> $GITHUB_STEP_SUMMARY
+            K3S_STATUS="✅ PASS"
+          else
+            echo "❌ K3s server ($K3S_IP) is not reachable" >> $GITHUB_STEP_SUMMARY
+            K3S_STATUS="❌ FAIL"
+          fi
+        else
+          echo "❌ K3s server IP not found" >> $GITHUB_STEP_SUMMARY
+          K3S_STATUS="❌ FAIL"
+        fi
+        
+        # Test 2: GitHub Runner Status
+        echo "🤖 Test 2: GitHub Runner Status"
+        RUNNER_STATUS="❌ FAIL"
+        if [ -n "$RUNNER_IP" ]; then
+          # Wait for runner to come online
+          echo "⏳ Waiting for runner to come online..."
+          sleep 60
           
-          # Show what will be applied
-          echo "📋 Resources to be modified:"
-          terraform show -no-color tfplan | grep -E "# .* will be" | head -10
+          RUNNER_NAME="github-runner-${{ matrix.env }}"
+          RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/runners | \
+            jq -r ".runners[] | select(.name | contains(\"$RUNNER_NAME\")) | .status" | head -1)
           
-          echo ""
-          echo "🔄 Applying changes..."
-          if ! terraform apply -auto-approve tfplan; then
-            echo "❌ Terraform apply failed"
-            echo "🧹 Running cleanup to prevent orphaned resources..."
-            terraform destroy \
-              -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+          if [ "$RUNNER_ONLINE" = "online" ]; then
+            echo "✅ GitHub runner is online and ready" >> $GITHUB_STEP_SUMMARY
+            RUNNER_STATUS="✅ PASS"
+          else
+            echo "❌ GitHub runner is offline (Status: $RUNNER_ONLINE)" >> $GITHUB_STEP_SUMMARY
+            RUNNER_STATUS="❌ FAIL"
+          fi
+        else
+          echo "❌ GitHub runner IP not found" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Overall Status
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📊 Test Results" >> $GITHUB_STEP_SUMMARY
+        echo "================" >> $GITHUB_STEP_SUMMARY
+        echo "K3s Reachability: $K3S_STATUS" >> $GITHUB_STEP_SUMMARY
+        echo "Runner Status: $RUNNER_STATUS" >> $GITHUB_STEP_SUMMARY
+        
+        # Collect logs if any test failed
+        if [[ "$K3S_STATUS" == *"FAIL"* ]] || [[ "$RUNNER_STATUS" == *"FAIL"* ]]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📜 Troubleshooting Logs" >> $GITHUB_STEP_SUMMARY
+          echo "======================" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -n "$RUNNER_IP" ]; then
+            echo "### GitHub Runner Setup Logs" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ssh -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "tail -100 /var/log/cloud-init-output.log" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Could not retrieve runner logs" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "⚠️ PIV completed with failures - check logs above"
+          exit 1
+        else
+          echo "✅ All PIV tests passed - infrastructure is ready!"
+        fi || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
               -var="network_tier=${{ matrix.env }}" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
               -var="repo_pat=${{ secrets.REPO_PAT }}" \
