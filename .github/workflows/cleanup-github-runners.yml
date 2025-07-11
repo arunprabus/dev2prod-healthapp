@@ -41,17 +41,17 @@ jobs:
             RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.status == \"offline\" and (.name | contains(\"github-runner-$network\"))) | .id")
+              jq -r ".runners[] | select(.status == \"offline\" and (.name | contains(\"$network\"))) | .id")
           elif [ "${{ github.event.inputs.cleanup_type }}" = "all-runners" ]; then
             RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.name | contains(\"github-runner-$network\")) | .id")
+              jq -r ".runners[] | select(.name | contains(\"$network\")) | .id")
           else
             RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
               -H "Accept: application/vnd.github.v3+json" \
               https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.name | contains(\"github-runner-$network\")) | .id")
+              jq -r ".runners[] | select(.name | contains(\"$network\")) | .id")
           fi
           
           echo "Found runners to remove: $RUNNERS"
