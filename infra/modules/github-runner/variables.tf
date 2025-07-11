@@ -42,7 +42,3 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
-output "key_pair_name" {
-  description = "Name of the created key pair"
-  value       = aws_key_pair.github_runner.key_name
-}
