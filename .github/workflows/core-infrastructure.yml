@@ -274,8 +274,35 @@ jobs:
         
         # Get infrastructure outputs
         cd infra/two-network-setup
+        
+        echo "🔍 Checking Terraform state..."
+        terraform state list | head -10
+        
+        echo "🔍 Getting outputs..."
         K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
-        RUNNER_IP=$(terraform output -raw runner_public_ip 2>/dev/null || echo "")
+        RUNNER_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "")
+        
+        echo "Found K3s IP: $K3S_IP"
+        echo "Found Runner IP: $RUNNER_IP"
+        
+        # If outputs failed, try alternative method
+        if [ -z "$RUNNER_IP" ]; then
+          echo "🔍 Trying alternative method to get runner IP..."
+          RUNNER_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-runner-${{ matrix.env }}" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null || echo "")
+          echo "Alternative method found: $RUNNER_IP"
+        fi
+        
+        if [ -z "$K3S_IP" ]; then
+          echo "🔍 Trying alternative method to get K3s IP..."
+          K3S_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null || echo "")
+          echo "Alternative method found: $K3S_IP"
+        fi
         
         echo "📊 PIV Summary" >> $GITHUB_STEP_SUMMARY
         echo "===============" >> $GITHUB_STEP_SUMMARY
@@ -305,9 +332,9 @@ jobs:
         if [ -n "$RUNNER_IP" ]; then
           RUNNER_NAME="github-runner-${{ matrix.env }}"
           
-          # Progressive wait with status checks
-          for i in {1..8}; do
-            echo "⏳ Checking runner status (attempt $i/8)..."
+          # Progressive wait with status checks (5 minutes total)
+          for i in {1..5}; do
+            echo "⏳ Checking runner status (attempt $i/5)..."
             
             RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
               -H "Accept: application/vnd.github.v3+json" \
@@ -324,10 +351,11 @@ jobs:
               echo "Runner not found yet (still initializing...)"
             fi
             
-            # Wait longer on each attempt (30s, 45s, 60s, etc.)
-            WAIT_TIME=$((30 + i * 15))
-            echo "Waiting ${WAIT_TIME}s before next check..."
-            sleep $WAIT_TIME
+            # Wait 60 seconds between checks (5 minutes total)
+            if [ $i -lt 5 ]; then
+              echo "Waiting 60s before next check..."
+              sleep 60
+            fi
           done
           
           if [ "$RUNNER_STATUS" = "❌ FAIL" ]; then
