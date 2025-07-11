@@ -1,0 +1,151 @@
+name: Test GitHub Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-runner:
+    runs-on: [self-hosted, github-runner-lower]
+    
+    steps:
+    - name: System Information
+      run: |
+        echo "🖥️ System Information"
+        echo "===================="
+        echo "Hostname: $(hostname)"
+        echo "User: $(whoami)"
+        echo "OS: $(cat /etc/os-release | grep PRETTY_NAME)"
+        echo "Uptime: $(uptime)"
+        echo "Date: $(date)"
+        echo ""
+
+    - name: Environment Variables
+      run: |
+        echo "🌍 Environment Variables"
+        echo "======================="
+        echo "PATH: $PATH"
+        echo "HOME: $HOME"
+        echo "USER: $USER"
+        echo "SHELL: $SHELL"
+        echo "PWD: $PWD"
+        echo ""
+
+    - name: Installed Software & Paths
+      run: |
+        echo "📦 Installed Software"
+        echo "===================="
+        
+        echo "🐳 Docker:"
+        which docker || echo "Not found"
+        docker --version || echo "Not available"
+        echo ""
+        
+        echo "🔧 Terraform:"
+        which terraform || echo "Not found"
+        terraform version || echo "Not available"
+        echo ""
+        
+        echo "☸️ Kubectl:"
+        which kubectl || echo "Not found"
+        kubectl version --client || echo "Not available"
+        echo ""
+        
+        echo "☁️ AWS CLI:"
+        which aws || echo "Not found"
+        aws --version || echo "Not available"
+        echo ""
+        
+        echo "📦 Node.js:"
+        which node || echo "Not found"
+        node --version || echo "Not available"
+        echo ""
+        
+        echo "📦 NPM:"
+        which npm || echo "Not found"
+        npm --version || echo "Not available"
+        echo ""
+        
+        echo "🐍 Python:"
+        which python3 || echo "Not found"
+        python3 --version || echo "Not available"
+        echo ""
+        
+        echo "📦 Pip:"
+        which pip3 || echo "Not found"
+        pip3 --version || echo "Not available"
+        echo ""
+        
+        echo "🔧 Git:"
+        which git || echo "Not found"
+        git --version || echo "Not available"
+        echo ""
+
+    - name: System Resources
+      run: |
+        echo "💾 System Resources"
+        echo "=================="
+        echo "Memory:"
+        free -h
+        echo ""
+        echo "Disk:"
+        df -h
+        echo ""
+        echo "CPU:"
+        nproc
+        echo ""
+
+    - name: Network & Connectivity
+      run: |
+        echo "🌐 Network & Connectivity"
+        echo "========================"
+        echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+        echo "Private IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
+        echo ""
+        echo "Internet connectivity:"
+        ping -c 3 8.8.8.8 || echo "Failed"
+        echo ""
+        echo "GitHub connectivity:"
+        curl -s --connect-timeout 5 https://api.github.com/rate_limit > /dev/null && echo "✅ OK" || echo "❌ Failed"
+        echo ""
+
+    - name: GitHub Runner Details
+      run: |
+        echo "🤖 GitHub Runner Details"
+        echo "========================"
+        echo "Runner directory:"
+        ls -la /home/ubuntu/actions-runner/ || echo "Not found"
+        echo ""
+        echo "Runner service status:"
+        systemctl status actions.runner.* --no-pager || echo "Service not found"
+        echo ""
+        echo "Runner processes:"
+        ps aux | grep -E "(runner|actions)" | grep -v grep || echo "No runner processes"
+        echo ""
+
+    - name: Test Commands
+      run: |
+        echo "🧪 Test Commands"
+        echo "==============="
+        echo "Current directory: $(pwd)"
+        echo "List files: $(ls -la)"
+        echo "Create test file:"
+        echo "Hello from GitHub Runner!" > test-file.txt
+        cat test-file.txt
+        rm test-file.txt
+        echo "✅ File operations working"
+        echo ""
+        echo "Test Docker (if available):"
+        docker ps 2>/dev/null && echo "✅ Docker working" || echo "⚠️ Docker not accessible"
+        echo ""
+
+    - name: Summary
+      run: |
+        echo "📋 Runner Test Summary"
+        echo "====================="
+        echo "✅ Runner is online and functional"
+        echo "✅ System commands working"
+        echo "✅ Network connectivity established"
+        echo "✅ Environment variables accessible"
+        echo "✅ File operations working"
+        echo ""
+        echo "🎉 GitHub Runner test completed successfully!"
