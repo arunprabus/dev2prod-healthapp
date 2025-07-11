@@ -39,7 +39,7 @@ resource "aws_instance" "github_runner" {
   associate_public_ip_address = true  # Ensure public IP for internet access
   iam_instance_profile       = aws_iam_instance_profile.runner_profile.name
   
-  user_data = base64encode(templatefile("${path.module}/user_data.sh", {
+  user_data = base64encode(templatefile("${path.module}/user_data_minimal.sh", {
     github_token = var.repo_pat
     github_repo  = var.repo_name
     network_tier = var.network_tier
