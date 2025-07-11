@@ -12,6 +12,9 @@ This repository contains the complete infrastructure and deployment pipeline for
 - ✅ **Cost Optimization** - Resource scheduling, auto-shutdown
 - ✅ **Complete CI/CD** - GitHub Actions automation
 - ✅ **Infrastructure as Code** - Terraform + K8s manifests
+- ✅ **Self-Hosted Runners** - GitHub runners with health monitoring
+- ✅ **Policy Governance** - Automated compliance and cost controls
+- ✅ **Production Ready** - Reliable service startup and cleanup
 
 ## 📁 Clean Repository Structure
 
@@ -169,9 +172,9 @@ The separation of application and infrastructure code allows for:
 
 | Network | Runner Name | Labels | K3s Connectivity | Software Installed |
 |---------|-------------|--------|------------------|--------------------|
-| **Lower** | `github-runner-lower-{id}` | `github-runner-lower` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker, Node.js, Python |
-| **Higher** | `github-runner-higher-{id}` | `github-runner-higher` | ✅ Same VPC | Terraform, kubectl, AWS CLI, Docker, Node.js, Python |
-| **Monitoring** | `github-runner-monitoring-{id}` | `github-runner-monitoring` | ✅ All Networks | Terraform, kubectl, AWS CLI, Docker, Node.js, Python |
+| **Lower** | `github-runner-lower-{id}` | `github-runner-lower` | ✅ Same VPC | ✅ Health Monitoring, ✅ Auto-Restart, ✅ Cleanup |
+| **Higher** | `github-runner-higher-{id}` | `github-runner-higher` | ✅ Same VPC | ✅ Health Monitoring, ✅ Auto-Restart, ✅ Cleanup |
+| **Monitoring** | `github-runner-monitoring-{id}` | `github-runner-monitoring` | ✅ All Networks | ✅ Health Monitoring, ✅ Auto-Restart, ✅ Cleanup |
 
 ### 🌐 **Network Communication Matrix**
 
@@ -187,6 +190,9 @@ The separation of application and infrastructure code allows for:
 - ✅ **Centralized Monitoring**: Single monitoring cluster for all environments
 - ✅ **Security**: Network-level separation with controlled access
 - ✅ **Data Continuity**: Restore from existing snapshots (healthapidb-snapshot)
+- ✅ **Self-Healing Runners**: Automatic health monitoring and restart
+- ✅ **Policy Compliance**: Governance validation and cost controls
+- ✅ **Production Ready**: Reliable service startup with fallback methods
 
 ### 💾 **Database Restore Advantages**
 - ✅ **Instant Data**: Restore from `healthapidb-snapshot` with all existing data

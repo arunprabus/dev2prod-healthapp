@@ -114,7 +114,7 @@ resource "aws_security_group" "runner" {
 
 # IAM role for S3 log access and Session Manager
 resource "aws_iam_role" "runner_role" {
-  name = "github-runner-role-${var.network_tier}"
+  name = "health-app-runner-role-${var.network_tier}"
   
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -137,7 +137,7 @@ resource "aws_iam_role_policy_attachment" "runner_ssm" {
 }
 
 resource "aws_iam_role_policy" "runner_s3_policy" {
-  name = "github-runner-s3-policy-${var.network_tier}"
+  name = "health-app-runner-s3-policy-${var.network_tier}"
   role = aws_iam_role.runner_role.id
   
   policy = jsonencode({
@@ -168,6 +168,6 @@ resource "aws_iam_role_policy" "runner_s3_policy" {
 }
 
 resource "aws_iam_instance_profile" "runner_profile" {
-  name = "github-runner-profile-${var.network_tier}"
+  name = "health-app-runner-profile-${var.network_tier}"
   role = aws_iam_role.runner_role.name
 }
