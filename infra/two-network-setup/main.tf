@@ -105,7 +105,7 @@ resource "aws_security_group" "k3s" {
 resource "aws_key_pair" "main" {
   key_name   = "${local.name_prefix}-key"
   public_key = var.ssh_public_key
-  tags       = local.tags
+  tags       = merge(local.tags, { Name = "${local.name_prefix}-key" })
 }
 
 # EC2 instance for K3s cluster
