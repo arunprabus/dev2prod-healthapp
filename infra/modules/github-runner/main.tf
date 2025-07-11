@@ -9,6 +9,10 @@ resource "aws_key_pair" "github_runner" {
     Environment = var.network_tier
     Project = "health-app"
   }
+  
+  lifecycle {
+    ignore_changes = [public_key]
+  }
 }
 
 # EBS volume for runner logs
@@ -129,6 +133,10 @@ resource "aws_iam_role" "runner_role" {
       }
     ]
   })
+  
+  lifecycle {
+    ignore_changes = [assume_role_policy]
+  }
 }
 
 # Attach Session Manager policy

@@ -106,6 +106,10 @@ resource "aws_key_pair" "main" {
   key_name   = "${local.name_prefix}-key"
   public_key = var.ssh_public_key
   tags       = merge(local.tags, { Name = "${local.name_prefix}-key" })
+  
+  lifecycle {
+    ignore_changes = [public_key]
+  }
 }
 
 # EC2 instance for K3s cluster
@@ -168,6 +172,10 @@ resource "aws_db_subnet_group" "main" {
   subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
   
   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
+  
+  lifecycle {
+    ignore_changes = [subnet_ids]
+  }
 }
 
 # Security group for RDS
