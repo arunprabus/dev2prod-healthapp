@@ -101,22 +101,16 @@ resource "aws_security_group" "k3s" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-sg" })
 }
 
-# Key pair for SSH
-resource "aws_key_pair" "main" {
-  key_name   = "${local.name_prefix}-key"
-  public_key = var.ssh_public_key
-  tags       = merge(local.tags, { Name = "${local.name_prefix}-key" })
-  
-  lifecycle {
-    ignore_changes = [public_key]
-  }
+# Key pair for SSH - use existing
+data "aws_key_pair" "main" {
+  key_name = "${local.name_prefix}-key"
 }
 
 # EC2 instance for K3s cluster
 resource "aws_instance" "k3s" {
   ami                    = "ami-0f58b397bc5c1f2e8"
   instance_type          = "t2.micro"
-  key_name              = aws_key_pair.main.key_name
+  key_name              = data.aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
   subnet_id             = data.aws_subnet.public.id
   
@@ -166,16 +160,9 @@ module "github_runner" {
   aws_region       = var.aws_region
 }
 
-# RDS Subnet Group
-resource "aws_db_subnet_group" "main" {
-  name       = "${local.name_prefix}-db-subnet-group"
-  subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
-  
-  tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
-  
-  lifecycle {
-    ignore_changes = [subnet_ids]
-  }
+# RDS Subnet Group - use existing
+data "aws_db_subnet_group" "main" {
+  name = "${local.name_prefix}-db-subnet-group"
 }
 
 # Security group for RDS
@@ -214,7 +201,7 @@ resource "aws_db_instance" "main" {
   password = "${var.environment}Password123!"
   
   vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.main.name
+  db_subnet_group_name   = data.aws_db_subnet_group.main.name
   
   backup_retention_period = 0
   skip_final_snapshot     = true
