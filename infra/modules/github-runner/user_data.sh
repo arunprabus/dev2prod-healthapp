@@ -82,13 +82,49 @@ sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url http
 CONFIG_EXIT_CODE=$?
 echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 
-# Install and start service (needs sudo from ubuntu user)
+# Install and start service
 echo "Installing runner service..."
 cd /home/ubuntu/actions-runner
+
 # Add ubuntu to sudoers for service management
 echo "ubuntu ALL=(ALL) NOPASSWD: /home/ubuntu/actions-runner/svc.sh" >> /etc/sudoers.d/github-runner
-sudo -u ubuntu sudo ./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
-sudo -u ubuntu sudo ./svc.sh start >> /var/log/runner-config.log 2>&1
+echo "ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl" >> /etc/sudoers.d/github-runner
+
+# Install service as root, but run as ubuntu
+echo "Installing service..."
+./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
+INSTALL_EXIT_CODE=$?
+echo "Service install exit code: $INSTALL_EXIT_CODE"
+
+# Start service
+echo "Starting service..."
+./svc.sh start >> /var/log/runner-config.log 2>&1
+START_EXIT_CODE=$?
+echo "Service start exit code: $START_EXIT_CODE"
+
+# Wait and check service status
+sleep 10
+echo "Checking service status..."
+systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1 || true
+
+# If service failed, try alternative startup
+if ! systemctl is-active --quiet actions.runner.*; then
+    echo "Service not active, trying alternative startup..."
+    # Kill any existing processes
+    pkill -f Runner.Listener || true
+    sleep 5
+    
+    # Start directly as ubuntu user
+    sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh > /var/log/runner-config.log 2>&1 &"
+    sleep 5
+    
+    # Check if process is running
+    if pgrep -f Runner.Listener > /dev/null; then
+        echo "Runner started successfully via direct method"
+    else
+        echo "Failed to start runner via direct method"
+    fi
+fi
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
@@ -174,14 +210,109 @@ LOGEOF
 chmod +x /home/ubuntu/ship-logs-to-s3.sh
 chown ubuntu:ubuntu /home/ubuntu/ship-logs-to-s3.sh
 
-# Setup cron job for daily log shipping
-echo "0 2 * * * /home/ubuntu/ship-logs-to-s3.sh" | crontab -u ubuntu -
+# Setup cron jobs
+(
+  echo "0 2 * * * /home/ubuntu/ship-logs-to-s3.sh"  # Daily log shipping
+  echo "*/5 * * * * /home/ubuntu/monitor-runner.sh"  # Health monitoring every 5 minutes
+) | crontab -u ubuntu -
 
 # Redirect runner logs to EBS volume
 mkdir -p /var/log/runner-logs/github-actions
 ln -sf /var/log/runner-logs/github-actions /home/ubuntu/actions-runner/_diag
 
+# Create runner health monitor
+echo "🔍 Setting up runner health monitor..."
+cat > /home/ubuntu/monitor-runner.sh << 'MONEOF'
+#!/bin/bash
+LOG_FILE="/var/log/runner-logs/health-monitor.log"
+echo "$(date): Checking runner health..." >> $LOG_FILE
+
+# Check if service is running
+if systemctl is-active --quiet actions.runner.*; then
+    echo "$(date): ✅ Service is active" >> $LOG_FILE
+else
+    echo "$(date): ❌ Service is not active, restarting..." >> $LOG_FILE
+    systemctl restart actions.runner.* >> $LOG_FILE 2>&1
+    sleep 10
+fi
+
+# Check if Runner.Listener process exists
+if pgrep -f Runner.Listener > /dev/null; then
+    echo "$(date): ✅ Runner.Listener process is running" >> $LOG_FILE
+else
+    echo "$(date): ⚠️ Runner.Listener process not found" >> $LOG_FILE
+    # Try to restart service
+    systemctl restart actions.runner.* >> $LOG_FILE 2>&1
+    sleep 10
+    
+    # If still not running, try direct start
+    if ! pgrep -f Runner.Listener > /dev/null; then
+        echo "$(date): 🔄 Attempting direct start..." >> $LOG_FILE
+        pkill -f Runner.Listener || true
+        sleep 5
+        sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh >> $LOG_FILE 2>&1 &"
+    fi
+fi
+
+# Check GitHub connectivity
+if curl -s --connect-timeout 10 https://api.github.com/rate_limit > /dev/null; then
+    echo "$(date): ✅ GitHub API connectivity OK" >> $LOG_FILE
+else
+    echo "$(date): ❌ GitHub API connectivity failed" >> $LOG_FILE
+fi
+
+# Keep only last 100 lines of log
+tail -100 $LOG_FILE > /tmp/health-monitor.tmp && mv /tmp/health-monitor.tmp $LOG_FILE
+MONEOF
+
+chmod +x /home/ubuntu/monitor-runner.sh
+chown ubuntu:ubuntu /home/ubuntu/monitor-runner.sh
+
+# Setup cron job for health monitoring (every 5 minutes)
+echo "*/5 * * * * /home/ubuntu/monitor-runner.sh" | crontab -u ubuntu -
+
+# Create runner restart script
+cat > /home/ubuntu/restart-runner.sh << 'RESTEOF'
+#!/bin/bash
+echo "🔄 Restarting GitHub Actions Runner..."
+echo "$(date): Manual restart initiated" >> /var/log/runner-logs/health-monitor.log
+
+# Stop service
+sudo systemctl stop actions.runner.*
+sleep 5
+
+# Kill any remaining processes
+sudo pkill -f Runner.Listener || true
+sudo pkill -f RunnerService.js || true
+sleep 5
+
+# Start service
+sudo systemctl start actions.runner.*
+sleep 10
+
+# Check status
+if systemctl is-active --quiet actions.runner.*; then
+    echo "✅ Runner restarted successfully"
+    sudo systemctl status actions.runner.* --no-pager
+else
+    echo "❌ Service restart failed, trying direct start..."
+    cd /home/ubuntu/actions-runner
+    nohup ./run.sh > /var/log/runner-logs/direct-run.log 2>&1 &
+    sleep 5
+    if pgrep -f Runner.Listener > /dev/null; then
+        echo "✅ Runner started via direct method"
+    else
+        echo "❌ All restart methods failed"
+    fi
+fi
+RESTEOF
+
+chmod +x /home/ubuntu/restart-runner.sh
+chown ubuntu:ubuntu /home/ubuntu/restart-runner.sh
+
 echo "📋 Debug script: /home/ubuntu/debug-runner.sh"
 echo "📋 Config log: /var/log/runner-config.log"
 echo "💾 Runner logs: /var/log/runner-logs/"
 echo "📤 Log shipping: /home/ubuntu/ship-logs-to-s3.sh (runs daily at 2 AM)"
+echo "🔍 Health monitor: /home/ubuntu/monitor-runner.sh (runs every 5 minutes)"
+echo "🔄 Restart script: /home/ubuntu/restart-runner.sh"
