@@ -57,7 +57,7 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     permissions:
       contents: read
       actions: write

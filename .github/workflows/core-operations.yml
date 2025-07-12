@@ -37,7 +37,7 @@ on:
 
 jobs:
   monitor:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     if: github.event.schedule || github.event.inputs.action == 'monitor' || github.event.inputs.action == 'all'
     
     steps:
@@ -70,7 +70,7 @@ jobs:
         done
 
   scale:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'scale' || github.event.inputs.action == 'all'
     
     steps:
@@ -89,7 +89,7 @@ jobs:
         ./scripts/k8s-auto-scale.sh
 
   backup:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'backup' || github.event.inputs.action == 'all'
     
     steps:
@@ -102,7 +102,7 @@ jobs:
         # Add your backup logic
 
   cleanup:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'cleanup'
     
     steps:
@@ -115,7 +115,7 @@ jobs:
         # Add cleanup logic
 
   health-check:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     if: github.event.inputs.action == 'health-check' || github.event.inputs.action == 'all'
     
     steps:
@@ -128,7 +128,7 @@ jobs:
         ./scripts/k8s-health-check.sh
 
   summary:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     needs: [monitor, scale, backup, cleanup, health-check]
     if: always()
     
