@@ -106,6 +106,40 @@ data "aws_key_pair" "main" {
   key_name = "${local.name_prefix}-key"
 }
 
+# IAM role for K3s instance (SSM access)
+resource "aws_iam_role" "k3s_role" {
+  name = "${local.name_prefix}-k3s-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+  tags = local.tags
+}
+
+# Attach SSM managed policy
+resource "aws_iam_role_policy_attachment" "k3s_ssm" {
+  role       = aws_iam_role.k3s_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# Instance profile for K3s
+resource "aws_iam_instance_profile" "k3s_profile" {
+  name = "${local.name_prefix}-k3s-profile"
+  role = aws_iam_role.k3s_role.name
+  
+  tags = local.tags
+}
+
 # EC2 instance for K3s cluster
 resource "aws_instance" "k3s" {
   ami                    = "ami-0f58b397bc5c1f2e8"
@@ -113,6 +147,7 @@ resource "aws_instance" "k3s" {
   key_name              = data.aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
   subnet_id             = data.aws_subnet.public.id
+  iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
   
   lifecycle {
     ignore_changes = [ami]
@@ -122,6 +157,11 @@ resource "aws_instance" "k3s" {
     #!/bin/bash
     apt-get update
     apt-get install -y curl docker.io mysql-client
+    
+    # Install and configure SSM Agent
+    snap install amazon-ssm-agent --classic
+    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+    systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
     
     # Install K3s
     curl -sfL https://get.k3s.io | sh -

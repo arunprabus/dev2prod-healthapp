@@ -385,24 +385,23 @@ jobs:
         
         echo "✅ Terraform destroy completed for ${{ matrix.env }} environment"
         
-    - name: Additional Cleanup
-      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY' && github.event.inputs.cleanup_all_regions == 'true'
+    - name: Enhanced Cleanup
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
       run: |
-        echo "🗑️ Running additional AWS resource cleanup..."
+        echo "🧹 Running enhanced cleanup..."
         
-        # Make cleanup scripts executable if they exist
-        if [ -f "scripts/complete-cleanup.sh" ]; then
-          chmod +x scripts/complete-cleanup.sh
-          ./scripts/complete-cleanup.sh ${{ env.AWS_REGION }} true
+        # Use enhanced cleanup script
+        chmod +x scripts/enhanced-cleanup.sh
+        
+        if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
+          echo "🌍 Cleaning all network tiers..."
+          ./scripts/enhanced-cleanup.sh ${{ env.AWS_REGION }} all true
+        else
+          echo "📍 Cleaning specific network tier: ${{ matrix.env }}"
+          ./scripts/enhanced-cleanup.sh ${{ env.AWS_REGION }} ${{ matrix.env }} true
         fi
         
-        if [ -f "scripts/vpc-cleanup.sh" ]; then
-          chmod +x scripts/vpc-cleanup.sh
-          echo "🌍 Cleaning ALL regions..."
-          ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }} true
-        fi
-        
-        echo "✅ Additional cleanup completed"
+        echo "✅ Enhanced cleanup completed"
 
     - name: Optimize Data Transfer
       if: github.event.inputs.optimize_data_transfer == 'true'

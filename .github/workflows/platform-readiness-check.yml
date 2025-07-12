@@ -121,6 +121,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         
+      - name: Run Deployment Diagnostic
+        run: |
+          chmod +x scripts/diagnose-deployment.sh
+          ./scripts/diagnose-deployment.sh ${{ matrix.network }}
+          
       - name: Run Platform Readiness Check
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
