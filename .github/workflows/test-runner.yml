@@ -2,79 +2,54 @@ name: Test GitHub Runner
 
 on:
   workflow_dispatch:
+    inputs:
+      network_tier:
+        description: 'Network tier to test'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+          - lower
+          - higher
+          - monitoring
 
 jobs:
   test-runner:
-    runs-on: [self-hosted, github-runner-lower]
+    runs-on: [self-hosted, github-runner-${{ inputs.network_tier }}]
     
     steps:
-    - name: Collect Runner Information
-      run: |
-        # System Information
-        echo "## 🖥️ System Information" >> $GITHUB_STEP_SUMMARY
-        echo "**Hostname:** $(hostname)" >> $GITHUB_STEP_SUMMARY
-        echo "**User:** $(whoami)" >> $GITHUB_STEP_SUMMARY
-        echo "**OS:** $(cat /etc/os-release | grep PRETTY_NAME | cut -d'=' -f2 | tr -d '"')" >> $GITHUB_STEP_SUMMARY
-        echo "**Uptime:** $(uptime)" >> $GITHUB_STEP_SUMMARY
-        echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Environment Variables
-        echo "## 🌍 Environment Variables" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "PATH: $PATH" >> $GITHUB_STEP_SUMMARY
-        echo "HOME: $HOME" >> $GITHUB_STEP_SUMMARY
-        echo "USER: $USER" >> $GITHUB_STEP_SUMMARY
-        echo "SHELL: $SHELL" >> $GITHUB_STEP_SUMMARY
-        echo "PWD: $PWD" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Installed Software
-        echo "## 📦 Installed Software" >> $GITHUB_STEP_SUMMARY
-        echo "| Software | Path | Version |" >> $GITHUB_STEP_SUMMARY
-        echo "|----------|------|---------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Docker | $(which docker 2>/dev/null || echo 'Not found') | $(docker --version 2>/dev/null || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "| Terraform | $(which terraform 2>/dev/null || echo 'Not found') | $(terraform version 2>/dev/null | head -1 || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "| Kubectl | $(which kubectl 2>/dev/null || echo 'Not found') | $(kubectl version --client 2>/dev/null | head -1 || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "| AWS CLI | $(which aws 2>/dev/null || echo 'Not found') | $(aws --version 2>/dev/null || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "| Node.js | $(which node 2>/dev/null || echo 'Not found') | $(node --version 2>/dev/null || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "| Python | $(which python3 2>/dev/null || echo 'Not found') | $(python3 --version 2>/dev/null || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "| Git | $(which git 2>/dev/null || echo 'Not found') | $(git --version 2>/dev/null || echo 'Not available') |" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # System Resources
-        echo "## 💾 System Resources" >> $GITHUB_STEP_SUMMARY
-        echo "**Memory:**" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        free -h >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "**Disk:**" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        df -h >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "**CPU Cores:** $(nproc)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Network
-        echo "## 🌐 Network & Connectivity" >> $GITHUB_STEP_SUMMARY
-        echo "**Public IP:** $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)" >> $GITHUB_STEP_SUMMARY
-        echo "**Private IP:** $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)" >> $GITHUB_STEP_SUMMARY
-        echo "**Internet:** $(ping -c 3 8.8.8.8 >/dev/null 2>&1 && echo '✅ OK' || echo '❌ Failed')" >> $GITHUB_STEP_SUMMARY
-        echo "**GitHub API:** $(curl -s --connect-timeout 5 https://api.github.com/rate_limit >/dev/null 2>&1 && echo '✅ OK' || echo '❌ Failed')" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Runner Status
-        echo "## 🤖 GitHub Runner Status" >> $GITHUB_STEP_SUMMARY
-        echo "**Service Status:** $(systemctl is-active actions.runner.* 2>/dev/null || echo 'Not found')" >> $GITHUB_STEP_SUMMARY
-        echo "**Runner Processes:** $(ps aux | grep -E '(runner|actions)' | grep -v grep | wc -l) active" >> $GITHUB_STEP_SUMMARY
-        echo "**Docker Access:** $(docker ps >/dev/null 2>&1 && echo '✅ Working' || echo '⚠️ Not accessible')" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Summary
-        echo "## 🎉 Test Results" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Runner is online and functional" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ All required tools installed" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Network connectivity established" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Environment properly configured" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ Ready for CI/CD workflows" >> $GITHUB_STEP_SUMMARY
+      - name: Test Runner Connectivity
+        run: |
+          echo "=== Runner Test Started ==="
+          echo "Runner: $(hostname)"
+          echo "Network Tier: ${{ inputs.network_tier }}"
+          echo "Date: $(date)"
+          echo "User: $(whoami)"
+          
+      - name: Test System Info
+        run: |
+          echo "=== System Information ==="
+          uname -a
+          df -h
+          free -h
+          
+      - name: Test Network Connectivity
+        run: |
+          echo "=== Network Tests ==="
+          curl -s https://api.github.com/zen
+          ping -c 3 8.8.8.8
+          
+      - name: Test Docker (if available)
+        run: |
+          echo "=== Docker Test ==="
+          docker --version || echo "Docker not installed"
+          
+      - name: Test Kubernetes Access
+        run: |
+          echo "=== Kubernetes Test ==="
+          kubectl version --client || echo "kubectl not available"
+          
+      - name: Success
+        run: |
+          echo "✅ Runner test completed successfully!"
+          echo "Runner is working properly on network tier: ${{ inputs.network_tier }}"
