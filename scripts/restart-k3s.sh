@@ -36,12 +36,13 @@ sleep 30
 
 # Test connection
 echo -e "${YELLOW}🧪 Testing connection...${NC}"
-scp -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/test-kubeconfig
+ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/test-kubeconfig
 sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/test-kubeconfig
 
 export KUBECONFIG=/tmp/test-kubeconfig
 if timeout 30 kubectl get nodes --request-timeout=20s; then
     echo -e "${GREEN}✅ K3s restart successful!${NC}"
+    kubectl get pods -A
 else
     echo -e "${YELLOW}⚠️ Still initializing, try again in a few minutes${NC}"
 fi
