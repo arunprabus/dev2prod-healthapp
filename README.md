@@ -15,6 +15,8 @@ This repository contains the complete infrastructure and deployment pipeline for
 - ✅ **Self-Hosted Runners** - GitHub runners with health monitoring
 - ✅ **Policy Governance** - Automated compliance and cost controls
 - ✅ **Production Ready** - Reliable service startup and cleanup
+- ✅ **Session Manager** - Secure browser-based terminal access
+- ✅ **Unified Key Management** - Consistent SSH keys across all instances
 
 ## 📁 Clean Repository Structure
 

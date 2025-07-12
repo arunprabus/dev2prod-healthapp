@@ -136,6 +136,8 @@ module "github_runner" {
   ssh_public_key   = var.ssh_public_key
   repo_pat         = var.github_pat
   repo_name        = var.github_repo
+  s3_bucket        = var.tf_state_bucket
+  aws_region       = var.aws_region
 
   depends_on = [module.vpc]
 }

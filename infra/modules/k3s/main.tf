@@ -61,7 +61,7 @@ resource "aws_key_pair" "main" {
   tags       = var.tags
 }
 
-# IAM role for S3 access
+# IAM role for K3s with Session Manager and S3 access
 resource "aws_iam_role" "k3s_role" {
   name = "${var.name_prefix}-k3s-role"
   
@@ -77,6 +77,12 @@ resource "aws_iam_role" "k3s_role" {
       }
     ]
   })
+}
+
+# Attach AWS managed policy for Session Manager
+resource "aws_iam_role_policy_attachment" "k3s_ssm_policy" {
+  role       = aws_iam_role.k3s_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_role_policy" "k3s_s3_policy" {
@@ -124,6 +130,11 @@ S3_BUCKET="${var.s3_bucket}"
 
 apt-get update
 apt-get install -y curl docker.io mysql-client awscli
+
+# Install AWS Systems Manager Agent
+snap install amazon-ssm-agent --classic
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
 # Install K3s with write permissions
 curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644

@@ -1,0 +1,118 @@
+name: Script Executor
+
+on:
+  workflow_dispatch:
+    inputs:
+      script_name:
+        description: 'Script to execute'
+        required: true
+        type: choice
+        options:
+          - 'k3s-connect.sh'
+          - 'k3s-health-check.sh'
+          - 'k3s-auto-scale.sh'
+          - 'setup-kubeconfig.sh'
+          - 'emergency-cleanup.sh'
+          - 'validate-resource-tags.sh'
+          - 'setup-governance.sh'
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - 'dev'
+          - 'test'
+          - 'prod'
+          - 'monitoring'
+          - 'lower'
+          - 'higher'
+          - 'all'
+      action:
+        description: 'Script action/parameter'
+        required: false
+        type: choice
+        options:
+          - 'ssh'
+          - 'session-manager'
+          - 'kubectl'
+          - 'setup'
+          - 'cleanup'
+          - 'monitor'
+          - 'validate'
+          - 'health-check'
+      additional_params:
+        description: 'Additional parameters (optional)'
+        required: false
+        type: string
+
+jobs:
+  execute-script:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+          chmod 600 ~/.ssh/k3s-key
+
+      - name: Setup kubeconfig secrets
+        run: |
+          if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
+            export KUBECONFIG_DEV="${{ secrets.KUBECONFIG_DEV }}"
+          fi
+          if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
+            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
+            export KUBECONFIG_TEST="${{ secrets.KUBECONFIG_TEST }}"
+          fi
+          if [ -n "${{ secrets.KUBECONFIG_PROD }}" ]; then
+            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig-prod
+            export KUBECONFIG_PROD="${{ secrets.KUBECONFIG_PROD }}"
+          fi
+          if [ -n "${{ secrets.KUBECONFIG_MONITORING }}" ]; then
+            echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > /tmp/kubeconfig-monitoring
+            export KUBECONFIG_MONITORING="${{ secrets.KUBECONFIG_MONITORING }}"
+          fi
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Execute Script
+        run: |
+          chmod +x scripts/${{ inputs.script_name }}
+          
+          # Build command based on inputs
+          CMD="./scripts/${{ inputs.script_name }}"
+          
+          if [ -n "${{ inputs.environment }}" ] && [ "${{ inputs.environment }}" != "all" ]; then
+            CMD="$CMD ${{ inputs.environment }}"
+          fi
+          
+          if [ -n "${{ inputs.action }}" ]; then
+            CMD="$CMD ${{ inputs.action }}"
+          fi
+          
+          if [ -n "${{ inputs.additional_params }}" ]; then
+            CMD="$CMD ${{ inputs.additional_params }}"
+          fi
+          
+          echo "🚀 Executing: $CMD"
+          eval $CMD
+        env:
+          KUBECONFIG_DEV: ${{ secrets.KUBECONFIG_DEV }}
+          KUBECONFIG_TEST: ${{ secrets.KUBECONFIG_TEST }}
+          KUBECONFIG_PROD: ${{ secrets.KUBECONFIG_PROD }}
+          KUBECONFIG_MONITORING: ${{ secrets.KUBECONFIG_MONITORING }}

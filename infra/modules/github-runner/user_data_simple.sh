@@ -9,6 +9,22 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl wget git jq
 
+# Install AWS Systems Manager Agent
+snap install amazon-ssm-agent --classic
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+
+# Install kubectl for K8s operations
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+mv kubectl /usr/local/bin/
+
+# Install Docker for container operations
+apt-get install -y docker.io
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ubuntu
+
 # Create runner directory
 mkdir -p /home/ubuntu/actions-runner
 cd /home/ubuntu/actions-runner
