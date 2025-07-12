@@ -196,9 +196,13 @@ resource "aws_db_instance" "main" {
   storage_type          = "gp2"
   storage_encrypted     = false
   
-  db_name  = "healthapp"
-  username = "admin"
-  password = "${var.environment}Password123!"
+  # Restore from snapshot if specified
+  snapshot_identifier = var.restore_from_snapshot ? var.snapshot_identifier : null
+  
+  # Only set these if NOT restoring from snapshot
+  db_name  = var.restore_from_snapshot ? null : "healthapp"
+  username = var.restore_from_snapshot ? null : "admin"
+  password = var.restore_from_snapshot ? null : "${var.environment}Password123!"
   
   vpc_security_group_ids = [aws_security_group.rds.id]
   db_subnet_group_name   = data.aws_db_subnet_group.main.name

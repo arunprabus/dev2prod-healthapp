@@ -34,6 +34,18 @@ variable "repo_name" {
   type        = string
 }
 
+variable "restore_from_snapshot" {
+  description = "Whether to restore RDS from snapshot"
+  type        = bool
+  default     = false
+}
+
+variable "snapshot_identifier" {
+  description = "RDS snapshot identifier to restore from"
+  type        = string
+  default     = null
+}
+
 locals {
   # Network CIDR based on tier
   vpc_cidr = var.network_tier == "lower" ? "10.0.0.0/16" : "10.1.0.0/16"

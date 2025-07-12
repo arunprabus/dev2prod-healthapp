@@ -181,6 +181,8 @@ jobs:
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
           -var="repo_pat=${{ secrets.REPO_PAT }}" \
           -var="repo_name=${{ secrets.REPO_NAME }}" \
+          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
+          -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
           -out=tfplan
         
         echo ""
@@ -219,6 +221,8 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="repo_pat=${{ secrets.REPO_PAT }}" \
             -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -var="restore_from_snapshot=false" \
+            -var="snapshot_identifier=null" \
             -auto-approve || echo "Destroy completed with warnings"
         else
           echo "ℹ️ No existing resources found to destroy"
@@ -254,6 +258,8 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="repo_pat=${{ secrets.REPO_PAT }}" \
             -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
+            -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
             -out=tfplan
         fi
         
@@ -308,6 +314,8 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="repo_pat=${{ secrets.REPO_PAT }}" \
             -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -var="restore_from_snapshot=false" \
+            -var="snapshot_identifier=null" \
             -auto-approve || echo "⚠️ Terraform destroy completed with warnings"
           
           # Verify cleanup
