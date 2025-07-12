@@ -18,6 +18,7 @@ on:
           - 'verify-ssh-keys.sh'
           - 'install-ssm-agent.sh'
           - 'download-kubeconfig.sh'
+          - 'fix-ssm-agent.sh'
       environment:
         description: 'Target environment'
         required: true
