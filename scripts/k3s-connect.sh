@@ -96,6 +96,24 @@ get_k3s_info() {
     PUBLIC_IP=$(echo $INSTANCE_INFO | cut -f2)
     PRIVATE_IP=$(echo $INSTANCE_INFO | cut -f3)
     
+    if [ "$INSTANCE_ID" = "None" ] || [ -z "$INSTANCE_ID" ]; then
+        echo -e "${RED}❌ K3s instance not found${NC}"
+        echo ""
+        echo "🔍 Debugging - All running instances:"
+        aws ec2 describe-instances \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress,State.Name]' \
+            --output table 2>/dev/null || echo "No running instances found"
+        
+        echo ""
+        echo "🔍 All instances with 'k3s' in name:"
+        aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*k3s*" \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress,State.Name]' \
+            --output table 2>/dev/null || echo "No k3s instances found"
+        exit 1
+    fi
+    
     echo -e "${GREEN}✅ Found K3s instance:${NC}"
     echo -e "  Instance ID: ${INSTANCE_ID}"
     echo -e "  Public IP: ${PUBLIC_IP}"
