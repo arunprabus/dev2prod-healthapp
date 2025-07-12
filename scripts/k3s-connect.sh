@@ -71,9 +71,9 @@ get_k3s_info() {
         exit 1
     fi
     
-    INSTANCE_ID=$(echo $INSTANCE_INFO | cut -f1)
-    PUBLIC_IP=$(echo $INSTANCE_INFO | cut -f2)
-    PRIVATE_IP=$(echo $INSTANCE_INFO | cut -f3)
+    INSTANCE_ID=$(echo "$INSTANCE_INFO" | cut -f1)
+    PUBLIC_IP=$(echo "$INSTANCE_INFO" | cut -f2)
+    PRIVATE_IP=$(echo "$INSTANCE_INFO" | cut -f3)
     
     if [ "$INSTANCE_ID" = "None" ] || [ -z "$INSTANCE_ID" ]; then
         echo -e "${RED}❌ K3s instance not found${NC}"
