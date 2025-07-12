@@ -188,7 +188,7 @@ resource "aws_security_group" "rds" {
 resource "aws_db_instance" "main" {
   identifier     = "${local.name_prefix}-db"
   engine         = var.restore_from_snapshot ? "postgres" : "mysql"
-  engine_version = var.restore_from_snapshot ? "15.4" : "8.0"
+  engine_version = var.restore_from_snapshot ? "17.4" : "8.0"
   instance_class = "db.t3.micro"
   
   allocated_storage     = 20
