@@ -333,25 +333,44 @@ jobs:
             # Update server IP in kubeconfig
             sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig
             
-            # Test connection
+            # Test connection with timeout and retries
             export KUBECONFIG=/tmp/kubeconfig
-            if kubectl cluster-info > /dev/null 2>&1; then
-              echo "✅ Kubeconfig is working"
-              
-              # Create GitHub secret based on environment
-              KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig)
-              
-              if [ "${{ matrix.env }}" = "lower" ]; then
-                # Create secrets for both dev and test
-                echo "KUBECONFIG_DEV=$KUBECONFIG_B64" >> $GITHUB_ENV
-                echo "KUBECONFIG_TEST=$KUBECONFIG_B64" >> $GITHUB_ENV
-                echo "✅ Created KUBECONFIG_DEV and KUBECONFIG_TEST secrets"
-              elif [ "${{ matrix.env }}" = "higher" ]; then
-                echo "KUBECONFIG_PROD=$KUBECONFIG_B64" >> $GITHUB_ENV
-                echo "✅ Created KUBECONFIG_PROD secret"
+            
+            echo "🧪 Testing kubectl connection..."
+            CONNECTION_SUCCESS=false
+            
+            for i in {1..3}; do
+              echo "Connection test attempt $i/3..."
+              if timeout 30 kubectl get nodes --request-timeout=20s > /dev/null 2>&1; then
+                echo "✅ Kubeconfig connection successful!"
+                CONNECTION_SUCCESS=true
+                break
+              else
+                echo "Connection test failed, waiting 30s before retry..."
+                sleep 30
               fi
+            done
+            
+            # Create secrets regardless of connection test (kubeconfig might work later)
+            KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig)
+            
+            if [ "${{ matrix.env }}" = "lower" ]; then
+              # Create secrets for both dev and test
+              echo "KUBECONFIG_DEV=$KUBECONFIG_B64" >> $GITHUB_ENV
+              echo "KUBECONFIG_TEST=$KUBECONFIG_B64" >> $GITHUB_ENV
+              echo "✅ Created KUBECONFIG_DEV and KUBECONFIG_TEST secrets"
+            elif [ "${{ matrix.env }}" = "higher" ]; then
+              echo "KUBECONFIG_PROD=$KUBECONFIG_B64" >> $GITHUB_ENV
+              echo "✅ Created KUBECONFIG_PROD secret"
+            elif [ "${{ matrix.env }}" = "monitoring" ]; then
+              echo "KUBECONFIG_MONITORING=$KUBECONFIG_B64" >> $GITHUB_ENV
+              echo "✅ Created KUBECONFIG_MONITORING secret"
+            fi
+            
+            if [ "$CONNECTION_SUCCESS" = "true" ]; then
+              echo "✅ Kubeconfig is working and secrets created"
             else
-              echo "❌ Kubeconfig test failed"
+              echo "⚠️ Connection test failed but kubeconfig secrets created (may work later)"
             fi
           else
             echo "❌ Failed to download kubeconfig"

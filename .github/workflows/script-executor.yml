@@ -17,6 +17,7 @@ on:
           - 'setup-governance.sh'
           - 'verify-ssh-keys.sh'
           - 'install-ssm-agent.sh'
+          - 'download-kubeconfig.sh'
       environment:
         description: 'Target environment'
         required: true

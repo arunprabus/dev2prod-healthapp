@@ -45,15 +45,28 @@ echo "kubectl get nodes"
 echo ""
 echo "📁 Kubeconfig saved as: kubeconfig-$ENVIRONMENT.yaml"
 
-# Test connection
+# Test connection with retries
 echo "🧪 Testing connection..."
 export KUBECONFIG="$PWD/kubeconfig-$ENVIRONMENT.yaml"
-if kubectl get nodes --request-timeout=10s > /dev/null 2>&1; then
-    echo "✅ Connection successful!"
-    kubectl get nodes
-else
-    echo "⚠️  Connection test failed. Please check:"
+
+CONNECTION_SUCCESS=false
+for i in {1..3}; do
+    echo "Connection test attempt $i/3..."
+    if timeout 30 kubectl get nodes --request-timeout=20s > /dev/null 2>&1; then
+        echo "✅ Connection successful!"
+        kubectl get nodes
+        CONNECTION_SUCCESS=true
+        break
+    else
+        echo "Connection failed, waiting 30s before retry..."
+        sleep 30
+    fi
+done
+
+if [ "$CONNECTION_SUCCESS" = "false" ]; then
+    echo "⚠️  All connection tests failed. Please check:"
     echo "   - SSH key permissions: chmod 600 $SSH_KEY"
     echo "   - Security group allows port 6443"
     echo "   - K3s service is running on the cluster"
+    echo "   - Wait a few minutes for K3s to fully initialize"
 fi
