@@ -15,6 +15,7 @@ on:
           - 'emergency-cleanup.sh'
           - 'validate-resource-tags.sh'
           - 'setup-governance.sh'
+          - 'verify-ssh-keys.sh'
       environment:
         description: 'Target environment'
         required: true
