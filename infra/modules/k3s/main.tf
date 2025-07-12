@@ -131,11 +131,22 @@ S3_BUCKET="${var.s3_bucket}"
 apt-get update
 apt-get install -y curl docker.io mysql-client awscli
 
-# Install AWS Systems Manager Agent (proper method)
-wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
-dpkg -i amazon-ssm-agent.deb
-systemctl enable amazon-ssm-agent
-systemctl start amazon-ssm-agent
+# Install AWS Systems Manager Agent with error handling
+echo "Installing SSM Agent..."
+cd /tmp
+wget -q https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+if [ $? -eq 0 ]; then
+  dpkg -i amazon-ssm-agent.deb
+  systemctl enable amazon-ssm-agent
+  systemctl start amazon-ssm-agent
+  systemctl status amazon-ssm-agent --no-pager
+  echo "SSM Agent installation completed"
+else
+  echo "SSM Agent download failed, trying snap installation..."
+  snap install amazon-ssm-agent --classic
+  systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+  systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+fi
 
 # Install K3s with write permissions
 curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
