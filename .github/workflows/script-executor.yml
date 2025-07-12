@@ -19,6 +19,7 @@ on:
           - 'install-ssm-agent.sh'
           - 'download-kubeconfig.sh'
           - 'fix-ssm-agent.sh'
+          - 'fix-ssm-iam.sh'
       environment:
         description: 'Target environment'
         required: true
