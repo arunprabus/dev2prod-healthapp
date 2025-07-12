@@ -139,6 +139,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         
+      - name: Debug Resource Discovery
+        run: |
+          echo "🔍 Debugging resource discovery..."
+          
+          echo "=== All RDS Instances ==="
+          aws rds describe-db-instances --query 'DBInstances[].[DBInstanceIdentifier,DBInstanceStatus,Endpoint.Address,Engine]' --output table 2>/dev/null || echo "No RDS instances found"
+          
+          echo "=== All EC2 Instances ==="
+          aws ec2 describe-instances --filters "Name=instance-state-name,Values=running" --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress,PrivateIpAddress]' --output table 2>/dev/null || echo "No running instances"
+          
+          echo "=== Terraform Outputs (if available) ==="
+          if [ -f "infra/two-network-setup/terraform.tfstate" ]; then
+            echo "Local state file exists"
+          else
+            echo "No local state file"
+          fi
+          
+          # Try to get outputs from infrastructure summary
+          echo "From infrastructure deployment, we expect:"
+          echo "- K3s Cluster: 3.110.92.154"
+          echo "- Database: health-app-lower-db.ct4cmoguswkb.ap-south-1.rds.amazonaws.com:3306"
+          
       - name: Run Deployment Diagnostic
         run: |
           chmod +x scripts/diagnose-deployment.sh
