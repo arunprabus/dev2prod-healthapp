@@ -53,3 +53,9 @@ jobs:
         run: |
           echo "✅ Runner test completed successfully!"
           echo "Runner is working properly on network tier: ${{ inputs.network_tier }}"
+          
+          echo "## 🤖 GitHub Runner Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "**Network Tier:** ${{ inputs.network_tier }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Runner:** $(hostname)" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ✅ All tests passed" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
