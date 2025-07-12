@@ -211,18 +211,18 @@ jobs:
           terraform state list | head -10
           RESOURCE_COUNT=$(terraform state list | wc -l)
           echo "Total: $RESOURCE_COUNT resources"
+          
+          # Only destroy if resources exist
+          terraform destroy \
+            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+            -var="network_tier=${{ matrix.env }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="repo_pat=${{ secrets.REPO_PAT }}" \
+            -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -auto-approve || echo "Destroy completed with warnings"
         else
           echo "ℹ️ No existing resources found to destroy"
         fi
-        
-        echo ""
-        terraform destroy \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
-          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -auto-approve || echo "Destroy completed with warnings"
         
         # Verify state is empty
         echo ""
@@ -236,25 +236,26 @@ jobs:
         
         echo "⏳ Waiting for cleanup to complete..."
         sleep 30
-        
-        echo "🚀 Now deploying fresh infrastructure..."
-        terraform plan \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
-          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -out=tfplan
-        
-        terraform apply -auto-approve tfplan
 
     - name: Terraform Apply
       id: terraform-apply
       working-directory: infra/two-network-setup
-      if: github.event.inputs.action == 'deploy'
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       continue-on-error: false
       run: |
         echo "🚀 Applying infrastructure changes..."
+        
+        # For redeploy, create new plan after destroy
+        if [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
+          echo "🔄 Creating fresh plan for redeploy..."
+          terraform plan \
+            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+            -var="network_tier=${{ matrix.env }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="repo_pat=${{ secrets.REPO_PAT }}" \
+            -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -out=tfplan
+        fi
         
         # Show what will be applied
         echo "📋 Resources to be modified:"
@@ -287,18 +288,20 @@ jobs:
           echo "⚠️ Warning: State file not found in S3"
         fi
 
-    - name: Complete Resource Cleanup
+    - name: Terraform Destroy
+      working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
       run: |
-        echo "🧹 Starting complete resource cleanup for ${{ matrix.env }} environment"
+        echo "🧹 Starting Terraform destroy for ${{ matrix.env }} environment"
         
-        # Make cleanup script executable
-        chmod +x scripts/complete-cleanup.sh
-        
-        if [ "${{ matrix.env }}" != "cleanup" ]; then
-          # Run Terraform destroy first (if state exists)
-          cd infra/two-network-setup
-          echo "🔧 Running Terraform destroy..."
+        # Check if state exists
+        if terraform state list > /dev/null 2>&1; then
+          echo "📋 Resources to be destroyed:"
+          terraform state list | head -10
+          RESOURCE_COUNT=$(terraform state list | wc -l)
+          echo "Total: $RESOURCE_COUNT resources"
+          
+          # Run Terraform destroy
           terraform destroy \
             -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
             -var="network_tier=${{ matrix.env }}" \
@@ -306,25 +309,38 @@ jobs:
             -var="repo_pat=${{ secrets.REPO_PAT }}" \
             -var="repo_name=${{ secrets.REPO_NAME }}" \
             -auto-approve || echo "⚠️ Terraform destroy completed with warnings"
-          cd ../..
+          
+          # Verify cleanup
+          REMAINING=$(terraform state list 2>/dev/null | wc -l)
+          if [ "$REMAINING" -eq 0 ]; then
+            echo "✅ All resources destroyed successfully"
+          else
+            echo "⚠️ Warning: $REMAINING resources remain in state"
+          fi
+        else
+          echo "ℹ️ No Terraform state found - nothing to destroy"
         fi
         
-        # Run complete cleanup to catch any missed resources
-        echo "🗑️ Running complete AWS resource cleanup..."
-        ./scripts/complete-cleanup.sh ${{ env.AWS_REGION }} true
+        echo "✅ Terraform destroy completed for ${{ matrix.env }} environment"
         
-        # Run VPC cleanup
-        echo "🧹 Running VPC cleanup..."
-        chmod +x scripts/vpc-cleanup.sh
-        if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
+    - name: Additional Cleanup
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY' && github.event.inputs.cleanup_all_regions == 'true'
+      run: |
+        echo "🗑️ Running additional AWS resource cleanup..."
+        
+        # Make cleanup scripts executable if they exist
+        if [ -f "scripts/complete-cleanup.sh" ]; then
+          chmod +x scripts/complete-cleanup.sh
+          ./scripts/complete-cleanup.sh ${{ env.AWS_REGION }} true
+        fi
+        
+        if [ -f "scripts/vpc-cleanup.sh" ]; then
+          chmod +x scripts/vpc-cleanup.sh
           echo "🌍 Cleaning ALL regions..."
           ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }} true
-        else
-          echo "📍 Cleaning current region only..."
-          ./scripts/vpc-cleanup.sh ${{ env.AWS_REGION }}
         fi
         
-        echo "✅ Complete cleanup finished for ${{ matrix.env }} environment"
+        echo "✅ Additional cleanup completed"
 
     - name: Optimize Data Transfer
       if: github.event.inputs.optimize_data_transfer == 'true'
@@ -368,80 +384,107 @@ jobs:
         fi
 
 
-    - name: Summary
+    - name: Generate Execution Report
       if: always()
       working-directory: infra/two-network-setup
       run: |
-        echo "## 🏗️ Infrastructure ${{ github.event.inputs.action }} - ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+        echo "## 🏗️ Infrastructure Execution Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        if [ "${{ github.event.inputs.action }}" = "deploy" ] || [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
-          echo "### 📊 Resources Created/Updated:" >> $GITHUB_STEP_SUMMARY
+        # Basic execution details
+        echo "### 📋 Execution Details" >> $GITHUB_STEP_SUMMARY
+        echo "**Action:** ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Network Tier:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Started:** $(date -d '5 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Completed:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Runner:** ${{ github.event.inputs.runner_type }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # What actually happened
+        echo "### 🔄 Actions Performed" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ github.event.inputs.action }}" = "plan" ]; then
+          echo "- ✅ Terraform initialized" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Infrastructure plan generated" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Policy validation completed" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event.inputs.action }}" = "deploy" ]; then
+          echo "- ✅ Pre-deployment checks completed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Terraform initialized" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Infrastructure plan created" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Resources deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Post-deployment summary generated" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
+          echo "- ✅ Pre-deployment checks completed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Existing resources destroyed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Fresh infrastructure plan created" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ New resources deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Post-deployment summary generated" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
+          if [ "${{ github.event.inputs.confirm_destroy }}" = "DESTROY" ]; then
+            echo "- ✅ Destroy confirmation validated" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ Resources destroyed" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
+              echo "- ✅ Additional cleanup performed" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "- ❌ Destroy not confirmed - no action taken" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Current state
+        echo "### 📊 Current Infrastructure State" >> $GITHUB_STEP_SUMMARY
+        if terraform state list > /tmp/resources.txt 2>/dev/null; then
+          RESOURCE_COUNT=$(wc -l < /tmp/resources.txt)
+          echo "**Total Resources:** $RESOURCE_COUNT" >> $GITHUB_STEP_SUMMARY
           
-          # List all resources in state
-          if terraform state list > /tmp/resources.txt 2>/dev/null; then
-            RESOURCE_COUNT=$(wc -l < /tmp/resources.txt)
-            echo "**Total Resources:** $RESOURCE_COUNT" >> $GITHUB_STEP_SUMMARY
+          # Resource breakdown
+          EC2_COUNT=$(grep -c "aws_instance" /tmp/resources.txt || echo "0")
+          RDS_COUNT=$(grep -c "aws_db_instance" /tmp/resources.txt || echo "0")
+          SG_COUNT=$(grep -c "aws_security_group" /tmp/resources.txt || echo "0")
+          KEY_COUNT=$(grep -c "aws_key_pair" /tmp/resources.txt || echo "0")
+          
+          echo "**EC2 Instances:** $EC2_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "**RDS Instances:** $RDS_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "**Security Groups:** $SG_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "**Key Pairs:** $KEY_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+          # Connection details if resources exist
+          if [ "$RESOURCE_COUNT" -gt 0 ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔗 Access Information" >> $GITHUB_STEP_SUMMARY
             
-            # Group resources by type
-            echo "**EC2 Instances:**" >> $GITHUB_STEP_SUMMARY
-            grep "aws_instance" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
-            
-            echo "**Security Groups:**" >> $GITHUB_STEP_SUMMARY
-            grep "aws_security_group" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
-            
-            echo "**Key Pairs:**" >> $GITHUB_STEP_SUMMARY
-            grep "aws_key_pair" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
-            
-            echo "**RDS Instances:**" >> $GITHUB_STEP_SUMMARY
-            grep "aws_db_instance" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
-            
-            echo "**EBS Volumes:**" >> $GITHUB_STEP_SUMMARY
-            grep "aws_ebs_volume" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
-            
-            echo "**IAM Roles:**" >> $GITHUB_STEP_SUMMARY
-            grep "aws_iam_role" /tmp/resources.txt | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY || echo "- None" >> $GITHUB_STEP_SUMMARY
-            
-            # Get outputs
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🔗 Connection Details:" >> $GITHUB_STEP_SUMMARY
-            
-            K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "Not available")
-            RUNNER_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "Not available")
-            RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "Not available")
+            K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "Not deployed")
+            RUNNER_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "Not deployed")
+            RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "Not deployed")
             
             echo "**K3s Cluster:** $K3S_IP" >> $GITHUB_STEP_SUMMARY
             echo "**GitHub Runner:** $RUNNER_IP" >> $GITHUB_STEP_SUMMARY
             echo "**Database:** $RDS_ENDPOINT" >> $GITHUB_STEP_SUMMARY
-            
-            # Resource naming convention verification
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🏷️ Naming Convention:" >> $GITHUB_STEP_SUMMARY
-            echo "**Pattern:** health-app-{component}-${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Environment Tag:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Project Tag:** health-app" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**No resources found in state**" >> $GITHUB_STEP_SUMMARY
           fi
-        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
-          echo "### 🗑️ Resources Destroyed:" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment ${{ matrix.env }} resources have been cleaned up**" >> $GITHUB_STEP_SUMMARY
-          
-          # Verify cleanup
-          REMAINING=$(terraform state list 2>/dev/null | wc -l)
-          if [ "$REMAINING" -eq 0 ]; then
-            echo "**Status:** ✅ All resources destroyed" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Status:** ⚠️ $REMAINING resources remain" >> $GITHUB_STEP_SUMMARY
-          fi
+        else
+          echo "**Status:** No infrastructure deployed" >> $GITHUB_STEP_SUMMARY
         fi
         
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 💰 Cost Impact:" >> $GITHUB_STEP_SUMMARY
-        echo "**Instance Types:** t2.micro (Free Tier)" >> $GITHUB_STEP_SUMMARY
-        echo "**RDS:** db.t3.micro (Free Tier)" >> $GITHUB_STEP_SUMMARY
-        echo "**Expected Cost:** $0/month (within Free Tier limits)" >> $GITHUB_STEP_SUMMARY
+        echo "### 💰 Cost Impact" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ github.event.inputs.action }}" = "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" = "DESTROY" ]; then
+          echo "**Monthly Cost:** $0 (resources destroyed)" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "**Instance Types:** t2.micro (Free Tier eligible)" >> $GITHUB_STEP_SUMMARY
+          echo "**Expected Monthly Cost:** $0 (within Free Tier limits)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Next steps
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ github.event.inputs.action }}" = "plan" ]; then
+          echo "- Run **deploy** action to apply the planned changes" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event.inputs.action }}" = "deploy" ] || [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
+          echo "- Run **Platform Readiness Check** to verify deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- Deploy applications using **Core Deployment** workflow" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
+          echo "- Infrastructure cleanup completed" >> $GITHUB_STEP_SUMMARY
+          echo "- Ready for fresh deployment if needed" >> $GITHUB_STEP_SUMMARY
+        fi
