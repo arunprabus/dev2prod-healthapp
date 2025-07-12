@@ -9,10 +9,11 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl wget git jq
 
-# Install AWS Systems Manager Agent
-snap install amazon-ssm-agent --classic
-systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+# Install AWS Systems Manager Agent (proper method)
+wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+dpkg -i amazon-ssm-agent.deb
+systemctl enable amazon-ssm-agent
+systemctl start amazon-ssm-agent
 
 # Install kubectl for K8s operations
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"

@@ -16,6 +16,7 @@ on:
           - 'validate-resource-tags.sh'
           - 'setup-governance.sh'
           - 'verify-ssh-keys.sh'
+          - 'install-ssm-agent.sh'
       environment:
         description: 'Target environment'
         required: true
