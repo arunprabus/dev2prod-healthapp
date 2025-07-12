@@ -45,7 +45,20 @@ fi
 
 if [ -f "kubeconfig-${ENVIRONMENT}.yaml" ]; then
     echo -e "${GREEN}✅ Kubeconfig downloaded: kubeconfig-${ENVIRONMENT}.yaml${NC}"
-    echo -e "${YELLOW}🚀 To use:${NC}"
+    
+    # Test connection
+    export KUBECONFIG="$PWD/kubeconfig-${ENVIRONMENT}.yaml"
+    echo -e "${YELLOW}🧪 Testing connection...${NC}"
+    
+    if timeout 30 kubectl get nodes --request-timeout=20s 2>/dev/null; then
+        echo -e "${GREEN}✅ Connection successful!${NC}"
+        echo -e "${YELLOW}🐳 Checking pods...${NC}"
+        kubectl get pods -A --field-selector=status.phase=Running | head -10
+    else
+        echo -e "${YELLOW}⚠️ Connection test failed (cluster may still be initializing)${NC}"
+    fi
+    
+    echo -e "${YELLOW}🚀 To use locally:${NC}"
     echo "export KUBECONFIG=\$PWD/kubeconfig-${ENVIRONMENT}.yaml"
     echo "kubectl get nodes"
 else
