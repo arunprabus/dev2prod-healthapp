@@ -32,7 +32,7 @@ resource "aws_instance" "github_runner" {
   iam_instance_profile       = data.aws_iam_instance_profile.runner_profile.name
   
   user_data_replace_on_change = true
-  user_data = base64encode(templatefile("${path.module}/user_data_robust.sh", {
+  user_data = base64encode(templatefile("${path.module}/user_data_simple.sh", {
     github_token = var.repo_pat
     github_repo  = var.repo_name
     network_tier = var.network_tier

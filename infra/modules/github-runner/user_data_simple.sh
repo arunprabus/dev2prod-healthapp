@@ -1,11 +1,10 @@
 #!/bin/bash
 exec > /var/log/user-data.log 2>&1
-set -e
 
 echo "=== USER DATA STARTED ==="
 date
 
-# Update system (non-interactive)
+# Update system
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl wget git jq
@@ -24,8 +23,8 @@ REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept
 RUNNER_NAME="github-runner-${network_tier}-$(date +%s)"
 LABELS="github-runner-${network_tier}"
 
-# Configure runner
-sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended"
+# Configure runner (no validation)
+sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended --replace"
 
 # Install and start service
 ./svc.sh install ubuntu
