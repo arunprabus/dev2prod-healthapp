@@ -175,8 +175,8 @@ resource "aws_security_group" "rds" {
   }
 
   ingress {
-    from_port       = 3306
-    to_port         = 3306
+    from_port       = var.restore_from_snapshot ? 5432 : 3306
+    to_port         = var.restore_from_snapshot ? 5432 : 3306
     protocol        = "tcp"
     security_groups = [aws_security_group.k3s.id]
   }
@@ -184,11 +184,11 @@ resource "aws_security_group" "rds" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-rds-sg" })
 }
 
-# RDS MySQL
+# RDS Database (MySQL or PostgreSQL based on snapshot)
 resource "aws_db_instance" "main" {
   identifier     = "${local.name_prefix}-db"
-  engine         = "mysql"
-  engine_version = "8.0"
+  engine         = var.restore_from_snapshot ? "postgres" : "mysql"
+  engine_version = var.restore_from_snapshot ? "15.4" : "8.0"
   instance_class = "db.t3.micro"
   
   allocated_storage     = 20
