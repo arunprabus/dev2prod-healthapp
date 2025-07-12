@@ -42,6 +42,9 @@ get_k3s_info() {
             ;;
     esac
     
+    echo -e "${YELLOW}🔍 Searching for K3s instance...${NC}"
+    echo "Environment: $env → Network Tier: $NETWORK_TIER"
+    
     # Get instance information using AWS CLI - try multiple naming patterns
     INSTANCE_INFO=$(aws ec2 describe-instances \
         --filters "Name=tag:Name,Values=health-app-${NETWORK_TIER}-k3s-node-v2" \
@@ -74,11 +77,18 @@ get_k3s_info() {
         echo "  - health-app-${env}-k3s-node-v2"
         echo "  - health-app-${NETWORK_TIER}-k3s-node"
         echo ""
-        echo "Available instances:"
+        echo "🔍 Debugging - All running instances:"
         aws ec2 describe-instances \
             --filters "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress]' \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress,State.Name]' \
             --output table 2>/dev/null || echo "No running instances found"
+        
+        echo ""
+        echo "🔍 All instances with 'k3s' in name:"
+        aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*k3s*" \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress,State.Name]' \
+            --output table 2>/dev/null || echo "No k3s instances found"
         exit 1
     fi
     
