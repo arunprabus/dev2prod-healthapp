@@ -92,41 +92,57 @@ if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "kubernetes-only" ]; then
         if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "None" ]; then
             echo "Found K3s cluster at: $K3S_IP"
             
-            # Create temporary kubeconfig
-            cat > /tmp/kubeconfig << EOF
-apiVersion: v1
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://$K3S_IP:6443
-  name: default
-contexts:
-- context:
-    cluster: default
-    user: default
-  name: default
-current-context: default
-kind: Config
-preferences: {}
-users:
-- name: default
-  user:
-    token: K10dummy-token-for-testing
-EOF
-            
-            # Test connectivity
-            export KUBECONFIG=/tmp/kubeconfig
-            if timeout 10 kubectl cluster-info > /dev/null 2>&1; then
-                K8S_CONNECTION="✅ Connected"
-                K8S_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
-                K8S_DETAILS="Connected successfully"
+            # Download actual kubeconfig with proper authentication
+            if command -v ssh &> /dev/null; then
+                echo "Downloading kubeconfig with SSH key authentication..."
+                
+                # Use SSH key from environment or default location
+                SSH_KEY="/tmp/ssh_key"
+                if [ -n "$SSH_PRIVATE_KEY" ]; then
+                    echo "$SSH_PRIVATE_KEY" > $SSH_KEY
+                    chmod 600 $SSH_KEY
+                elif [ -f "/home/ubuntu/.ssh/id_rsa" ]; then
+                    SSH_KEY="/home/ubuntu/.ssh/id_rsa"
+                else
+                    echo "No SSH key available for K3s access"
+                    K8S_CONNECTION="❌ No SSH key for authentication"
+                    K8S_NODES="0"
+                    K8S_DETAILS="SSH key required for K3s access"
+                    return
+                fi
+                
+                # Download kubeconfig from K3s cluster
+                if scp -i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig 2>/dev/null; then
+                    # Update server IP in kubeconfig (K3s defaults to 127.0.0.1)
+                    sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig
+                    
+                    # Test connectivity with real authentication
+                    export KUBECONFIG=/tmp/kubeconfig
+                    if kubectl cluster-info > /dev/null 2>&1; then
+                        K8S_CONNECTION="✅ Connected (authenticated)"
+                        K8S_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+                        K8S_DETAILS="Connected with K3s server certificate"
+                    else
+                        K8S_CONNECTION="❌ Authentication failed"
+                        K8S_NODES="0"
+                        K8S_DETAILS="Kubeconfig downloaded but authentication failed"
+                    fi
+                else
+                    K8S_CONNECTION="❌ Cannot download kubeconfig"
+                    K8S_NODES="0"
+                    K8S_DETAILS="SSH connection to K3s cluster failed"
+                fi
+                
+                # Cleanup
+                rm -f /tmp/kubeconfig
+                if [ "$SSH_KEY" = "/tmp/ssh_key" ]; then
+                    rm -f $SSH_KEY
+                fi
             else
-                K8S_CONNECTION="❌ Connection failed"
+                K8S_CONNECTION="❌ SSH not available"
                 K8S_NODES="0"
-                K8S_DETAILS="Cannot connect to K3s cluster"
+                K8S_DETAILS="SSH required to download kubeconfig"
             fi
-            
-            rm -f /tmp/kubeconfig
         else
             K8S_CONNECTION="❌ K3s cluster not found"
             K8S_NODES="0"
