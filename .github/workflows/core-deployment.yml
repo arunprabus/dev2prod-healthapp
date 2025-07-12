@@ -35,7 +35,7 @@ on:
 
 jobs:
   deploy:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsgithubrunner]' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', github.event.inputs.environment == 'dev' && 'lower' || github.event.inputs.environment == 'test' && 'lower' || 'higher') || 'ubuntu-latest' }}
     
     steps:
       - name: Checkout

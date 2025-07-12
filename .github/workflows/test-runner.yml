@@ -15,7 +15,7 @@ on:
 
 jobs:
   test-runner:
-    runs-on: [self-hosted, github-runner-${{ inputs.network_tier }}]
+    runs-on: ${{ format('["self-hosted", "github-runner-{0}"]', inputs.network_tier) }}
     
     steps:
       - name: Test Runner Connectivity

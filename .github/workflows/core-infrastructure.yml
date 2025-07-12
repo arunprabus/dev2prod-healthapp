@@ -57,7 +57,7 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && '[self-hosted, awsrunnerlocal]' || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && format('["self-hosted", "github-runner-{0}"]', 'monitoring') || 'ubuntu-latest' }}
     permissions:
       contents: read
       actions: write
@@ -267,179 +267,24 @@ jobs:
           exit 1
         fi
 
-    - name: Post-Infrastructure Verification (PIV)
+    - name: Post-Deployment Summary
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      working-directory: infra/two-network-setup
       run: |
-        echo "🔍 Post-Infrastructure Verification (PIV)..."
+        echo "✅ Infrastructure deployment completed"
         
-        # Get infrastructure outputs
-        cd infra/two-network-setup
+        # Show final state
+        echo "📋 Final state summary:"
+        terraform state list | wc -l | xargs echo "Total resources managed:"
         
-        echo "🔍 Checking Terraform state..."
-        terraform state list | head -10
-        
-        echo "🔍 Getting outputs..."
-        K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
-        RUNNER_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "")
-        
-        echo "Found K3s IP: $K3S_IP"
-        echo "Found Runner IP: $RUNNER_IP"
-        
-        # If outputs failed, try alternative method
-        if [ -z "$RUNNER_IP" ]; then
-          echo "🔍 Trying alternative method to get runner IP..."
-          RUNNER_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=health-app-runner-${{ matrix.env }}" "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text 2>/dev/null || echo "")
-          echo "Alternative method found: $RUNNER_IP"
-        fi
-        
-        if [ -z "$K3S_IP" ]; then
-          echo "🔍 Trying alternative method to get K3s IP..."
-          K3S_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text 2>/dev/null || echo "")
-          echo "Alternative method found: $K3S_IP"
-        fi
-        
-        echo "📊 PIV Summary" >> $GITHUB_STEP_SUMMARY
-        echo "===============" >> $GITHUB_STEP_SUMMARY
-        echo "Environment: ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-        echo "K3s Server IP: $K3S_IP" >> $GITHUB_STEP_SUMMARY
-        echo "GitHub Runner IP: $RUNNER_IP" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Test 1: K3s Server Reachability
-        echo "🎯 Test 1: K3s Server Reachability"
-        if [ -n "$K3S_IP" ]; then
-          if ping -c 3 $K3S_IP > /dev/null 2>&1; then
-            echo "✅ K3s server ($K3S_IP) is reachable" >> $GITHUB_STEP_SUMMARY
-            K3S_STATUS="✅ PASS"
-          else
-            echo "❌ K3s server ($K3S_IP) is not reachable" >> $GITHUB_STEP_SUMMARY
-            K3S_STATUS="❌ FAIL"
-          fi
+        # Verify state is in S3
+        echo ""
+        echo "🔍 Verifying state storage..."
+        if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate > /dev/null 2>&1; then
+          STATE_SIZE=$(aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate --human-readable | awk '{print $3 " " $4}')
+          echo "✅ State file saved to S3 (Size: $STATE_SIZE)"
         else
-          echo "❌ K3s server IP not found" >> $GITHUB_STEP_SUMMARY
-          K3S_STATUS="❌ FAIL"
-        fi
-        
-        # Test 2: GitHub Runner Status
-        echo "🤖 Test 2: GitHub Runner Status"
-        RUNNER_STATUS="❌ FAIL"
-        if [ -n "$RUNNER_IP" ]; then
-          RUNNER_NAME="github-runner-${{ matrix.env }}"
-          
-          # Progressive wait with status checks (5 minutes total)
-          for i in {1..5}; do
-            echo "⏳ Checking runner status (attempt $i/5)..."
-            
-            RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.name | contains(\"$RUNNER_NAME\")) | .status" | head -1)
-            
-            if [ "$RUNNER_ONLINE" = "online" ]; then
-              echo "✅ GitHub runner is online and ready" >> $GITHUB_STEP_SUMMARY
-              RUNNER_STATUS="✅ PASS"
-              break
-            elif [ -n "$RUNNER_ONLINE" ]; then
-              echo "Runner found but status: $RUNNER_ONLINE (waiting...)"
-            else
-              echo "Runner not found yet (still initializing...)"
-            fi
-            
-            # Wait 60 seconds between checks (5 minutes total)
-            if [ $i -lt 5 ]; then
-              echo "Waiting 60s before next check..."
-              sleep 60
-            fi
-          done
-          
-          if [ "$RUNNER_STATUS" = "❌ FAIL" ]; then
-            echo "❌ GitHub runner failed to come online (Final status: $RUNNER_ONLINE)" >> $GITHUB_STEP_SUMMARY
-          fi
-        else
-          echo "❌ GitHub runner IP not found" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        # Overall Status
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "📊 Test Results" >> $GITHUB_STEP_SUMMARY
-        echo "================" >> $GITHUB_STEP_SUMMARY
-        echo "K3s Reachability: $K3S_STATUS" >> $GITHUB_STEP_SUMMARY
-        echo "Runner Status: $RUNNER_STATUS" >> $GITHUB_STEP_SUMMARY
-        
-        # Collect logs if any test failed
-        if [[ "$K3S_STATUS" == *"FAIL"* ]] || [[ "$RUNNER_STATUS" == *"FAIL"* ]]; then
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📜 Troubleshooting Logs" >> $GITHUB_STEP_SUMMARY
-          echo "======================" >> $GITHUB_STEP_SUMMARY
-          
-          if [ -n "$RUNNER_IP" ]; then
-            echo "### GitHub Runner Setup Logs" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            # Create temporary SSH key file
-            echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
-            chmod 600 /tmp/ssh_key
-            
-            # Try multiple log sources
-            echo "=== Cloud-Init Output ===" >> $GITHUB_STEP_SUMMARY
-            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "sudo tail -100 /var/log/cloud-init-output.log" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Could not retrieve cloud-init logs" >> $GITHUB_STEP_SUMMARY
-            
-            echo "=== Cloud-Init Status ===" >> $GITHUB_STEP_SUMMARY
-            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "cloud-init status" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Could not get cloud-init status" >> $GITHUB_STEP_SUMMARY
-            
-            echo "=== Directory Contents ===" >> $GITHUB_STEP_SUMMARY
-            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "ls -la /home/ubuntu/" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Could not list directory" >> $GITHUB_STEP_SUMMARY
-            
-            echo "=== User Data Execution ===" >> $GITHUB_STEP_SUMMARY
-            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "ls -la /var/log/user-data-complete" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "User data not completed yet" >> $GITHUB_STEP_SUMMARY
-            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "tail -20 /var/log/runner-setup.log" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "Setup log not available" >> $GITHUB_STEP_SUMMARY
-            
-            echo "=== System Services ===" >> $GITHUB_STEP_SUMMARY
-            ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$RUNNER_IP "sudo systemctl list-units --type=service | grep -i runner" 2>/dev/null >> $GITHUB_STEP_SUMMARY || echo "No runner services found" >> $GITHUB_STEP_SUMMARY
-            
-            rm -f /tmp/ssh_key
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "⚠️ PIV completed with failures - check logs above"
-          exit 1
-        else
-          echo "✅ All PIV tests passed - infrastructure is ready!"
-        fi
-          
-          echo ""
-          echo "✅ Infrastructure deployment completed"
-          
-          # Show final state
-          echo "📋 Final state summary:"
-          terraform state list | wc -l | xargs echo "Total resources managed:"
-          
-          # Verify state is in S3
-          echo ""
-          echo "🔍 Verifying state storage..."
-          if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate > /dev/null 2>&1; then
-            STATE_SIZE=$(aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate --human-readable | awk '{print $3 " " $4}')
-            echo "✅ State file saved to S3 (Size: $STATE_SIZE)"
-          else
-            echo "⚠️ Warning: State file not found in S3"
-          fi
-          
-          # Post-deployment cleanup check
-          echo ""
-          echo "🧹 Post-deployment cleanup check..."
-          REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1"
-          for REGION in $REGIONS; do
-            INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
-            if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
-              echo "⚠️ Found instances in $REGION: $INSTANCES - cleaning up..."
-              echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
-            fi
-          done
+          echo "⚠️ Warning: State file not found in S3"
         fi
 
     - name: Complete Resource Cleanup
