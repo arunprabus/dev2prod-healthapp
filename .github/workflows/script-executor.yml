@@ -21,6 +21,7 @@ on:
           - 'fix-ssm-agent.sh'
           - 'fix-ssm-iam.sh'
           - 'refresh-kubeconfig.sh'
+          - 'restart-k3s.sh'
       environment:
         description: 'Target environment'
         required: true
