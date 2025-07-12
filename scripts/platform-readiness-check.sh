@@ -59,8 +59,28 @@ if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "database-only" ]; then
     if [ "$DB_INSTANCE" != "none" ]; then
         echo "🗄️ Checking Database Health for $NETWORK_TIER network..."
         
-        # Get RDS endpoint
+        # List all RDS instances first
+        echo "=== All RDS Instances ==="
+        aws rds describe-db-instances --query 'DBInstances[].[DBInstanceIdentifier,DBInstanceStatus,Endpoint.Address]' --output table 2>/dev/null || echo "No RDS instances found"
+        
+        # Get RDS endpoint - try multiple possible names
+        DB_ENDPOINT="not-found"
+        
+        # Try the expected name first
         DB_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier $DB_INSTANCE --query 'DBInstances[0].Endpoint.Address' --output text 2>/dev/null || echo "not-found")
+        
+        # If not found, try alternative names
+        if [ "$DB_ENDPOINT" = "not-found" ]; then
+            echo "Trying alternative database names..."
+            for ALT_NAME in "health-app-$NETWORK_TIER-db" "healthapi-db-$NETWORK_TIER" "health-app-db"; do
+                ALT_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier $ALT_NAME --query 'DBInstances[0].Endpoint.Address' --output text 2>/dev/null || echo "")
+                if [ -n "$ALT_ENDPOINT" ] && [ "$ALT_ENDPOINT" != "None" ]; then
+                    DB_ENDPOINT=$ALT_ENDPOINT
+                    echo "Found database: $ALT_NAME -> $DB_ENDPOINT"
+                    break
+                fi
+            done
+        fi
         
         if [ "$DB_ENDPOINT" != "not-found" ]; then
             # Test connectivity
@@ -86,8 +106,21 @@ if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "kubernetes-only" ]; then
     if [ "$NETWORK_TIER" != "monitoring" ]; then
         echo "☸️ Checking Kubernetes Health for $NETWORK_TIER network..."
         
-        # Find K3s cluster
-        K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-$NETWORK_TIER-k3s-node" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "")
+        # List all EC2 instances first
+        echo "=== All Running EC2 Instances ==="
+        aws ec2 describe-instances --filters "Name=instance-state-name,Values=running" --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress]' --output table 2>/dev/null || echo "No running instances"
+        
+        # Find K3s cluster - try multiple possible names
+        K3S_IP=""
+        
+        # Try different naming patterns
+        for K3S_NAME in "health-app-$NETWORK_TIER-k3s-node" "health-app-k3s-$NETWORK_TIER" "health-app-k3s-node"; do
+            K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=$K3S_NAME" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "")
+            if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "None" ]; then
+                echo "Found K3s cluster: $K3S_NAME -> $K3S_IP"
+                break
+            fi
+        done
         
         if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "None" ]; then
             echo "Found K3s cluster at: $K3S_IP"
