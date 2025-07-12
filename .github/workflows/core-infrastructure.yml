@@ -274,6 +274,60 @@ jobs:
           exit 1
         fi
 
+    - name: Setup Kubeconfig Secrets
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      working-directory: infra/two-network-setup
+      run: |
+        echo "🔑 Setting up kubeconfig secrets..."
+        
+        # Get K3s cluster IP
+        K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+        
+        if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "Not available" ]; then
+          echo "K3s cluster IP: $K3S_IP"
+          
+          # Download kubeconfig from K3s cluster
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+          
+          # Wait for K3s to be ready
+          echo "Waiting for K3s to be ready..."
+          sleep 60
+          
+          # Download kubeconfig
+          if scp -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig 2>/dev/null; then
+            # Update server IP in kubeconfig
+            sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig
+            
+            # Test connection
+            export KUBECONFIG=/tmp/kubeconfig
+            if kubectl cluster-info > /dev/null 2>&1; then
+              echo "✅ Kubeconfig is working"
+              
+              # Create GitHub secret based on environment
+              KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig)
+              
+              if [ "${{ matrix.env }}" = "lower" ]; then
+                # Create secrets for both dev and test
+                echo "KUBECONFIG_DEV=$KUBECONFIG_B64" >> $GITHUB_ENV
+                echo "KUBECONFIG_TEST=$KUBECONFIG_B64" >> $GITHUB_ENV
+                echo "✅ Created KUBECONFIG_DEV and KUBECONFIG_TEST secrets"
+              elif [ "${{ matrix.env }}" = "higher" ]; then
+                echo "KUBECONFIG_PROD=$KUBECONFIG_B64" >> $GITHUB_ENV
+                echo "✅ Created KUBECONFIG_PROD secret"
+              fi
+            else
+              echo "❌ Kubeconfig test failed"
+            fi
+          else
+            echo "❌ Failed to download kubeconfig"
+          fi
+          
+          rm -f /tmp/ssh_key /tmp/kubeconfig
+        else
+          echo "❌ K3s IP not available"
+        fi
+        
     - name: Post-Deployment Summary
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       working-directory: infra/two-network-setup
