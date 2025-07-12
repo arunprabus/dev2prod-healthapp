@@ -348,7 +348,26 @@ terraform apply -var="restore_from_snapshot=true" -var="snapshot_identifier=heal
 2. **SSH Key Pair** generated
 3. **GitHub Secrets** configured
 
-#### **🚀 Deployment Steps**
+#### **🚀 Deployment Actions**
+
+#### **📋 Deploy vs Redeploy**
+
+| Action | Purpose | Process | Use When |
+|--------|---------|---------|----------|
+| **Deploy** | Create/update infrastructure | Plan → Apply changes only | First deployment, updates, normal changes |
+| **Redeploy** | Complete fresh deployment | Destroy → Plan → Apply everything | Broken state, fresh start, major issues |
+
+**Deploy Action:**
+- ⚡ **Fast** - Only applies changes
+- 🛡️ **Safe** - Preserves existing data
+- 🔄 **Incremental** - Updates what's different
+
+**Redeploy Action:**
+- 🔄 **Complete** - Destroys and recreates everything
+- 🆕 **Fresh** - Clean slate deployment
+- ⚠️ **Caution** - May cause data loss
+
+### **🚀 Deployment Steps**
 
 **Step 1: Setup Governance Controls**
 ```bash
@@ -968,18 +987,20 @@ Actions → Governance Check → check_type: "full" → Run workflow
 
 **Step 5: Deploy Infrastructure (Automated)**
 ```bash
-# Deploy All Networks (Recommended)
-Actions → Core Infrastructure → action: "deploy" → environment: "all"
-
-# Or deploy individually:
-# Deploy Lower Network (Dev + Test + Shared DB)
+# 🆕 First Time Deployment (Recommended)
 Actions → Core Infrastructure → action: "deploy" → environment: "lower"
 
-# Deploy Higher Network (Prod + Dedicated DB)
-Actions → Core Infrastructure → action: "deploy" → environment: "higher"
+# 🔄 If Infrastructure Exists (Update)
+Actions → Core Infrastructure → action: "deploy" → environment: "lower"
 
-# Deploy Monitoring Network
-Actions → Core Infrastructure → action: "deploy" → environment: "monitoring"
+# 🧹 If Infrastructure is Broken (Fresh Start)
+Actions → Core Infrastructure → action: "redeploy" → environment: "lower"
+
+# 🌍 Deploy All Networks
+Actions → Core Infrastructure → action: "deploy" → environment: "all"
+
+# 💾 Restore from Database Snapshot
+Actions → Core Infrastructure → action: "deploy" → environment: "lower" → restore_from_snapshot: ✅
 ```
 
 **Step 5b: Setup Data Transfer Monitoring**
@@ -1091,12 +1112,33 @@ kubectl --server=https://<EC2_PUBLIC_IP>:6443 get nodes
 - Manual run: **Actions** → **Cost Management** → Select action
 
 **Step 10: Cleanup When Done**
-1. Go to **Actions** → **Core Infrastructure**
-2. Select **action**: `destroy`
-3. Select **environment** (lower/higher/monitoring/all)
-4. Type **"DESTROY"** in confirmation field
-5. Click **Run workflow**
-6. All resources will be deleted (cost returns to $0)
+```bash
+# 🗑️ Destroy Specific Network
+Actions → Core Infrastructure → action: "destroy" → environment: "lower" → confirm_destroy: "DESTROY"
+
+# 🌍 Destroy All Networks
+Actions → Core Infrastructure → action: "destroy" → environment: "all" → confirm_destroy: "DESTROY"
+
+# 🧹 Enhanced Cleanup (All Regions)
+Actions → Core Infrastructure → action: "destroy" → cleanup_all_regions: ✅ → confirm_destroy: "DESTROY"
+```
+
+### **🔄 Troubleshooting Actions**
+
+```bash
+# 🔍 Check Platform Health
+Actions → Platform Readiness Check → network_tier: "lower" → check_type: "full"
+
+# 🔧 Diagnose Deployment Issues
+Actions → Platform Readiness Check → network_tier: "lower" → check_type: "full"
+# (Includes automatic diagnostic information)
+
+# 🚀 Deploy Applications
+Actions → Core Deployment → environment: "dev" → image: "your-app:latest"
+
+# 📊 Monitor Operations
+Actions → Core Operations → action: "monitor" → environment: "all"
+```
 
 **Alternative: Emergency Cleanup**
 ```bash
