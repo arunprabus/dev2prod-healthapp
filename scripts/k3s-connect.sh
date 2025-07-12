@@ -42,16 +42,43 @@ get_k3s_info() {
             ;;
     esac
     
-    # Get instance information using AWS CLI
+    # Get instance information using AWS CLI - try multiple naming patterns
     INSTANCE_INFO=$(aws ec2 describe-instances \
         --filters "Name=tag:Name,Values=health-app-${NETWORK_TIER}-k3s-node-v2" \
                   "Name=instance-state-name,Values=running" \
         --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress,PrivateIpAddress]' \
         --output text 2>/dev/null)
     
+    # If not found, try alternative naming pattern
+    if [ "$INSTANCE_INFO" = "None	None	None" ] || [ -z "$INSTANCE_INFO" ]; then
+        INSTANCE_INFO=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-${env}-k3s-node-v2" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress,PrivateIpAddress]' \
+            --output text 2>/dev/null)
+    fi
+    
+    # Try without v2 suffix
+    if [ "$INSTANCE_INFO" = "None	None	None" ] || [ -z "$INSTANCE_INFO" ]; then
+        INSTANCE_INFO=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-${NETWORK_TIER}-k3s-node" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].[InstanceId,PublicIpAddress,PrivateIpAddress]' \
+            --output text 2>/dev/null)
+    fi
+    
     if [ "$INSTANCE_INFO" = "None	None	None" ] || [ -z "$INSTANCE_INFO" ]; then
         echo -e "${RED}❌ No running K3s instance found for environment: $env${NC}"
-        echo "Make sure the infrastructure is deployed and running."
+        echo "Tried naming patterns:"
+        echo "  - health-app-${NETWORK_TIER}-k3s-node-v2"
+        echo "  - health-app-${env}-k3s-node-v2"
+        echo "  - health-app-${NETWORK_TIER}-k3s-node"
+        echo ""
+        echo "Available instances:"
+        aws ec2 describe-instances \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,PublicIpAddress]' \
+            --output table 2>/dev/null || echo "No running instances found"
         exit 1
     fi
     
