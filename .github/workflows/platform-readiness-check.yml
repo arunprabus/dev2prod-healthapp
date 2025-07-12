@@ -1,0 +1,239 @@
+name: Platform Readiness Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      network_tier:
+        description: 'Network tier to check'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+          - lower
+          - higher
+          - monitoring
+          - all
+      check_type:
+        description: 'Check type'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - runner-only
+          - database-only
+          - kubernetes-only
+
+jobs:
+  readiness-check:
+    runs-on: ${{ fromJSON(format('["self-hosted", "github-runner-{0}"]', inputs.network_tier == 'all' && 'monitoring' || inputs.network_tier)) }}
+    strategy:
+      matrix:
+        network: ${{ inputs.network_tier == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', inputs.network_tier)) }}
+    
+    steps:
+      - name: Initialize Check
+        run: |
+          echo "🔍 Platform Readiness Check Started"
+          echo "Network Tier: ${{ matrix.network }}"
+          echo "Check Type: ${{ inputs.check_type }}"
+          echo "Runner: $(hostname)"
+          echo "Date: $(date)"
+          
+          # Set environment variables
+          echo "NETWORK_TIER=${{ matrix.network }}" >> $GITHUB_ENV
+          echo "CHECK_TYPE=${{ inputs.check_type }}" >> $GITHUB_ENV
+          
+          # Determine environments and database for this network
+          if [ "${{ matrix.network }}" = "lower" ]; then
+            echo "ENVIRONMENTS=dev,test" >> $GITHUB_ENV
+            echo "DB_INSTANCE=health-app-db-shared" >> $GITHUB_ENV
+          elif [ "${{ matrix.network }}" = "higher" ]; then
+            echo "ENVIRONMENTS=prod" >> $GITHUB_ENV
+            echo "DB_INSTANCE=health-app-db-prod" >> $GITHUB_ENV
+          else
+            echo "ENVIRONMENTS=monitoring" >> $GITHUB_ENV
+            echo "DB_INSTANCE=none" >> $GITHUB_ENV
+          fi
+
+      - name: Runner Health Check
+        if: inputs.check_type == 'full' || inputs.check_type == 'runner-only'
+        run: |
+          echo "🤖 Checking Runner Health for $NETWORK_TIER network..."
+          
+          # System info
+          HOSTNAME=$(hostname)
+          OS_INFO=$(uname -a)
+          DISK_USAGE=$(df -h / | tail -1 | awk '{print $5}')
+          MEMORY_USAGE=$(free -h | grep Mem | awk '{print $3"/"$2}')
+          
+          # Network connectivity
+          GITHUB_API=$(curl -s https://api.github.com/zen > /dev/null && echo "✅ Connected" || echo "❌ Failed")
+          INTERNET=$(ping -c 3 8.8.8.8 > /dev/null 2>&1 && echo "✅ Connected" || echo "❌ Failed")
+          
+          # Software versions
+          DOCKER_VER=$(docker --version 2>/dev/null || echo "Not installed")
+          KUBECTL_VER=$(kubectl version --client --short 2>/dev/null || echo "Not installed")
+          
+          # Export for summary
+          echo "RUNNER_HOSTNAME=$HOSTNAME" >> $GITHUB_ENV
+          echo "RUNNER_OS=$OS_INFO" >> $GITHUB_ENV
+          echo "RUNNER_DISK=$DISK_USAGE" >> $GITHUB_ENV
+          echo "RUNNER_MEMORY=$MEMORY_USAGE" >> $GITHUB_ENV
+          echo "RUNNER_GITHUB_API=$GITHUB_API" >> $GITHUB_ENV
+          echo "RUNNER_INTERNET=$INTERNET" >> $GITHUB_ENV
+          echo "RUNNER_DOCKER=$DOCKER_VER" >> $GITHUB_ENV
+          echo "RUNNER_KUBECTL=$KUBECTL_VER" >> $GITHUB_ENV
+
+      - name: Database Health Check
+        if: (inputs.check_type == 'full' || inputs.check_type == 'database-only') && env.DB_INSTANCE != 'none'
+        run: |
+          echo "🗄️ Checking Database Health for $NETWORK_TIER network..."
+          
+          # Install PostgreSQL client if needed
+          if ! command -v psql &> /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client
+          fi
+          
+          # Get RDS endpoint
+          RDS_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier $DB_INSTANCE --query 'DBInstances[0].Endpoint.Address' --output text 2>/dev/null || echo "not-found")
+          
+          # Test connectivity
+          if [ "$RDS_ENDPOINT" != "not-found" ]; then
+            DB_CONNECTION=$(pg_isready -h $RDS_ENDPOINT -p 5432 -U postgres > /dev/null 2>&1 && echo "✅ Connected" || echo "❌ Failed")
+            
+            if [[ "$DB_CONNECTION" == *"Connected"* ]]; then
+              DB_VERSION=$(PGPASSWORD=postgres123 psql -h $RDS_ENDPOINT -U postgres -d healthapi -t -c "SELECT version();" 2>/dev/null | head -1 | xargs || echo "Access denied")
+              TABLE_COUNT=$(PGPASSWORD=postgres123 psql -h $RDS_ENDPOINT -U postgres -d healthapi -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
+            else
+              DB_VERSION="Connection failed"
+              TABLE_COUNT="0"
+            fi
+          else
+            DB_CONNECTION="❌ RDS not found"
+            DB_VERSION="N/A"
+            TABLE_COUNT="0"
+          fi
+          
+          # Export for summary
+          echo "DB_ENDPOINT=$RDS_ENDPOINT" >> $GITHUB_ENV
+          echo "DB_CONNECTION=$DB_CONNECTION" >> $GITHUB_ENV
+          echo "DB_VERSION=$DB_VERSION" >> $GITHUB_ENV
+          echo "DB_TABLE_COUNT=$TABLE_COUNT" >> $GITHUB_ENV
+
+      - name: Kubernetes Health Check
+        if: (inputs.check_type == 'full' || inputs.check_type == 'kubernetes-only') && env.NETWORK_TIER != 'monitoring'
+        run: |
+          echo "☸️ Checking Kubernetes Health for $NETWORK_TIER network..."
+          
+          # Test all environments in this network
+          K8S_RESULTS=""
+          K8S_OVERALL="✅ All Connected"
+          TOTAL_NODES=0
+          
+          IFS=',' read -ra ENVS <<< "$ENVIRONMENTS"
+          for ENV in "${ENVS[@]}"; do
+            echo "Testing K8s for environment: $ENV"
+            
+            # Setup kubeconfig for environment
+            if [ "$ENV" = "dev" ]; then
+              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig_$ENV 2>/dev/null || continue
+            elif [ "$ENV" = "test" ]; then
+              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig_$ENV 2>/dev/null || continue
+            elif [ "$ENV" = "prod" ]; then
+              echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig_$ENV 2>/dev/null || continue
+            fi
+            
+            if [ -f /tmp/kubeconfig_$ENV ]; then
+              export KUBECONFIG=/tmp/kubeconfig_$ENV
+              
+              # Test cluster connectivity
+              if kubectl cluster-info > /dev/null 2>&1; then
+                NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+                NAMESPACE=$(kubectl get namespace health-app-$ENV > /dev/null 2>&1 && echo "✅" || echo "❌")
+                K8S_RESULTS="$K8S_RESULTS$ENV: ✅ Connected ($NODES nodes, ns:$NAMESPACE); "
+                TOTAL_NODES=$((TOTAL_NODES + NODES))
+              else
+                K8S_RESULTS="$K8S_RESULTS$ENV: ❌ Failed; "
+                K8S_OVERALL="❌ Some Failed"
+              fi
+              
+              rm -f /tmp/kubeconfig_$ENV
+            else
+              K8S_RESULTS="$K8S_RESULTS$ENV: ❌ No kubeconfig; "
+              K8S_OVERALL="❌ Some Failed"
+            fi
+          done
+          
+          # Export for summary
+          echo "K8S_CONNECTION=$K8S_OVERALL" >> $GITHUB_ENV
+          echo "K8S_NODES=$TOTAL_NODES" >> $GITHUB_ENV
+          echo "K8S_DETAILS=$K8S_RESULTS" >> $GITHUB_ENV
+
+      - name: Generate Readiness Summary
+        if: always()
+        run: |
+          echo "## 🏥 Platform Readiness Check - $NETWORK_TIER Network" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Network Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Network Tier:** $NETWORK_TIER" >> $GITHUB_STEP_SUMMARY
+          echo "**Environments:** $ENVIRONMENTS" >> $GITHUB_STEP_SUMMARY
+          echo "**Check Type:** $CHECK_TYPE" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Runner section
+          if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "runner-only" ]; then
+            echo "### 🤖 GitHub Runner Status" >> $GITHUB_STEP_SUMMARY
+            echo "**Hostname:** $RUNNER_HOSTNAME" >> $GITHUB_STEP_SUMMARY
+            echo "**Disk Usage:** $RUNNER_DISK" >> $GITHUB_STEP_SUMMARY
+            echo "**Memory Usage:** $RUNNER_MEMORY" >> $GITHUB_STEP_SUMMARY
+            echo "**GitHub API:** $RUNNER_GITHUB_API" >> $GITHUB_STEP_SUMMARY
+            echo "**Internet:** $RUNNER_INTERNET" >> $GITHUB_STEP_SUMMARY
+            echo "**Docker:** $RUNNER_DOCKER" >> $GITHUB_STEP_SUMMARY
+            echo "**kubectl:** $RUNNER_KUBECTL" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Database section
+          if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "database-only" ]; then
+            if [ "$DB_INSTANCE" != "none" ]; then
+              echo "### 🗄️ Database Status" >> $GITHUB_STEP_SUMMARY
+              echo "**Instance:** $DB_INSTANCE" >> $GITHUB_STEP_SUMMARY
+              echo "**Endpoint:** $DB_ENDPOINT" >> $GITHUB_STEP_SUMMARY
+              echo "**Connection:** $DB_CONNECTION" >> $GITHUB_STEP_SUMMARY
+              echo "**Version:** $DB_VERSION" >> $GITHUB_STEP_SUMMARY
+              echo "**Tables:** $DB_TABLE_COUNT" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### 🗄️ Database Status" >> $GITHUB_STEP_SUMMARY
+              echo "**Status:** No database in monitoring network" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Kubernetes section
+          if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "kubernetes-only" ]; then
+            if [ "$NETWORK_TIER" != "monitoring" ]; then
+              echo "### ☸️ Kubernetes Status" >> $GITHUB_STEP_SUMMARY
+              echo "**Overall Connection:** $K8S_CONNECTION" >> $GITHUB_STEP_SUMMARY
+              echo "**Total Nodes:** $K8S_NODES" >> $GITHUB_STEP_SUMMARY
+              echo "**Details:** $K8S_DETAILS" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "### ☸️ Kubernetes Status" >> $GITHUB_STEP_SUMMARY
+              echo "**Status:** Monitoring network - no K8s clusters" >> $GITHUB_STEP_SUMMARY
+            fi
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Overall status
+          OVERALL_STATUS="✅ Ready"
+          if [[ "$RUNNER_GITHUB_API" == *"Failed"* ]] || [[ "$DB_CONNECTION" == *"Failed"* ]] || [[ "$K8S_CONNECTION" == *"Failed"* ]]; then
+            OVERALL_STATUS="❌ Issues Detected"
+          fi
+          
+          echo "### 🎯 Overall Network Status" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** $OVERALL_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "**Network Ready:** $([[ "$OVERALL_STATUS" == *"Ready"* ]] && echo "Yes" || echo "No")" >> $GITHUB_STEP_SUMMARY
+          
+          echo "🏥 Platform readiness check completed for $NETWORK_TIER network"

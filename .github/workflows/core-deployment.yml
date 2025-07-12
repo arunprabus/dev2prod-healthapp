@@ -33,6 +33,9 @@ on:
         - aws
         - github
 
+env:
+  AWS_REGION: ap-south-1
+
 jobs:
   deploy:
     runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', github.event.inputs.environment == 'dev' && 'lower' || github.event.inputs.environment == 'test' && 'lower' || 'higher')) || 'ubuntu-latest' }}
@@ -41,53 +44,158 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup kubectl
-        run: |
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-
       - name: Configure AWS credentials
+        if: github.event.inputs.runner_type == 'github'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup kubectl
+        if: github.event.inputs.runner_type == 'github'
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
 
-      - name: Note
-        run: |
-          echo "📝 Note: Using AWS GitHub runners for K8s access"
-          echo "Runners have direct network access to K3s clusters"
-
-      - name: Deploy application
+      - name: Setup kubeconfig
         run: |
           APP="${{ github.event.client_payload.app || github.event.inputs.app }}"
           IMAGE="${{ github.event.client_payload.image || github.event.inputs.image }}"
           ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
-          NAMESPACE="health-app-${ENV}"
           
-          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "🚀 Deploying $APP:$IMAGE to $ENV environment"
+          echo "Runner: $(hostname)"
           
-          if kubectl get deployment $APP -n $NAMESPACE >/dev/null 2>&1; then
-            kubectl set image deployment/$APP $APP=$IMAGE -n $NAMESPACE
+          # Setup kubeconfig based on environment
+          if [ "$ENV" = "dev" ] || [ "$ENV" = "test" ]; then
+            KUBECONFIG_SECRET="KUBECONFIG_$(echo $ENV | tr '[:lower:]' '[:upper:]')"
+            NETWORK_TIER="lower"
           else
-            kubectl create deployment $APP --image=$IMAGE -n $NAMESPACE
-            kubectl expose deployment $APP --port=80 --target-port=8080 -n $NAMESPACE
+            KUBECONFIG_SECRET="KUBECONFIG_PROD"
+            NETWORK_TIER="higher"
           fi
           
-          kubectl rollout status deployment/$APP -n $NAMESPACE --timeout=300s
+          echo "Using kubeconfig: $KUBECONFIG_SECRET for network: $NETWORK_TIER"
+          
+          # Set environment variables for next steps
+          echo "APP_NAME=$APP" >> $GITHUB_ENV
+          echo "IMAGE_NAME=$IMAGE" >> $GITHUB_ENV
+          echo "ENVIRONMENT=$ENV" >> $GITHUB_ENV
+          echo "NAMESPACE=health-app-$ENV" >> $GITHUB_ENV
+          echo "NETWORK_TIER=$NETWORK_TIER" >> $GITHUB_ENV
+
+      - name: Configure kubectl for environment
+        run: |
+          # Use appropriate kubeconfig secret
+          if [ "$ENVIRONMENT" = "dev" ]; then
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig
+          elif [ "$ENVIRONMENT" = "test" ]; then
+            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig
+          else
+            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
+          fi
+          
+          export KUBECONFIG=/tmp/kubeconfig
+          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          
+          # Test connection
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Create namespace
+        run: |
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace $NAMESPACE ready"
+
+      - name: Deploy application
+        run: |
+          echo "🚀 Deploying $APP_NAME with image $IMAGE_NAME"
+          
+          # Check if deployment exists
+          if kubectl get deployment $APP_NAME -n $NAMESPACE >/dev/null 2>&1; then
+            echo "📝 Updating existing deployment"
+            kubectl set image deployment/$APP_NAME $APP_NAME=$IMAGE_NAME -n $NAMESPACE
+            kubectl annotate deployment/$APP_NAME deployment.kubernetes.io/revision- -n $NAMESPACE
+          else
+            echo "🆕 Creating new deployment"
+            kubectl create deployment $APP_NAME --image=$IMAGE_NAME -n $NAMESPACE
+            
+            # Create service
+            kubectl expose deployment $APP_NAME --port=80 --target-port=8080 -n $NAMESPACE --type=ClusterIP
+            
+            # Add labels
+            kubectl label deployment $APP_NAME app=$APP_NAME version=latest -n $NAMESPACE
+          fi
+          
+          # Wait for rollout
+          echo "⏳ Waiting for deployment rollout..."
+          kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s
 
       - name: Verify deployment
         run: |
-          APP="${{ github.event.client_payload.app || github.event.inputs.app }}"
-          ENV="${{ github.event.client_payload.environment || github.event.inputs.environment }}"
-          NAMESPACE="health-app-${ENV}"
+          echo "🔍 Verifying deployment status"
           
-          kubectl get pods -l app=$APP -n $NAMESPACE
-          kubectl get services -l app=$APP -n $NAMESPACE
+          # Get deployment status
+          kubectl get deployment $APP_NAME -n $NAMESPACE -o wide
+          
+          # Get pods
+          echo "📋 Pod status:"
+          kubectl get pods -l app=$APP_NAME -n $NAMESPACE -o wide
+          
+          # Get services
+          echo "🌐 Service status:"
+          kubectl get services -l app=$APP_NAME -n $NAMESPACE
+          
+          # Check pod health
+          READY_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers | grep Running | wc -l)
+          TOTAL_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers | wc -l)
+          
+          echo "READY_PODS=$READY_PODS" >> $GITHUB_ENV
+          echo "TOTAL_PODS=$TOTAL_PODS" >> $GITHUB_ENV
+          
+          if [ "$READY_PODS" -eq "$TOTAL_PODS" ] && [ "$READY_PODS" -gt 0 ]; then
+            echo "✅ All pods are running successfully"
+            echo "DEPLOYMENT_STATUS=success" >> $GITHUB_ENV
+          else
+            echo "❌ Some pods are not ready: $READY_PODS/$TOTAL_PODS"
+            echo "DEPLOYMENT_STATUS=failed" >> $GITHUB_ENV
+            kubectl describe pods -l app=$APP_NAME -n $NAMESPACE
+            exit 1
+          fi
+
+      - name: Generate deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Application:** $APP_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** $IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "**Namespace:** $NAMESPACE" >> $GITHUB_STEP_SUMMARY
+          echo "**Network Tier:** $NETWORK_TIER" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          if [ "$DEPLOYMENT_STATUS" = "success" ]; then
+            echo "**Status:** ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+            echo "**Pods Ready:** $READY_PODS/$TOTAL_PODS" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Status:** ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "**Pods Ready:** ${READY_PODS:-0}/${TOTAL_PODS:-0}" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🔍 Resource Information" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          kubectl get all -l app=$APP_NAME -n $NAMESPACE >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Resources not available" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f /tmp/kubeconfig
+          echo "🧹 Cleanup completed"
