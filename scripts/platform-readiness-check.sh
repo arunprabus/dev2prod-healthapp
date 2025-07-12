@@ -1,0 +1,193 @@
+#!/bin/bash
+
+# Platform Readiness Check Script
+# Usage: ./platform-readiness-check.sh <network_tier> <check_type>
+
+NETWORK_TIER=${1:-lower}
+CHECK_TYPE=${2:-full}
+
+echo "🔍 Platform Readiness Check Started"
+echo "Network Tier: $NETWORK_TIER"
+echo "Check Type: $CHECK_TYPE"
+echo "Runner: $(hostname)"
+echo "Date: $(date)"
+
+# Determine environments and database for this network
+if [ "$NETWORK_TIER" = "lower" ]; then
+    ENVIRONMENTS="dev,test"
+    DB_INSTANCE="health-app-lower-db"
+elif [ "$NETWORK_TIER" = "higher" ]; then
+    ENVIRONMENTS="prod"
+    DB_INSTANCE="health-app-higher-db"
+else
+    ENVIRONMENTS="monitoring"
+    DB_INSTANCE="none"
+fi
+
+# Runner Health Check
+if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "runner-only" ]; then
+    echo "🤖 Checking Runner Health for $NETWORK_TIER network..."
+    
+    # Install missing tools
+    if ! command -v kubectl &> /dev/null; then
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+    fi
+    
+    if ! command -v psql &> /dev/null; then
+        sudo apt-get update -qq
+        sudo apt-get install -y postgresql-client
+    fi
+    
+    # System info
+    RUNNER_HOSTNAME=$(hostname)
+    RUNNER_DISK=$(df -h / | tail -1 | awk '{print $5}')
+    RUNNER_MEMORY=$(free -h | grep Mem | awk '{print $3"/"$2}')
+    
+    # Network connectivity
+    RUNNER_GITHUB_API=$(curl -s https://api.github.com/zen > /dev/null && echo "✅ Connected" || echo "❌ Failed")
+    RUNNER_INTERNET=$(ping -c 3 8.8.8.8 > /dev/null 2>&1 && echo "✅ Connected" || echo "❌ Failed")
+    
+    # Software versions
+    RUNNER_DOCKER=$(docker --version 2>/dev/null || echo "Not installed")
+    RUNNER_KUBECTL=$(kubectl version --client --short 2>/dev/null || echo "Installed")
+fi
+
+# Database Health Check
+if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "database-only" ]; then
+    if [ "$DB_INSTANCE" != "none" ]; then
+        echo "🗄️ Checking Database Health for $NETWORK_TIER network..."
+        
+        # Get RDS endpoint
+        DB_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier $DB_INSTANCE --query 'DBInstances[0].Endpoint.Address' --output text 2>/dev/null || echo "not-found")
+        
+        if [ "$DB_ENDPOINT" != "not-found" ]; then
+            # Test connectivity
+            DB_CONNECTION=$(pg_isready -h $DB_ENDPOINT -p 5432 -U postgres > /dev/null 2>&1 && echo "✅ Connected" || echo "❌ Failed")
+            
+            if [[ "$DB_CONNECTION" == *"Connected"* ]]; then
+                DB_VERSION=$(PGPASSWORD=postgres123 psql -h $DB_ENDPOINT -U postgres -d healthapi -t -c "SELECT version();" 2>/dev/null | head -1 | xargs || echo "Access denied")
+                DB_TABLE_COUNT=$(PGPASSWORD=postgres123 psql -h $DB_ENDPOINT -U postgres -d healthapi -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
+            else
+                DB_VERSION="Connection failed"
+                DB_TABLE_COUNT="0"
+            fi
+        else
+            DB_CONNECTION="❌ RDS not found"
+            DB_VERSION="N/A"
+            DB_TABLE_COUNT="0"
+        fi
+    fi
+fi
+
+# Kubernetes Health Check
+if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "kubernetes-only" ]; then
+    if [ "$NETWORK_TIER" != "monitoring" ]; then
+        echo "☸️ Checking Kubernetes Health for $NETWORK_TIER network..."
+        
+        # Find K3s cluster
+        K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-$NETWORK_TIER-k3s-node" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "")
+        
+        if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "None" ]; then
+            echo "Found K3s cluster at: $K3S_IP"
+            
+            # Create temporary kubeconfig
+            cat > /tmp/kubeconfig << EOF
+apiVersion: v1
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://$K3S_IP:6443
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    token: K10dummy-token-for-testing
+EOF
+            
+            # Test connectivity
+            export KUBECONFIG=/tmp/kubeconfig
+            if timeout 10 kubectl cluster-info > /dev/null 2>&1; then
+                K8S_CONNECTION="✅ Connected"
+                K8S_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+                K8S_DETAILS="Connected successfully"
+            else
+                K8S_CONNECTION="❌ Connection failed"
+                K8S_NODES="0"
+                K8S_DETAILS="Cannot connect to K3s cluster"
+            fi
+            
+            rm -f /tmp/kubeconfig
+        else
+            K8S_CONNECTION="❌ K3s cluster not found"
+            K8S_NODES="0"
+            K8S_DETAILS="No K3s cluster found"
+        fi
+    fi
+fi
+
+# Generate Summary
+echo ""
+echo "## 🏥 Platform Readiness Check - $NETWORK_TIER Network"
+echo ""
+echo "### 📊 Network Details"
+echo "Network Tier: $NETWORK_TIER"
+echo "Environments: $ENVIRONMENTS"
+echo "Check Type: $CHECK_TYPE"
+echo "Date: $(date)"
+echo ""
+
+if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "runner-only" ]; then
+    echo "### 🤖 GitHub Runner Status"
+    echo "Hostname: $RUNNER_HOSTNAME"
+    echo "Disk Usage: $RUNNER_DISK"
+    echo "Memory Usage: $RUNNER_MEMORY"
+    echo "GitHub API: $RUNNER_GITHUB_API"
+    echo "Internet: $RUNNER_INTERNET"
+    echo "Docker: $RUNNER_DOCKER"
+    echo "kubectl: $RUNNER_KUBECTL"
+    echo ""
+fi
+
+if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "database-only" ]; then
+    if [ "$DB_INSTANCE" != "none" ]; then
+        echo "### 🗄️ Database Status"
+        echo "Instance: $DB_INSTANCE"
+        echo "Endpoint: $DB_ENDPOINT"
+        echo "Connection: $DB_CONNECTION"
+        echo "Version: $DB_VERSION"
+        echo "Tables: $DB_TABLE_COUNT"
+        echo ""
+    fi
+fi
+
+if [ "$CHECK_TYPE" = "full" ] || [ "$CHECK_TYPE" = "kubernetes-only" ]; then
+    if [ "$NETWORK_TIER" != "monitoring" ]; then
+        echo "### ☸️ Kubernetes Status"
+        echo "Connection: $K8S_CONNECTION"
+        echo "Nodes: $K8S_NODES"
+        echo "Details: $K8S_DETAILS"
+        echo ""
+    fi
+fi
+
+# Overall status
+OVERALL_STATUS="✅ Ready"
+if [[ "$RUNNER_GITHUB_API" == *"Failed"* ]] || [[ "$DB_CONNECTION" == *"Failed"* ]] || [[ "$K8S_CONNECTION" == *"Failed"* ]]; then
+    OVERALL_STATUS="❌ Issues Detected"
+fi
+
+echo "### 🎯 Overall Network Status"
+echo "Status: $OVERALL_STATUS"
+echo "Network Ready: $([[ "$OVERALL_STATUS" == *"Ready"* ]] && echo "Yes" || echo "No")"
+
+echo "🏥 Platform readiness check completed for $NETWORK_TIER network"

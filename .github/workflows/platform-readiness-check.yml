@@ -118,75 +118,44 @@ jobs:
           echo "DB_VERSION=$DB_VERSION" >> $GITHUB_ENV
           echo "DB_TABLE_COUNT=$DB_TABLE_COUNT" >> $GITHUB_ENV
 
-      - name: Kubernetes Health Check
-        if: (inputs.check_type == 'full' || inputs.check_type == 'kubernetes-only') && env.NETWORK_TIER != 'monitoring'
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Run Platform Readiness Check
         run: |
-          echo "☸️ Checking Kubernetes Health for $NETWORK_TIER network..."
+          chmod +x scripts/platform-readiness-check.sh
+          ./scripts/platform-readiness-check.sh ${{ matrix.network }} ${{ inputs.check_type }} | tee /tmp/readiness_output.txt
           
-          # Check available secrets
-          echo "=== Available Kubeconfig Secrets ==="
-          echo "KUBECONFIG_DEV: ${{ secrets.KUBECONFIG_DEV != '' && 'Available' || 'Missing' }}"
-          echo "KUBECONFIG_TEST: ${{ secrets.KUBECONFIG_TEST != '' && 'Available' || 'Missing' }}"
-          echo "KUBECONFIG_PROD: ${{ secrets.KUBECONFIG_PROD != '' && 'Available' || 'Missing' }}"
+          # Extract values for GitHub summary
+          RUNNER_HOSTNAME=$(grep "Hostname:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          RUNNER_DISK=$(grep "Disk Usage:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          RUNNER_MEMORY=$(grep "Memory Usage:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          RUNNER_GITHUB_API=$(grep "GitHub API:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          RUNNER_INTERNET=$(grep "Internet:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          RUNNER_DOCKER=$(grep "Docker:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          RUNNER_KUBECTL=$(grep "kubectl:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
           
-          # Try to create kubeconfig from infrastructure
-          echo "=== Attempting to create kubeconfig ==="
-          K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-$NETWORK_TIER-k3s-node" "Name=instance-state-name,Values=running" --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "")
+          DB_ENDPOINT=$(grep "Endpoint:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          DB_CONNECTION=$(grep "Connection:" /tmp/readiness_output.txt | cut -d: -f2- | xargs || echo "Unknown")
+          DB_VERSION=$(grep "Version:" /tmp/readiness_output.txt | cut -d: -f2- | xargs || echo "Unknown")
+          DB_TABLE_COUNT=$(grep "Tables:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
           
-          if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "None" ]; then
-            echo "Found K3s cluster at: $K3S_IP"
-            
-            # Create temporary kubeconfig
-            cat > /tmp/kubeconfig << EOF
-            apiVersion: v1
-            clusters:
-            - cluster:
-                insecure-skip-tls-verify: true
-                server: https://$K3S_IP:6443
-              name: default
-            contexts:
-            - context:
-                cluster: default
-                user: default
-              name: default
-            current-context: default
-            kind: Config
-            preferences: {}
-            users:
-            - name: default
-              user:
-                token: K10dummy-token-for-testing
-            EOF
-            
-            # Test basic connectivity
-            export KUBECONFIG=/tmp/kubeconfig
-            if timeout 10 kubectl cluster-info > /dev/null 2>&1; then
-              K8S_CONNECTION="✅ Connected (temp config)"
-              K8S_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
-              K8S_DETAILS="Connected via temporary config"
-            else
-              K8S_CONNECTION="❌ Connection failed"
-              K8S_NODES="0"
-              K8S_DETAILS="Cannot connect to K3s cluster"
-            fi
-            
-            rm -f /tmp/kubeconfig
-          else
-            K8S_CONNECTION="❌ K3s cluster not found"
-            K8S_NODES="0"
-            K8S_DETAILS="No K3s cluster found in $NETWORK_TIER network"
-          fi
-          
-          # Check running EC2 instances that might be K3s clusters
-          echo "=== Running EC2 Instances ==="
-          aws ec2 describe-instances --filters "Name=instance-state-name,Values=running" --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],PublicIpAddress,PrivateIpAddress]' --output table 2>/dev/null || echo "No running instances"
-          
-          # Set default status
-          K8S_CONNECTION="❌ No kubeconfig secrets available"
-          K8S_NODES="0"
-          K8S_DETAILS="Infrastructure not deployed yet"
+          K8S_CONNECTION=$(grep "Connection:" /tmp/readiness_output.txt | tail -1 | cut -d: -f2- | xargs || echo "Unknown")
+          K8S_NODES=$(grep "Nodes:" /tmp/readiness_output.txt | cut -d: -f2 | xargs || echo "Unknown")
+          K8S_DETAILS=$(grep "Details:" /tmp/readiness_output.txt | cut -d: -f2- | xargs || echo "Unknown")
           
           # Export for summary
+          echo "RUNNER_HOSTNAME=$RUNNER_HOSTNAME" >> $GITHUB_ENV
+          echo "RUNNER_DISK=$RUNNER_DISK" >> $GITHUB_ENV
+          echo "RUNNER_MEMORY=$RUNNER_MEMORY" >> $GITHUB_ENV
+          echo "RUNNER_GITHUB_API=$RUNNER_GITHUB_API" >> $GITHUB_ENV
+          echo "RUNNER_INTERNET=$RUNNER_INTERNET" >> $GITHUB_ENV
+          echo "RUNNER_DOCKER=$RUNNER_DOCKER" >> $GITHUB_ENV
+          echo "RUNNER_KUBECTL=$RUNNER_KUBECTL" >> $GITHUB_ENV
+          echo "DB_ENDPOINT=$DB_ENDPOINT" >> $GITHUB_ENV
+          echo "DB_CONNECTION=$DB_CONNECTION" >> $GITHUB_ENV
+          echo "DB_VERSION=$DB_VERSION" >> $GITHUB_ENV
+          echo "DB_TABLE_COUNT=$DB_TABLE_COUNT" >> $GITHUB_ENV
           echo "K8S_CONNECTION=$K8S_CONNECTION" >> $GITHUB_ENV
           echo "K8S_NODES=$K8S_NODES" >> $GITHUB_ENV
           echo "K8S_DETAILS=$K8S_DETAILS" >> $GITHUB_ENV
