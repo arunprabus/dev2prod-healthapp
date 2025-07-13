@@ -285,20 +285,28 @@ jobs:
         echo "⏳ Waiting for K3s cluster to be ready..."
         
         # Get cluster IP from terraform output
-        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
+        echo "🔍 Getting cluster IP from terraform..."
+        terraform output
         
-        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "" ]; then
+        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || terraform output -json | jq -r '.k8s_master_public_ip.value // empty' 2>/dev/null || echo "")
+        
+        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "null" ] || [ "$CLUSTER_IP" = "" ]; then
           echo "❌ No cluster IP found in terraform output - skipping cluster setup"
-          terraform output
+          echo "Available outputs:"
+          terraform output 2>/dev/null || echo "No outputs available"
           exit 0
         fi
         
         echo "🎯 Cluster IP: $CLUSTER_IP"
         
+        # Setup SSH key file
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
         # Wait for SSH to be ready
         echo "🔍 Waiting for SSH access..."
         for i in {1..30}; do
-          if ssh -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH ready'" 2>/dev/null; then
+          if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH ready'" 2>/dev/null; then
             echo "✅ SSH connection established"
             break
           fi
@@ -308,7 +316,7 @@ jobs:
         
         # Force K3s certificate regeneration to fix TLS issues
         echo "🔧 Regenerating K3s certificates..."
-        ssh -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP << 'EOF'
+        ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP << 'EOF'
           # Stop K3s service
           sudo systemctl stop k3s || true
           
@@ -334,6 +342,9 @@ jobs:
           sudo k3s kubectl get nodes
           sudo k3s kubectl cluster-info
           EOF
+                
+        # Cleanup SSH key
+        rm -f /tmp/ssh_key
         
         echo "✅ K3s cluster setup completed"
 
@@ -344,20 +355,28 @@ jobs:
         echo "🔧 Setting up kubeconfig..."
         
         # Get cluster IP from terraform output
-        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
+        echo "🔍 Getting cluster IP from terraform..."
+        terraform output
+        
+        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || terraform output -json | jq -r '.k8s_master_public_ip.value // empty' 2>/dev/null || echo "")
         ENV_NAME="${{ matrix.env }}"
         
-        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "" ]; then
+        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "null" ] || [ "$CLUSTER_IP" = "" ]; then
           echo "❌ No cluster IP found in terraform output - skipping kubeconfig setup"
-          terraform output
+          echo "Available outputs:"
+          terraform output 2>/dev/null || echo "No outputs available"
           exit 0
         fi
         
         echo "🎯 Found cluster IP: $CLUSTER_IP"
         
+        # Setup SSH key file
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
         # Download kubeconfig from cluster
         echo "📥 Downloading kubeconfig from $CLUSTER_IP..."
-        ssh -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP \
+        ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP \
           "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig_raw.yaml
         
         # Update server IP in kubeconfig
@@ -439,7 +458,7 @@ jobs:
         echo "✅ **Ready to copy/paste into GitHub secret**" >> $GITHUB_STEP_SUMMARY
         
         # Cleanup
-        rm -f /tmp/kubeconfig*.yaml
+        rm -f /tmp/kubeconfig*.yaml /tmp/ssh_key
         
         echo "✅ Kubeconfig setup completed for $ENV_NAME"
 
