@@ -71,11 +71,30 @@ jobs:
             echo "Auto-detecting IP for $ENV environment ($NETWORK_TIER network)..."
             
             # Try to get from AWS EC2 instances
+            echo "🔍 Searching for K3s instances with tags..."
+            
+            # Try multiple tag patterns
             CLUSTER_IP=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=health-app-k3s-*-$NETWORK_TIER" \
+              --filters "Name=tag:Name,Values=*k3s*" \
                        "Name=instance-state-name,Values=running" \
               --query 'Reservations[0].Instances[0].PublicIpAddress' \
               --output text 2>/dev/null || echo "")
+            
+            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+              # Try with health-app prefix
+              CLUSTER_IP=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=health-app-*" \
+                         "Name=instance-state-name,Values=running" \
+                --query 'Reservations[0].Instances[0].PublicIpAddress' \
+                --output text 2>/dev/null || echo "")
+            fi
+            
+            # Debug: Show all running instances
+            echo "📋 All running instances:"
+            aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],PublicIpAddress,InstanceId]' \
+              --output table || echo "Could not list instances"
             
             if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
               echo "❌ Could not auto-detect cluster IP"
