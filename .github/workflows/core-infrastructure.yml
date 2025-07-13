@@ -238,6 +238,14 @@ jobs:
           echo "⚠️ $REMAINING resources still exist - may need manual cleanup"
         fi
 
+    - name: Setup Kubeconfig
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      run: |
+        chmod +x scripts/setup-kubeconfig-post-deploy.sh
+        ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}
+
     - name: Terraform Apply
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
