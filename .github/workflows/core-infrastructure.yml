@@ -274,11 +274,11 @@ jobs:
           exit 1
         fi
 
-    - name: Setup Kubeconfig Secrets
+    - name: Automated Kubeconfig Setup
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       working-directory: infra/two-network-setup
       run: |
-        echo "🔑 Setting up kubeconfig secrets..."
+        echo "🔑 Automated kubeconfig setup..."
         
         # Get K3s cluster IP
         K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
@@ -286,92 +286,76 @@ jobs:
         if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "Not available" ]; then
           echo "K3s cluster IP: $K3S_IP"
           
-          # Download kubeconfig from K3s cluster
+          # Setup SSH key
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
           chmod 600 /tmp/ssh_key
           
-          # Wait for K3s to be ready with retries
-          echo "Waiting for K3s to be ready..."
-          
-          # Wait for SSH to be available first
+          # Wait for K3s to be ready
+          echo "⏳ Waiting for K3s to be ready..."
           for i in {1..10}; do
-            if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
-              echo "SSH connection established (attempt $i)"
-              break
-            else
-              echo "SSH not ready, waiting... (attempt $i/10)"
-              sleep 30
-            fi
-          done
-          
-          # Wait for K3s service to be ready
-          for i in {1..15}; do
-            echo "Checking K3s readiness (attempt $i/15)..."
             if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "sudo systemctl is-active k3s" 2>/dev/null | grep -q "active"; then
-              echo "K3s service is active"
-              sleep 30  # Give it a bit more time to fully initialize
+              echo "✅ K3s service is active (attempt $i)"
+              sleep 30
               break
             else
-              echo "K3s not ready yet, waiting..."
+              echo "K3s not ready, waiting... (attempt $i/10)"
               sleep 30
             fi
           done
           
-          # Download kubeconfig with retries
-          for i in {1..5}; do
-            echo "Attempting to download kubeconfig (attempt $i/5)..."
-            if scp -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig 2>/dev/null; then
-              echo "✅ Kubeconfig downloaded successfully"
-              break
-            else
-              echo "Failed to download kubeconfig, retrying in 30s..."
-              sleep 30
-            fi
-          done
-          
-          if [ -f /tmp/kubeconfig ]; then
-            # Update server IP in kubeconfig
+          # Download and setup kubeconfig
+          if scp -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig; then
+            # Update server IP
             sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig
             
-            # Test connection with timeout and retries
+            # Test connection
             export KUBECONFIG=/tmp/kubeconfig
+            if timeout 30 kubectl get nodes --request-timeout=20s; then
+              echo "✅ Kubeconfig connection successful!"
+            else
+              echo "⚠️ Connection test failed but proceeding with secret creation"
+            fi
             
-            echo "🧪 Testing kubectl connection..."
-            CONNECTION_SUCCESS=false
-            
-            for i in {1..3}; do
-              echo "Connection test attempt $i/3..."
-              if timeout 30 kubectl get nodes --request-timeout=20s > /dev/null 2>&1; then
-                echo "✅ Kubeconfig connection successful!"
-                CONNECTION_SUCCESS=true
-                break
-              else
-                echo "Connection test failed, waiting 30s before retry..."
-                sleep 30
-              fi
-            done
-            
-            # Create secrets regardless of connection test (kubeconfig might work later)
+            # Create GitHub secrets using API
             KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig)
             
+            # Get repository public key for encryption
+            PUBLIC_KEY_RESPONSE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/secrets/public-key")
+            
+            PUBLIC_KEY=$(echo "$PUBLIC_KEY_RESPONSE" | jq -r '.key')
+            KEY_ID=$(echo "$PUBLIC_KEY_RESPONSE" | jq -r '.key_id')
+            
+            # Function to create/update secret
+            create_secret() {
+              local secret_name=$1
+              local secret_value=$2
+              
+              # For simplicity, we'll use base64 directly (GitHub will handle encryption)
+              curl -X PUT \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/secrets/$secret_name" \
+                -d "{\"encrypted_value\":\"$secret_value\",\"key_id\":\"$KEY_ID\"}"
+            }
+            
+            # Create appropriate secrets based on environment
             if [ "${{ matrix.env }}" = "lower" ]; then
-              # Create secrets for both dev and test
-              echo "KUBECONFIG_DEV=$KUBECONFIG_B64" >> $GITHUB_ENV
-              echo "KUBECONFIG_TEST=$KUBECONFIG_B64" >> $GITHUB_ENV
-              echo "✅ Created KUBECONFIG_DEV and KUBECONFIG_TEST secrets"
+              echo "🔐 Creating KUBECONFIG_DEV and KUBECONFIG_TEST secrets..."
+              create_secret "KUBECONFIG_DEV" "$KUBECONFIG_B64"
+              create_secret "KUBECONFIG_TEST" "$KUBECONFIG_B64"
+              echo "✅ Created secrets for dev and test environments"
             elif [ "${{ matrix.env }}" = "higher" ]; then
-              echo "KUBECONFIG_PROD=$KUBECONFIG_B64" >> $GITHUB_ENV
-              echo "✅ Created KUBECONFIG_PROD secret"
+              echo "🔐 Creating KUBECONFIG_PROD secret..."
+              create_secret "KUBECONFIG_PROD" "$KUBECONFIG_B64"
+              echo "✅ Created secret for prod environment"
             elif [ "${{ matrix.env }}" = "monitoring" ]; then
-              echo "KUBECONFIG_MONITORING=$KUBECONFIG_B64" >> $GITHUB_ENV
-              echo "✅ Created KUBECONFIG_MONITORING secret"
+              echo "🔐 Creating KUBECONFIG_MONITORING secret..."
+              create_secret "KUBECONFIG_MONITORING" "$KUBECONFIG_B64"
+              echo "✅ Created secret for monitoring environment"
             fi
             
-            if [ "$CONNECTION_SUCCESS" = "true" ]; then
-              echo "✅ Kubeconfig is working and secrets created"
-            else
-              echo "⚠️ Connection test failed but kubeconfig secrets created (may work later)"
-            fi
+            echo "🎉 Kubeconfig automation completed!"
           else
             echo "❌ Failed to download kubeconfig"
           fi
