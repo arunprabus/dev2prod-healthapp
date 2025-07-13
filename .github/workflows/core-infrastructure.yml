@@ -280,12 +280,16 @@ jobs:
 
     - name: Wait for K3s Cluster Ready
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      working-directory: infra/two-network-setup
       run: |
         echo "⏳ Waiting for K3s cluster to be ready..."
-        CLUSTER_IP="${{ env.CLUSTER_IP }}"
         
-        if [ -z "$CLUSTER_IP" ]; then
-          echo "❌ No cluster IP found - skipping cluster setup"
+        # Get cluster IP from terraform output
+        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
+        
+        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "" ]; then
+          echo "❌ No cluster IP found in terraform output - skipping cluster setup"
+          terraform output
           exit 0
         fi
         
@@ -335,15 +339,21 @@ jobs:
 
     - name: Setup Kubeconfig
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      working-directory: infra/two-network-setup
       run: |
         echo "🔧 Setting up kubeconfig..."
-        CLUSTER_IP="${{ env.CLUSTER_IP }}"
+        
+        # Get cluster IP from terraform output
+        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || echo "")
         ENV_NAME="${{ matrix.env }}"
         
-        if [ -z "$CLUSTER_IP" ]; then
-          echo "❌ No cluster IP found - skipping kubeconfig setup"
+        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "" ]; then
+          echo "❌ No cluster IP found in terraform output - skipping kubeconfig setup"
+          terraform output
           exit 0
         fi
+        
+        echo "🎯 Found cluster IP: $CLUSTER_IP"
         
         # Download kubeconfig from cluster
         echo "📥 Downloading kubeconfig from $CLUSTER_IP..."
