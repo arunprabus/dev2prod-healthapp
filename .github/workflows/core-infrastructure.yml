@@ -510,7 +510,7 @@ jobs:
           echo "🛡️ Running post-deployment validation..."
           chmod +x scripts/validate-deployment.sh
           ./scripts/validate-deployment.sh ${{ matrix.env }} || echo "⚠️ Validation completed with warnings"
-        fies destroyed successfully"
+        fi
         else
           echo "⚠️ Warning: $REMAINING resources remain in state"
         fi
