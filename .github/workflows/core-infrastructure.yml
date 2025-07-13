@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -358,16 +359,17 @@ jobs:
         echo "🧪 Testing connection to $ENV_NAME..."
         export KUBECONFIG=/tmp/kubeconfig.yaml
         
-        # Wait for API server to be ready
-        for i in {1..30}; do
-          if kubectl get nodes --request-timeout=10s 2>/dev/null; then
+        # Wait for API server to be ready with longer timeout
+        echo "⏳ Waiting for K3s API server (this may take 2-3 minutes)..."
+        for i in {1..60}; do
+          if timeout 30s kubectl get nodes --request-timeout=20s >/dev/null 2>&1; then
             echo "✅ Connection successful!"
             kubectl get nodes
             kubectl cluster-info
             break
           fi
-          echo "⏳ Attempt $i/30 - waiting for API server..."
-          sleep 10
+          echo "⏳ Attempt $i/60 - waiting for API server..."
+          sleep 15
         done
         
         # Verify connection worked
@@ -380,8 +382,8 @@ jobs:
           exit 1
         fi
         
-        # Create GitHub secret with kubeconfig
-        echo "🔐 Creating GitHub secret..."
+        # Prepare kubeconfig for manual secret creation
+        echo "🔐 Preparing kubeconfig for GitHub secret..."
         KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig.yaml)
         
         # Map environment to secret name
@@ -400,18 +402,32 @@ jobs:
             ;;
         esac
         
-        echo "📝 Creating secret: $SECRET_NAME"
+        echo ""
+        echo "📋 Manual Secret Setup Required:"
+        echo "1. Go to Settings → Secrets and variables → Actions"
+        echo "2. Click 'New repository secret'"
+        echo "3. Name: $SECRET_NAME"
+        echo "4. Value: (copy from job summary)"
+        echo ""
+        echo "✅ Kubeconfig ready for manual setup"
         
-        # Create the secret using GitHub CLI or API
-        if command -v gh >/dev/null 2>&1; then
-          echo "$KUBECONFIG_B64" | gh secret set "$SECRET_NAME" --body -
-          echo "✅ Secret $SECRET_NAME created successfully"
-        else
-          echo "⚠️ GitHub CLI not available - secret creation skipped"
-          echo "📋 Manual setup required:"
-          echo "Secret name: $SECRET_NAME"
-          echo "Secret value: $KUBECONFIG_B64"
-        fi
+        # Add to GitHub job summary
+        echo "## 🔐 Kubeconfig Setup Required" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Secret Name:** \`$SECRET_NAME\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Steps:**" >> $GITHUB_STEP_SUMMARY
+        echo "1. Go to Settings → Secrets and variables → Actions" >> $GITHUB_STEP_SUMMARY
+        echo "2. Click 'New repository secret'" >> $GITHUB_STEP_SUMMARY
+        echo "3. Name: \`$SECRET_NAME\`" >> $GITHUB_STEP_SUMMARY
+        echo "4. Value: (copy the base64 value below)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Base64 Kubeconfig Value:**" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "$KUBECONFIG_B64" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Ready to copy/paste into GitHub secret**" >> $GITHUB_STEP_SUMMARY
         
         # Cleanup
         rm -f /tmp/kubeconfig*.yaml
