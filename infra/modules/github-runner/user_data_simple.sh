@@ -20,6 +20,10 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 chmod +x kubectl
 mv kubectl /usr/local/bin/
 
+# Create kubectl config directory for ubuntu user
+mkdir -p /home/ubuntu/.kube
+chown ubuntu:ubuntu /home/ubuntu/.kube
+
 # Install Docker for container operations
 apt-get install -y docker.io
 systemctl enable docker

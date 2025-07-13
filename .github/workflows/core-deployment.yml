@@ -38,7 +38,7 @@ env:
 
 jobs:
   deploy:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', github.event.inputs.environment == 'dev' && 'lower' || github.event.inputs.environment == 'test' && 'lower' || 'higher')) || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', (github.event.inputs.environment == 'dev' || github.event.inputs.environment == 'test') && 'lower' || 'higher')) || 'ubuntu-latest' }}
     
     steps:
       - name: Checkout

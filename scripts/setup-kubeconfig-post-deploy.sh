@@ -23,15 +23,13 @@ echo "🔍 Getting cluster IP from terraform..."
 echo "Available terraform outputs:"
 terraform output 2>/dev/null || echo "No outputs available"
 
-# Try multiple ways to get the cluster IP
+# Get cluster IP from terraform output
 CLUSTER_IP=""
-if terraform output k8s_master_public_ip >/dev/null 2>&1; then
-  CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null)
-elif terraform output k8s_public_ip >/dev/null 2>&1; then
-  CLUSTER_IP=$(terraform output -raw k8s_public_ip 2>/dev/null)
+if terraform output k3s_public_ip >/dev/null 2>&1; then
+  CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null)
 else
-  # Try JSON output
-  CLUSTER_IP=$(terraform output -json 2>/dev/null | jq -r '.k8s_master_public_ip.value // .k8s_public_ip.value // empty' 2>/dev/null)
+  # Try JSON output as fallback
+  CLUSTER_IP=$(terraform output -json 2>/dev/null | jq -r '.k3s_public_ip.value // empty' 2>/dev/null)
 fi
 
 if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" || "$CLUSTER_IP" == *"error"* ]]; then

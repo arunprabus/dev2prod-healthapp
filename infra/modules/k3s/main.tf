@@ -17,6 +17,16 @@ resource "aws_security_group" "k3s" {
     to_port     = 6443
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+    description = "K3s API server access"
+  }
+  
+  # K3s API server - Allow VPC internal access (GitHub runners)
+  ingress {
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/8"]
+    description = "K3s API server access from VPC (GitHub runners)"
   }
 
   # HTTP/HTTPS for applications
