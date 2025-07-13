@@ -12,6 +12,7 @@ on:
           - 'k3s-health-check.sh'
           - 'k3s-auto-scale.sh'
           - 'setup-kubeconfig.sh'
+          - 'simple-kubeconfig-fix.sh'
           - 'create-github-secrets.sh'
           - 'emergency-cleanup.sh'
           - 'validate-resource-tags.sh'
