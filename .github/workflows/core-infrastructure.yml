@@ -329,7 +329,7 @@ jobs:
           echo "📋 Cluster status:"
           sudo k3s kubectl get nodes
           sudo k3s kubectl cluster-info
-EOF
+          EOF
         
         echo "✅ K3s cluster setup completed"
 
