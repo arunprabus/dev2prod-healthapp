@@ -12,6 +12,7 @@ on:
           - 'k3s-health-check.sh'
           - 'k3s-auto-scale.sh'
           - 'setup-kubeconfig.sh'
+          - 'create-github-secrets.sh'
           - 'emergency-cleanup.sh'
           - 'validate-resource-tags.sh'
           - 'setup-governance.sh'
@@ -91,11 +92,16 @@ jobs:
             export KUBECONFIG_MONITORING="${{ secrets.KUBECONFIG_MONITORING }}"
           fi
 
-      - name: Install kubectl
+      - name: Install kubectl and tools
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
+          
+          # Install tools for secret creation
+          sudo apt-get update
+          sudo apt-get install -y python3-pip jq
+          pip3 install PyNaCl
 
       - name: Execute Script
         run: |
@@ -123,3 +129,5 @@ jobs:
           KUBECONFIG_TEST: ${{ secrets.KUBECONFIG_TEST }}
           KUBECONFIG_PROD: ${{ secrets.KUBECONFIG_PROD }}
           KUBECONFIG_MONITORING: ${{ secrets.KUBECONFIG_MONITORING }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
