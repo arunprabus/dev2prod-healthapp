@@ -279,7 +279,7 @@ jobs:
         fi
 
     - name: Wait for K3s Cluster Ready
-      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && env.CLUSTER_IP != ''
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       run: |
         echo "⏳ Waiting for K3s cluster to be ready..."
         CLUSTER_IP="${{ env.CLUSTER_IP }}"
@@ -334,7 +334,7 @@ jobs:
         echo "✅ K3s cluster setup completed"
 
     - name: Setup Kubeconfig
-      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && env.CLUSTER_IP != ''
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       run: |
         echo "🔧 Setting up kubeconfig..."
         CLUSTER_IP="${{ env.CLUSTER_IP }}"
