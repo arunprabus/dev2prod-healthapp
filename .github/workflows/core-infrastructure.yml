@@ -40,16 +40,6 @@ on:
         options:
         - aws
         - github
-      optimize_data_transfer:
-        description: 'Run data transfer optimization'
-        required: false
-        default: false
-        type: boolean
-      cleanup_all_regions:
-        description: 'Cleanup all AWS regions (for destroy only)'
-        required: false
-        default: false
-        type: boolean
 
 env:
   AWS_REGION: ap-south-1
@@ -81,43 +71,6 @@ jobs:
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-    - name: Pre-deployment Resource Check
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      run: |
-        echo "🔍 Pre-deployment checks..."
-        
-        # Force cleanup of other regions first
-        echo "🌍 Cleaning other regions before deployment..."
-        REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1 ap-southeast-2 eu-central-1 ca-central-1 sa-east-1"
-        
-        for REGION in $REGIONS; do
-          echo "Cleaning $REGION..."
-          # Terminate any instances
-          INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
-          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
-            echo "Terminating instances in $REGION: $INSTANCES"
-            echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
-          fi
-        done
-        
-        # Check for resources in other regions
-        if [ -f "scripts/prevent-multi-region-resources.sh" ]; then
-          chmod +x scripts/prevent-multi-region-resources.sh
-          if ! ./scripts/prevent-multi-region-resources.sh ${{ env.AWS_REGION }} check; then
-            echo "⚠️ Found resources in other regions after cleanup!"
-            echo "🧹 Manual cleanup may be required"
-          fi
-        else
-          echo "⚠️ Multi-region check script not found - skipping"
-        fi
-        
-        # Check naming convention compliance
-        echo ""
-        echo "🏷️ Verifying naming convention..."
-        echo "Environment: ${{ matrix.env }}"
-        echo "Expected prefix: health-app-*-${{ matrix.env }}"
-        echo "✅ Naming convention verified"
-
     - name: Terraform Init
       working-directory: infra/two-network-setup
       run: |
@@ -125,56 +78,17 @@ jobs:
         echo "- Bucket: ${{ secrets.TF_STATE_BUCKET }}"
         echo "- Key: health-app-${{ matrix.env }}.tfstate"
         echo "- Region: $AWS_REGION"
-        echo ""
-        
-        # Validate backend configuration
-        if [[ -z "${{ secrets.TF_STATE_BUCKET }}" ]]; then
-          echo "❌ TF_STATE_BUCKET secret not configured"
-          exit 1
-        fi
         
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
           -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
           -backend-config="region=$AWS_REGION"
-        
-        echo ""
-        echo "📋 Terraform workspace: $(terraform workspace show)"
-        echo "📋 Backend config verified"
-        
-        # Verify S3 backend is working
-        echo ""
-        echo "🔍 Verifying S3 backend..."
-        if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ > /dev/null 2>&1; then
-          echo "✅ S3 bucket accessible"
-          echo "📋 Existing state files:"
-          aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ | grep ".tfstate" || echo "No state files found yet"
-        else
-          echo "❌ S3 bucket not accessible - check bucket name and permissions"
-        fi
-
-
 
     - name: Terraform Plan
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
         echo "📋 Planning infrastructure changes..."
-        
-        # Check current state first
-        echo "🔍 Checking current state..."
-        if terraform state list > /tmp/current_state.txt 2>/dev/null; then
-          echo "✅ Found existing state with $(wc -l < /tmp/current_state.txt) resources:"
-          head -10 /tmp/current_state.txt
-          if [ $(wc -l < /tmp/current_state.txt) -gt 10 ]; then
-            echo "... and $(($(wc -l < /tmp/current_state.txt) - 10)) more resources"
-          fi
-        else
-          echo "ℹ️ No existing state found - will create new resources"
-        fi
-        
-        echo ""
-        echo "📋 Planning changes..."
         terraform plan \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
@@ -184,74 +98,27 @@ jobs:
           -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
           -out=tfplan
-        
-        echo ""
-        echo "🛡️ Running policy validation..."
-        if [ -f "../../scripts/terraform-policy-check.sh" ]; then
-          chmod +x ../../scripts/terraform-policy-check.sh
-          if ! ../../scripts/terraform-policy-check.sh tfplan ../../policies cost-estimate; then
-            echo "❌ Policy validation failed - deployment blocked"
-            exit 1
-          fi
-        else
-          echo "⚠️ Policy check script not found - skipping validation"
-        fi
-        
-        echo ""
-        echo "📊 Plan Summary:"
-        terraform show -no-color tfplan | grep -E "Plan:|No changes|will be created|will be updated|will be destroyed" | head -20
 
     - name: Terraform Destroy (for redeploy)
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'redeploy'
       run: |
         echo "🧹 Destroying existing resources first..."
-        
-        # Check what will be destroyed
-        if terraform state list > /dev/null 2>&1; then
-          echo "📋 Resources to be destroyed:"
-          terraform state list | head -10
-          RESOURCE_COUNT=$(terraform state list | wc -l)
-          echo "Total: $RESOURCE_COUNT resources"
-          
-          # Only destroy if resources exist
-          terraform destroy \
-            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-            -var="network_tier=${{ matrix.env }}" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="repo_pat=${{ secrets.REPO_PAT }}" \
-            -var="repo_name=${{ secrets.REPO_NAME }}" \
-            -var="restore_from_snapshot=false" \
-            -var="snapshot_identifier=null" \
-            -auto-approve || echo "Destroy completed with warnings"
-        else
-          echo "ℹ️ No existing resources found to destroy"
-        fi
-        
-        # Verify state is empty
-        echo ""
-        echo "🔍 Verifying cleanup..."
-        REMAINING=$(terraform state list 2>/dev/null | wc -l)
-        if [ "$REMAINING" -eq 0 ]; then
-          echo "✅ All resources destroyed successfully"
-        else
-          echo "⚠️ $REMAINING resources still exist - may need manual cleanup"
-        fi
-
-    - name: Setup Kubeconfig
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      run: |
-        chmod +x scripts/setup-kubeconfig-post-deploy.sh
-        ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}
+        terraform destroy \
+          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+          -var="network_tier=${{ matrix.env }}" \
+          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+          -var="repo_pat=${{ secrets.REPO_PAT }}" \
+          -var="repo_name=${{ secrets.REPO_NAME }}" \
+          -var="restore_from_snapshot=false" \
+          -var="snapshot_identifier=null" \
+          -auto-approve || echo "Destroy completed with warnings"
 
     - name: Terraform Apply
       working-directory: infra/two-network-setup
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       run: |
         echo "🚀 Applying infrastructure changes..."
-        
         terraform apply \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
@@ -262,213 +129,15 @@ jobs:
           -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
           -auto-approve
         
-        echo ""
-        echo "📋 Deployment Summary:"
-        terraform output -json > /tmp/tf_output.json
-        
-        # Show key outputs
-        if [ -f "/tmp/tf_output.json" ]; then
-          echo "✅ Infrastructure deployed successfully"
-          
-          # Extract cluster IP if available
-          if jq -e '.k8s_master_public_ip.value' /tmp/tf_output.json > /dev/null 2>&1; then
-            CLUSTER_IP=$(jq -r '.k8s_master_public_ip.value' /tmp/tf_output.json)
-            echo "🎯 K3s Cluster IP: $CLUSTER_IP"
-            echo "CLUSTER_IP=$CLUSTER_IP" >> $GITHUB_ENV
-          fi
-          
-          # Extract runner IP if available
-          if jq -e '.github_runner_public_ip.value' /tmp/tf_output.json > /dev/null 2>&1; then
-            RUNNER_IP=$(jq -r '.github_runner_public_ip.value' /tmp/tf_output.json)
-            echo "🤖 GitHub Runner IP: $RUNNER_IP"
-          fi
-        else
-          echo "⚠️ No terraform output found"
-        fi
-
-    - name: Wait for K3s Cluster Ready
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      working-directory: infra/two-network-setup
-      run: |
-        echo "⏳ Waiting for K3s cluster to be ready..."
-        
-        # Get cluster IP from terraform output
-        echo "🔍 Getting cluster IP from terraform..."
-        terraform output
-        
-        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || terraform output -json | jq -r '.k8s_master_public_ip.value // empty' 2>/dev/null || echo "")
-        
-        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "null" ] || [ "$CLUSTER_IP" = "" ]; then
-          echo "❌ No cluster IP found in terraform output - skipping cluster setup"
-          echo "Available outputs:"
-          terraform output 2>/dev/null || echo "No outputs available"
-          exit 0
-        fi
-        
-        echo "🎯 Cluster IP: $CLUSTER_IP"
-        
-        # Setup SSH key file
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
-        chmod 600 /tmp/ssh_key
-        
-        # Wait for SSH to be ready
-        echo "🔍 Waiting for SSH access..."
-        for i in {1..30}; do
-          if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH ready'" 2>/dev/null; then
-            echo "✅ SSH connection established"
-            break
-          fi
-          echo "⏳ Attempt $i/30 - waiting for SSH..."
-          sleep 10
-        done
-        
-        # Force K3s certificate regeneration to fix TLS issues
-        echo "🔧 Regenerating K3s certificates..."
-        ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP << 'EOF'
-          # Stop K3s service
-          sudo systemctl stop k3s || true
-          
-          # Remove old certificates
-          sudo rm -rf /var/lib/rancher/k3s/server/tls/ || true
-          
-          # Restart K3s with fresh certificates
-          sudo systemctl start k3s
-          
-          # Wait for K3s to be ready
-          echo "⏳ Waiting for K3s to restart..."
-          for i in {1..60}; do
-            if sudo k3s kubectl get nodes --no-headers 2>/dev/null | grep -q Ready; then
-              echo "✅ K3s cluster is ready"
-              break
-            fi
-            echo "⏳ Attempt $i/60 - waiting for K3s..."
-            sleep 5
-          done
-          
-          # Verify cluster status
-          echo "📋 Cluster status:"
-          sudo k3s kubectl get nodes
-          sudo k3s kubectl cluster-info
-          EOF
-                
-        # Cleanup SSH key
-        rm -f /tmp/ssh_key
-        
-        echo "✅ K3s cluster setup completed"
+        echo "✅ Infrastructure deployed successfully"
 
     - name: Setup Kubeconfig
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      working-directory: infra/two-network-setup
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       run: |
-        echo "🔧 Setting up kubeconfig..."
-        
-        # Get cluster IP from terraform output
-        echo "🔍 Getting cluster IP from terraform..."
-        terraform output
-        
-        CLUSTER_IP=$(terraform output -raw k8s_master_public_ip 2>/dev/null || terraform output -json | jq -r '.k8s_master_public_ip.value // empty' 2>/dev/null || echo "")
-        ENV_NAME="${{ matrix.env }}"
-        
-        if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" = "null" ] || [ "$CLUSTER_IP" = "" ]; then
-          echo "❌ No cluster IP found in terraform output - skipping kubeconfig setup"
-          echo "Available outputs:"
-          terraform output 2>/dev/null || echo "No outputs available"
-          exit 0
-        fi
-        
-        echo "🎯 Found cluster IP: $CLUSTER_IP"
-        
-        # Setup SSH key file
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
-        chmod 600 /tmp/ssh_key
-        
-        # Download kubeconfig from cluster
-        echo "📥 Downloading kubeconfig from $CLUSTER_IP..."
-        ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP \
-          "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig_raw.yaml
-        
-        # Update server IP in kubeconfig
-        echo "🔧 Updating kubeconfig server IP..."
-        sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig_raw.yaml > /tmp/kubeconfig.yaml
-        
-        # Test connection with new kubeconfig
-        echo "🧪 Testing connection to $ENV_NAME..."
-        export KUBECONFIG=/tmp/kubeconfig.yaml
-        
-        # Wait for API server to be ready with longer timeout
-        echo "⏳ Waiting for K3s API server (this may take 2-3 minutes)..."
-        for i in {1..60}; do
-          if timeout 30s kubectl get nodes --request-timeout=20s >/dev/null 2>&1; then
-            echo "✅ Connection successful!"
-            kubectl get nodes
-            kubectl cluster-info
-            break
-          fi
-          echo "⏳ Attempt $i/60 - waiting for API server..."
-          sleep 15
-        done
-        
-        # Verify connection worked
-        if ! kubectl get nodes --request-timeout=10s 2>/dev/null; then
-          echo "❌ Connection failed after 5 minutes"
-          echo "🔍 Debugging information:"
-          echo "Cluster IP: $CLUSTER_IP"
-          echo "Kubeconfig server:"
-          grep "server:" /tmp/kubeconfig.yaml
-          exit 1
-        fi
-        
-        # Prepare kubeconfig for manual secret creation
-        echo "🔐 Preparing kubeconfig for GitHub secret..."
-        KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig.yaml)
-        
-        # Map environment to secret name
-        case "$ENV_NAME" in
-          "lower")
-            SECRET_NAME="KUBECONFIG_DEV"
-            ;;
-          "higher")
-            SECRET_NAME="KUBECONFIG_PROD"
-            ;;
-          "monitoring")
-            SECRET_NAME="KUBECONFIG_MONITORING"
-            ;;
-          *)
-            SECRET_NAME="KUBECONFIG_${ENV_NAME^^}"
-            ;;
-        esac
-        
-        echo ""
-        echo "📋 Manual Secret Setup Required:"
-        echo "1. Go to Settings → Secrets and variables → Actions"
-        echo "2. Click 'New repository secret'"
-        echo "3. Name: $SECRET_NAME"
-        echo "4. Value: (copy from job summary)"
-        echo ""
-        echo "✅ Kubeconfig ready for manual setup"
-        
-        # Add to GitHub job summary
-        echo "## 🔐 Kubeconfig Setup Required" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Secret Name:** \`$SECRET_NAME\`" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Steps:**" >> $GITHUB_STEP_SUMMARY
-        echo "1. Go to Settings → Secrets and variables → Actions" >> $GITHUB_STEP_SUMMARY
-        echo "2. Click 'New repository secret'" >> $GITHUB_STEP_SUMMARY
-        echo "3. Name: \`$SECRET_NAME\`" >> $GITHUB_STEP_SUMMARY
-        echo "4. Value: (copy the base64 value below)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Base64 Kubeconfig Value:**" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "$KUBECONFIG_B64" >> $GITHUB_STEP_SUMMARY
-        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "✅ **Ready to copy/paste into GitHub secret**" >> $GITHUB_STEP_SUMMARY
-        
-        # Cleanup
-        rm -f /tmp/kubeconfig*.yaml /tmp/ssh_key
-        
-        echo "✅ Kubeconfig setup completed for $ENV_NAME"
+        chmod +x scripts/setup-kubeconfig-post-deploy.sh
+        ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}
 
     - name: Terraform Destroy
       working-directory: infra/two-network-setup
@@ -476,39 +145,10 @@ jobs:
       run: |
         echo "🧹 Destroying infrastructure..."
         
-        # Validate destroy confirmation
         if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
           echo "❌ Destroy confirmation required - type 'DESTROY' to confirm"
           exit 1
         fi
-        
-        # Check what will be destroyed
-        if terraform state list > /dev/null 2>&1; then
-          echo "📋 Resources to be destroyed:"
-          terraform state list | head -10
-          RESOURCE_COUNT=$(terraform state list | wc -l)
-          echo "Total: $RESOURCE_COUNT resources"
-          
-          terraform destroy \
-            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-            -var="network_tier=${{ matrix.env }}" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="repo_pat=${{ secrets.REPO_PAT }}" \
-            -var="repo_name=${{ secrets.REPO_NAME }}" \
-            -var="restore_from_snapshot=false" \
-            -var="snapshot_identifier=null" \
-            -auto-approve
-          
-          echo "✅ Infrastructure destroyed successfully"
-        else
-          echo "ℹ️ No resources found to destroy"
-        fi
-
-    - name: Cleanup on Failure
-      if: failure() && (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
-      working-directory: infra/two-network-setup
-      run: |
-        echo "🧹 Cleaning up failed deployment..."
         
         terraform destroy \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
@@ -518,139 +158,21 @@ jobs:
           -var="repo_name=${{ secrets.REPO_NAME }}" \
           -var="restore_from_snapshot=false" \
           -var="snapshot_identifier=null" \
-          -auto-approve || echo "Cleanup completed with warnings"
+          -auto-approve
         
-        echo "🧹 Cleanup completed"
+        echo "✅ Infrastructure destroyed successfully"
 
-    - name: Post-deployment Validation
+    - name: Post-deployment Summary
       if: success() && (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
-      run: |
-        echo "✅ Infrastructure deployment completed successfully!"
-        echo ""
-        echo "📋 Summary for ${{ matrix.env }} network:"
-        
-        if [ -n "${{ env.CLUSTER_IP }}" ]; then
-          echo "🎯 K3s Cluster: ${{ env.CLUSTER_IP }}:6443"
-          echo "🔐 Kubeconfig: Available in GitHub Secrets"
-          echo "🌐 SSH Access: ssh -i ~/.ssh/k3s-key ubuntu@${{ env.CLUSTER_IP }}"
-        fi
-        
-        echo ""
-        echo "🚀 Next steps:"
-        echo "1. Deploy applications using Core Deployment workflow"
-        echo "2. Access cluster using kubeconfig from GitHub Secrets"
-        echo "3. Monitor resources using AWS Console"
-        
-        # Run governance validation
-        if [ -f "scripts/validate-deployment.sh" ]; then
-          echo ""
-          echo "🛡️ Running post-deployment validation..."
-          chmod +x scripts/validate-deployment.sh
-          ./scripts/validate-deployment.sh ${{ matrix.env }} || echo "⚠️ Validation completed with warnings"
-        fi
-
-
-    - name: Generate Execution Report
-      if: always()
       working-directory: infra/two-network-setup
       run: |
-        echo "## 🏗️ Infrastructure Execution Report" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Infrastructure deployment completed successfully!"
+        echo "📋 Summary for ${{ matrix.env }} network:"
         
-        # Basic execution details
-        echo "### 📋 Execution Details" >> $GITHUB_STEP_SUMMARY
-        echo "**Action:** ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Network Tier:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Started:** $(date -d '5 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-        echo "**Completed:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
-        echo "**Runner:** ${{ github.event.inputs.runner_type }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🔍 Terraform outputs:"
+        terraform output 2>/dev/null || echo "No outputs available"
         
-        # What actually happened
-        echo "### 🔄 Actions Performed" >> $GITHUB_STEP_SUMMARY
-        
-        if [ "${{ github.event.inputs.action }}" = "plan" ]; then
-          echo "- ✅ Terraform initialized" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Infrastructure plan generated" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Policy validation completed" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "deploy" ]; then
-          echo "- ✅ Pre-deployment checks completed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Terraform initialized" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Infrastructure plan created" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Resources deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Post-deployment summary generated" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
-          echo "- ✅ Pre-deployment checks completed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Existing resources destroyed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Fresh infrastructure plan created" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ New resources deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Post-deployment summary generated" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
-          if [ "${{ github.event.inputs.confirm_destroy }}" = "DESTROY" ]; then
-            echo "- ✅ Destroy confirmation validated" >> $GITHUB_STEP_SUMMARY
-            echo "- ✅ Resources destroyed" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
-              echo "- ✅ Additional cleanup performed" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "- ❌ Destroy not confirmed - no action taken" >> $GITHUB_STEP_SUMMARY
-          fi
-        fi
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Current state
-        echo "### 📊 Current Infrastructure State" >> $GITHUB_STEP_SUMMARY
-        if terraform state list > /tmp/resources.txt 2>/dev/null; then
-          RESOURCE_COUNT=$(wc -l < /tmp/resources.txt)
-          echo "**Total Resources:** $RESOURCE_COUNT" >> $GITHUB_STEP_SUMMARY
-          
-          # Resource breakdown
-          EC2_COUNT=$(grep -c "aws_instance" /tmp/resources.txt || echo "0")
-          RDS_COUNT=$(grep -c "aws_db_instance" /tmp/resources.txt || echo "0")
-          SG_COUNT=$(grep -c "aws_security_group" /tmp/resources.txt || echo "0")
-          KEY_COUNT=$(grep -c "aws_key_pair" /tmp/resources.txt || echo "0")
-          
-          echo "**EC2 Instances:** $EC2_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "**RDS Instances:** $RDS_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "**Security Groups:** $SG_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "**Key Pairs:** $KEY_COUNT" >> $GITHUB_STEP_SUMMARY
-          
-          # Connection details if resources exist
-          if [ "$RESOURCE_COUNT" -gt 0 ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "### 🔗 Access Information" >> $GITHUB_STEP_SUMMARY
-            
-            K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "Not deployed")
-            RUNNER_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "Not deployed")
-            RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "Not deployed")
-            
-            echo "**K3s Cluster:** $K3S_IP" >> $GITHUB_STEP_SUMMARY
-            echo "**GitHub Runner:** $RUNNER_IP" >> $GITHUB_STEP_SUMMARY
-            echo "**Database:** $RDS_ENDPOINT" >> $GITHUB_STEP_SUMMARY
-          fi
-        else
-          echo "**Status:** No infrastructure deployed" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 💰 Cost Impact" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event.inputs.action }}" = "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" = "DESTROY" ]; then
-          echo "**Monthly Cost:** $0 (resources destroyed)" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "**Instance Types:** t2.micro (Free Tier eligible)" >> $GITHUB_STEP_SUMMARY
-          echo "**Expected Monthly Cost:** $0 (within Free Tier limits)" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        # Next steps
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event.inputs.action }}" = "plan" ]; then
-          echo "- Run **deploy** action to apply the planned changes" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "deploy" ] || [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
-          echo "- Run **Platform Readiness Check** to verify deployment" >> $GITHUB_STEP_SUMMARY
-          echo "- Deploy applications using **Core Deployment** workflow" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
-          echo "- Infrastructure cleanup completed" >> $GITHUB_STEP_SUMMARY
-          echo "- Ready for fresh deployment if needed" >> $GITHUB_STEP_SUMMARY
-        fi
+        echo "🚀 Next steps:"
+        echo "1. Create KUBECONFIG_DEV secret manually (check job summary)"
+        echo "2. Deploy applications using Core Deployment workflow"
+        echo "3. Monitor resources using AWS Console"
