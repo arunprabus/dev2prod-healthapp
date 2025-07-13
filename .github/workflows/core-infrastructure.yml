@@ -61,7 +61,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
