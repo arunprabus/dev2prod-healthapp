@@ -131,13 +131,7 @@ jobs:
         
         echo "✅ Infrastructure deployed successfully"
 
-    - name: Setup Kubeconfig
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      run: |
-        chmod +x scripts/setup-kubeconfig-post-deploy.sh
-        ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}
+
 
     - name: Terraform Destroy
       working-directory: infra/two-network-setup
@@ -172,7 +166,120 @@ jobs:
         echo "🔍 Terraform outputs:"
         terraform output 2>/dev/null || echo "No outputs available"
         
-        echo "🚀 Next steps:"
-        echo "1. Create KUBECONFIG_DEV secret manually (check job summary)"
-        echo "2. Deploy applications using Core Deployment workflow"
-        echo "3. Monitor resources using AWS Console"
+        echo "🚀 Triggering kubeconfig setup job..."
+
+  validate-runner:
+    needs: infrastructure
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    runs-on: ubuntu-latest
+    outputs:
+      runner-ready: ${{ steps.check-runner.outputs.ready }}
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Check Runner Status
+      id: check-runner
+      run: |
+        echo "🔍 Checking if GitHub runner is ready..."
+        
+        # Get runner instance based on environment
+        RUNNER_NAME="health-app-runner-${{ matrix.env }}"
+        echo "Looking for runner: $RUNNER_NAME"
+        
+        # Check if runner instance is running
+        RUNNER_STATUS=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=$RUNNER_NAME" \
+                   "Name=instance-state-name,Values=running" \
+          --query 'Reservations[0].Instances[0].State.Name' \
+          --output text 2>/dev/null || echo "None")
+        
+        if [[ "$RUNNER_STATUS" == "running" ]]; then
+          echo "✅ Runner instance is running"
+          
+          # Wait for runner to be online (max 5 minutes)
+          echo "⏳ Waiting for runner to be online..."
+          for i in {1..30}; do
+            # Check if runner is online via GitHub API
+            RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runners" \
+              | jq -r '.runners[] | select(.name | contains("github-runner-${{ matrix.env }}")) | .status' 2>/dev/null || echo "")
+            
+            if [[ "$RUNNER_ONLINE" == "online" ]]; then
+              echo "✅ Runner is online and ready"
+              echo "ready=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            
+            echo "⏳ Attempt $i/30 - Runner not online yet..."
+            sleep 10
+          done
+          
+          echo "❌ Runner instance running but not online after 5 minutes"
+          echo "ready=false" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Runner instance not running: $RUNNER_STATUS"
+          echo "ready=false" >> $GITHUB_OUTPUT
+        fi
+
+  setup-kubeconfig:
+    needs: [infrastructure, validate-runner]
+    if: needs.validate-runner.outputs.runner-ready == 'true'
+    runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || fromJSON('["self-hosted", "github-runner-lower"]') }}
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init (for outputs)
+      working-directory: infra/two-network-setup
+      run: |
+        terraform init \
+          -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+          -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
+          -backend-config="region=$AWS_REGION"
+
+    - name: Install kubectl and GitHub CLI
+      run: |
+        # Install kubectl
+        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        sudo mv kubectl /usr/local/bin/
+        
+        # Install GitHub CLI
+        curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+        sudo apt update
+        sudo apt install gh -y
+
+    - name: Setup Kubeconfig
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      run: |
+        chmod +x scripts/setup-kubeconfig-post-deploy.sh
+        ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}

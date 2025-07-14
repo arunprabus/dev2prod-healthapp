@@ -1,132 +1,91 @@
 #!/bin/bash
 # Setup kubeconfig after infrastructure deployment
-# Usage: ./setup-kubeconfig-post-deploy.sh <network_tier> <ssh_private_key_file>
+# Usage: ./setup-kubeconfig-post-deploy.sh <network_tier>
 
-set -euo pipefail
+set -e
 
-NETWORK_TIER="${1:-}"
-SSH_KEY_FILE="${2:-}"
+NETWORK_TIER="${1:-lower}"
 
-if [[ -z "$NETWORK_TIER" ]]; then
-  echo "Usage: $0 <network_tier> [ssh_private_key_file]"
-  echo "Example: $0 lower ~/.ssh/k3s-key"
-  exit 1
-fi
-
-echo "🔧 Setting up kubeconfig for $NETWORK_TIER network..."
+echo "🔧 Setting up kubeconfig for $NETWORK_TIER network"
+echo "=================================================="
 
 # Get cluster IP from terraform output
 cd infra/two-network-setup
-echo "🔍 Getting cluster IP from terraform..."
+CLUSTER_IP=$(terraform output -raw k3s_master_public_ip 2>/dev/null || echo "")
 
-# Show all outputs for debugging
-echo "Available terraform outputs:"
-terraform output 2>/dev/null || echo "No outputs available"
-
-# Get cluster IP from terraform output
-CLUSTER_IP=""
-if terraform output k3s_public_ip >/dev/null 2>&1; then
-  CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null)
-else
-  # Try JSON output as fallback
-  CLUSTER_IP=$(terraform output -json 2>/dev/null | jq -r '.k3s_public_ip.value // empty' 2>/dev/null)
-fi
-
-if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" || "$CLUSTER_IP" == *"error"* ]]; then
-  echo "❌ No valid cluster IP found in terraform output"
-  echo "Cluster IP value: '$CLUSTER_IP'"
+if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
+  echo "❌ Could not get cluster IP from terraform output"
   exit 1
 fi
 
-echo "🎯 Found cluster IP: $CLUSTER_IP"
+echo "🎯 Cluster IP: $CLUSTER_IP"
 
 # Setup SSH key
-if [[ -n "$SSH_KEY_FILE" && -f "$SSH_KEY_FILE" ]]; then
-  SSH_KEY="$SSH_KEY_FILE"
-elif [[ -n "${SSH_PRIVATE_KEY:-}" ]]; then
-  # Use environment variable (from GitHub secrets)
-  echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
-  chmod 600 /tmp/ssh_key
-  SSH_KEY="/tmp/ssh_key"
-else
-  echo "❌ No SSH key provided. Use:"
-  echo "  - Pass SSH key file as second argument"
-  echo "  - Set SSH_PRIVATE_KEY environment variable"
-  exit 1
-fi
+echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+chmod 600 /tmp/ssh_key
 
-# Wait for SSH access
-echo "🔍 Waiting for SSH access..."
-for i in {1..10}; do
-  if ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH ready'" 2>/dev/null; then
-    echo "✅ SSH connection established"
+# Wait for instance to be ready
+echo "⏳ Waiting for K3s cluster to be ready..."
+for i in {1..30}; do
+  if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+    echo "✅ K3s cluster is ready"
     break
   fi
-  echo "⏳ Attempt $i/10 - waiting for SSH..."
+  echo "⏳ Attempt $i/30 - waiting for K3s..."
   sleep 10
 done
 
 # Download kubeconfig
 echo "📥 Downloading kubeconfig from cluster..."
-ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP \
-  "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig_raw.yaml
-
-# Update server IP
-echo "🔧 Updating kubeconfig server IP..."
-sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig_raw.yaml > /tmp/kubeconfig.yaml
-
-# Test connection
-echo "🧪 Testing connection..."
-export KUBECONFIG=/tmp/kubeconfig.yaml
-
-if timeout 30s kubectl get nodes --request-timeout=20s >/dev/null 2>&1; then
-  echo "✅ Connection successful!"
-  kubectl get nodes
+if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config; then
+  echo "✅ Kubeconfig downloaded"
 else
-  echo "⚠️ Connection test failed but kubeconfig created"
+  echo "❌ Failed to download kubeconfig"
+  exit 1
 fi
 
-# Generate base64 for GitHub secret
-KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig.yaml)
+# Fix server IP
+echo "🔄 Fixing server IP in kubeconfig..."
+sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
 
-# Map environment to secret name
+# Upload to S3
+echo "☁️ Uploading kubeconfig to S3..."
+S3_KEY="kubeconfig-$NETWORK_TIER.yaml"
+aws s3 cp /tmp/fixed-config s3://$TF_STATE_BUCKET/$S3_KEY
+echo "✅ Kubeconfig uploaded to s3://$TF_STATE_BUCKET/$S3_KEY"
+
+# Test kubeconfig
+echo "🧪 Testing kubeconfig..."
+export KUBECONFIG=/tmp/fixed-config
+if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
+  echo "✅ Kubeconfig test successful"
+else
+  echo "⚠️ Kubeconfig test failed, but uploaded to S3"
+fi
+
+# Create GitHub secret (base64 encoded)
+echo "🔐 Creating GitHub secret..."
+SECRET_NAME=""
 case "$NETWORK_TIER" in
-  "lower")
-    SECRET_NAME="KUBECONFIG_DEV"
-    ;;
-  "higher")
-    SECRET_NAME="KUBECONFIG_PROD"
-    ;;
-  "monitoring")
-    SECRET_NAME="KUBECONFIG_MONITORING"
-    ;;
-  *)
-    SECRET_NAME="KUBECONFIG_${NETWORK_TIER^^}"
-    ;;
+  "lower") SECRET_NAME="KUBECONFIG_DEV" ;;
+  "higher") SECRET_NAME="KUBECONFIG_PROD" ;;
+  "monitoring") SECRET_NAME="KUBECONFIG_MONITORING" ;;
 esac
 
-echo ""
-echo "🔐 Kubeconfig Setup Complete!"
-echo "📋 Manual Secret Setup Required:"
-echo "1. Go to Settings → Secrets and variables → Actions"
-echo "2. Click 'New repository secret'"
-echo "3. Name: $SECRET_NAME"
-echo "4. Value: (copy from below)"
-echo ""
-echo "--- COPY THIS VALUE ---"
-echo "$KUBECONFIG_B64"
-echo "--- END VALUE ---"
-echo ""
-
-# Save to file for convenience
-echo "$KUBECONFIG_B64" > "/tmp/kubeconfig_${NETWORK_TIER}_b64.txt"
-cp /tmp/kubeconfig.yaml "/tmp/kubeconfig_${NETWORK_TIER}.yaml"
-
-echo "📁 Files saved:"
-echo "  - Kubeconfig: /tmp/kubeconfig_${NETWORK_TIER}.yaml"
-echo "  - Base64: /tmp/kubeconfig_${NETWORK_TIER}_b64.txt"
+if [[ -n "$SECRET_NAME" ]]; then
+  KUBECONFIG_B64=$(base64 -w 0 /tmp/fixed-config)
+  
+  # Use GitHub CLI to create secret
+  echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+  echo "✅ GitHub secret $SECRET_NAME created"
+else
+  echo "⚠️ Unknown network tier: $NETWORK_TIER"
+fi
 
 # Cleanup
-rm -f /tmp/ssh_key /tmp/kubeconfig_raw.yaml /tmp/kubeconfig.yaml
+rm -f /tmp/ssh_key /tmp/k3s-config /tmp/fixed-config
 
-echo "✅ Kubeconfig setup completed for $NETWORK_TIER"
+echo ""
+echo "🎉 Kubeconfig setup completed!"
+echo "📍 S3 location: s3://$TF_STATE_BUCKET/$S3_KEY"
+echo "🔐 GitHub secret: $SECRET_NAME"
