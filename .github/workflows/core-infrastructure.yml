@@ -348,12 +348,80 @@ jobs:
         sudo apt update
         sudo apt install gh -y
 
-    - name: Setup Kubeconfig
+    - name: Setup Kubeconfig and Upload to S3
       env:
         SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
       run: |
-        chmod +x scripts/setup-kubeconfig-post-deploy.sh
-        ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}
+        echo "🔧 Setting up kubeconfig for ${{ matrix.env }} network"
+        
+        # Get cluster IP from terraform output
+        cd infra/two-network-setup
+        CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+        
+        if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
+          echo "❌ Could not get cluster IP from terraform output"
+          exit 1
+        fi
+        
+        echo "🎯 Cluster IP: $CLUSTER_IP"
+        cd ../..
+        
+        # Setup SSH key
+        echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
+        # Wait for K3s to be ready
+        echo "⏳ Waiting for K3s cluster to be ready..."
+        for i in {1..30}; do
+          if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+            echo "✅ K3s cluster is ready"
+            break
+          fi
+          echo "⏳ Attempt $i/30 - waiting for K3s..."
+          sleep 10
+        done
+        
+        # Download and fix kubeconfig
+        echo "📥 Downloading kubeconfig from cluster..."
+        ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
+        sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
+        
+        # Upload to S3
+        echo "☁️ Uploading kubeconfig to S3..."
+        S3_KEY="kubeconfig-${{ matrix.env }}.yaml"
+        aws s3 cp /tmp/fixed-config s3://$TF_STATE_BUCKET/$S3_KEY
+        echo "✅ Kubeconfig uploaded to s3://$TF_STATE_BUCKET/$S3_KEY"
+        
+        # Test kubeconfig
+        echo "🧪 Testing kubeconfig..."
+        export KUBECONFIG=/tmp/fixed-config
+        if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
+          echo "✅ Kubeconfig test successful"
+        else
+          echo "⚠️ Kubeconfig test failed, but uploaded to S3"
+        fi
+        
+        # Create GitHub secret
+        echo "🔐 Creating GitHub secret..."
+        SECRET_NAME=""
+        case "${{ matrix.env }}" in
+          "lower") SECRET_NAME="KUBECONFIG_DEV" ;;
+          "higher") SECRET_NAME="KUBECONFIG_PROD" ;;
+          "monitoring") SECRET_NAME="KUBECONFIG_MONITORING" ;;
+        esac
+        
+        if [[ -n "$SECRET_NAME" ]]; then
+          KUBECONFIG_B64=$(base64 -w 0 /tmp/fixed-config)
+          echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+          echo "✅ GitHub secret $SECRET_NAME created"
+        fi
+        
+        # Cleanup
+        rm -f /tmp/ssh_key /tmp/k3s-config /tmp/fixed-config
+        
+        echo "🎉 Kubeconfig setup completed!"
+        echo "📍 S3 location: s3://$TF_STATE_BUCKET/$S3_KEY"
+        echo "🔐 GitHub secret: $SECRET_NAME"
 

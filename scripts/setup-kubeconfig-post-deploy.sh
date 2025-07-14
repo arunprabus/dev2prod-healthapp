@@ -11,7 +11,7 @@ echo "=================================================="
 
 # Get cluster IP from terraform output
 cd infra/two-network-setup
-CLUSTER_IP=$(terraform output -raw k3s_master_public_ip 2>/dev/null || echo "")
+CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
 
 if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
   echo "❌ Could not get cluster IP from terraform output"
