@@ -198,18 +198,33 @@ jobs:
         
         echo "✅ Managed instances: $MANAGED_INSTANCES"
         
-        # Find orphaned instances (same name pattern but not managed by current terraform)
-        ORPHANED_K3S=$(aws ec2 describe-instances \
+        # Find ALL instances with same name pattern and keep only the newest
+        echo "🔍 Finding duplicate instances..."
+        
+        # Get all K3s instances (sorted by launch time, newest first)
+        ALL_K3S=$(aws ec2 describe-instances \
           --filters "Name=tag:Name,Values=*k3s*" \
                    "Name=instance-state-name,Values=running" \
-          --query "Reservations[].Instances[?!contains('$MANAGED_INSTANCES', InstanceId)].InstanceId" \
-          --output text)
+          --query 'Reservations[].Instances[].[InstanceId,LaunchTime]' \
+          --output text | sort -k2 -r)
         
-        ORPHANED_RUNNERS=$(aws ec2 describe-instances \
+        # Get all runner instances (sorted by launch time, newest first)
+        ALL_RUNNERS=$(aws ec2 describe-instances \
           --filters "Name=tag:Name,Values=*runner*" \
                    "Name=instance-state-name,Values=running" \
-          --query "Reservations[].Instances[?!contains('$MANAGED_INSTANCES', InstanceId)].InstanceId" \
-          --output text)
+          --query 'Reservations[].Instances[].[InstanceId,LaunchTime]' \
+          --output text | sort -k2 -r)
+        
+        # Keep only the newest K3s instance
+        ORPHANED_K3S=$(echo "$ALL_K3S" | tail -n +2 | cut -f1)
+        
+        # Keep only the newest runner instance
+        ORPHANED_RUNNERS=$(echo "$ALL_RUNNERS" | tail -n +2 | cut -f1)
+        
+        echo "All K3s instances: $ALL_K3S"
+        echo "All runner instances: $ALL_RUNNERS"
+        echo "K3s to terminate: $ORPHANED_K3S"
+        echo "Runners to terminate: $ORPHANED_RUNNERS"
         
         # Terminate orphaned instances
         if [[ -n "$ORPHANED_K3S" ]]; then
@@ -267,7 +282,9 @@ jobs:
             # Check if runner is online via GitHub API
             RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/${{ github.repository }}/actions/runners" \
-              | jq -r '.runners[] | select(.name | contains("github-runner-${{ matrix.env }}")) | .status' 2>/dev/null || echo "")
+              | jq -r '.runners[] | select(.name | startswith("github-runner-${{ matrix.env }}")) | .status' 2>/dev/null || echo "")
+            
+            echo "🔍 Found runner status: $RUNNER_ONLINE"
             
             if [[ "$RUNNER_ONLINE" == "online" ]]; then
               echo "✅ Runner is online and ready"
