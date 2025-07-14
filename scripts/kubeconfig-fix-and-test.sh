@@ -26,8 +26,16 @@ fi
 echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
 chmod 600 /tmp/ssh_key
 
-# Download kubeconfig using sudo
-ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
+# Download kubeconfig using sudo with timeout
+echo "Connecting to $CLUSTER_IP..."
+if timeout 30 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config 2>/dev/null; then
+  echo "✅ Kubeconfig downloaded successfully"
+else
+  echo "❌ Failed to download kubeconfig"
+  echo "🔍 Checking if K3s is running..."
+  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo systemctl status k3s --no-pager" || echo "K3s service check failed"
+  exit 1
+fi
 sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
 
 mkdir -p ~/.kube
