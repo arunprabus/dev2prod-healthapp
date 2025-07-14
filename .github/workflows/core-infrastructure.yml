@@ -166,7 +166,7 @@ jobs:
         echo "🔍 Terraform outputs:"
         terraform output 2>/dev/null || echo "No outputs available"
         
-        echo "🚀 Triggering kubeconfig setup job..."
+        echo "🚀 Proceeding to kubeconfig setup and cleanup..."
 
   validate-runner:
     needs: infrastructure
@@ -283,3 +283,73 @@ jobs:
       run: |
         chmod +x scripts/setup-kubeconfig-post-deploy.sh
         ./scripts/setup-kubeconfig-post-deploy.sh ${{ matrix.env }}
+
+  cleanup-orphaned:
+    needs: [infrastructure, setup-kubeconfig]
+    if: success() && (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Cleanup Orphaned Resources
+      run: |
+        echo "🧹 Cleaning up orphaned resources for ${{ matrix.env }}..."
+        
+        # Get current managed resources from terraform state
+        MANAGED_INSTANCES=$(aws ec2 describe-instances \
+          --filters "Name=tag:ManagedBy,Values=terraform" \
+                   "Name=tag:Environment,Values=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+                   "Name=instance-state-name,Values=running" \
+          --query 'Reservations[].Instances[].InstanceId' \
+          --output text)
+        
+        echo "✅ Managed instances: $MANAGED_INSTANCES"
+        
+        # Find orphaned instances (same name pattern but not managed by current terraform)
+        ORPHANED_K3S=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=*k3s*" \
+                   "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[?!contains('$MANAGED_INSTANCES', InstanceId)].InstanceId" \
+          --output text)
+        
+        ORPHANED_RUNNERS=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=*runner*" \
+                   "Name=instance-state-name,Values=running" \
+          --query "Reservations[].Instances[?!contains('$MANAGED_INSTANCES', InstanceId)].InstanceId" \
+          --output text)
+        
+        # Terminate orphaned instances
+        if [[ -n "$ORPHANED_K3S" ]]; then
+          echo "🗑️ Terminating orphaned K3s instances: $ORPHANED_K3S"
+          aws ec2 terminate-instances --instance-ids $ORPHANED_K3S
+        fi
+        
+        if [[ -n "$ORPHANED_RUNNERS" ]]; then
+          echo "🗑️ Terminating orphaned runner instances: $ORPHANED_RUNNERS"
+          aws ec2 terminate-instances --instance-ids $ORPHANED_RUNNERS
+        fi
+        
+        # Clean up orphaned security groups (after instances are terminated)
+        sleep 30
+        echo "🔒 Cleaning up orphaned security groups..."
+        
+        aws ec2 describe-security-groups \
+          --filters "Name=group-name,Values=*k3s*,*runner*" \
+          --query 'SecurityGroups[?length(IpPermissions) == `0` && length(IpPermissionsEgress) <= `1`].[GroupId,GroupName]' \
+          --output text | while read sg_id sg_name; do
+            if [[ -n "$sg_id" ]]; then
+              echo "Deleting unused security group: $sg_id ($sg_name)"
+              aws ec2 delete-security-group --group-id $sg_id 2>/dev/null || echo "Could not delete $sg_id"
+            fi
+        done
+        
+        echo "✅ Cleanup completed for ${{ matrix.env }}"
