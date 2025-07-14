@@ -23,7 +23,7 @@ echo "🔌 Testing connectivity to found IPs..."
 aws ec2 describe-instances \
   --filters "Name=instance-state-name,Values=running" \
   --query 'Reservations[].Instances[].PublicIpAddress' \
-  --output text | while read ip; do
+  --output text | tr '\t' '\n' | while read ip; do
     if [[ -n "$ip" && "$ip" != "None" ]]; then
       echo "Testing $ip:22..."
       timeout 5 nc -z $ip 22 && echo "✅ $ip:22 reachable" || echo "❌ $ip:22 not reachable"
