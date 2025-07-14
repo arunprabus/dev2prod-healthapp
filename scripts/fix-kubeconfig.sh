@@ -26,7 +26,13 @@ chmod 600 /tmp/ssh_key
 
 # Download kubeconfig from cluster
 echo "📥 Downloading kubeconfig from cluster..."
-ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
+echo "Connecting to $CLUSTER_IP..."
+if timeout 30 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config 2>/dev/null; then
+  echo "✅ Kubeconfig downloaded successfully"
+else
+  echo "❌ Failed to download kubeconfig - K3s may not be running"
+  exit 1
+fi
 
 # Fix server IP (replace 127.0.0.1 with actual cluster IP)
 echo "🔄 Updating server IP to $CLUSTER_IP..."
