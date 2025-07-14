@@ -1,19 +1,28 @@
 #!/bin/bash
 # K8s Cluster Health Check Script
-# Usage: ./k8s-cluster-health-check.sh <environment> <cluster_ip>
+# Usage: ./k8s-cluster-health-check.sh <environment> <cluster_ip> [--fix-kubeconfig]
 
 set -e
 
 ENVIRONMENT="${1:-dev}"
 CLUSTER_IP="${2:-}"
+FIX_KUBECONFIG="${3:-}"
 
 echo "🔍 K8s Cluster Health Check for $ENVIRONMENT"
 echo "================================================"
 
 if [[ -z "$CLUSTER_IP" ]]; then
-  echo "❌ Usage: $0 <environment> <cluster_ip>"
+  echo "❌ Usage: $0 <environment> <cluster_ip> [--fix-kubeconfig]"
   echo "Example: $0 dev 43.205.211.129"
+  echo "Example: $0 dev 43.205.211.129 --fix-kubeconfig"
   exit 1
+fi
+
+# Fix kubeconfig if requested
+if [[ "$FIX_KUBECONFIG" == "--fix-kubeconfig" ]]; then
+  echo "🔧 Fixing kubeconfig first..."
+  ./fix-kubeconfig.sh $CLUSTER_IP
+  echo ""
 fi
 
 echo "🎯 Target Cluster: https://$CLUSTER_IP:6443"
@@ -22,11 +31,22 @@ echo ""
 
 # Test 1: Port connectivity
 echo "🔌 Test 1: Port Connectivity"
+echo "Testing connection to $CLUSTER_IP:6443..."
 if timeout 10 nc -z $CLUSTER_IP 6443; then
   echo "✅ Port 6443 is reachable"
 else
   echo "❌ Port 6443 is NOT reachable"
-  exit 1
+  echo "🔍 Checking if instance is running and what ports are open..."
+  
+  # Test SSH port first
+  if timeout 5 nc -z $CLUSTER_IP 22; then
+    echo "✅ SSH port 22 is reachable - instance is up"
+    echo "❌ But K3s port 6443 is blocked - K3s may not be running"
+  else
+    echo "❌ SSH port 22 is also not reachable - instance may be down"
+  fi
+  
+  # Don't exit, continue with other tests
 fi
 echo ""
 
@@ -37,7 +57,7 @@ if curl -k -s --connect-timeout 10 https://$CLUSTER_IP:6443/version >/dev/null; 
   curl -k -s https://$CLUSTER_IP:6443/version | jq . 2>/dev/null || echo "API response received"
 else
   echo "❌ API Server is NOT responding"
-  exit 1
+  echo "⚠️ This suggests K3s is not running or not properly configured"
 fi
 echo ""
 

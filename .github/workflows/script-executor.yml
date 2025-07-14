@@ -8,20 +8,18 @@ on:
         required: true
         type: choice
         options:
+          - 'k8s-cluster-health-check.sh'
+          - 'kubeconfig-fix-and-test.sh'
+          - 'fix-kubeconfig.sh'
           - 'k3s-connect.sh'
           - 'k3s-health-check.sh'
           - 'k3s-auto-scale.sh'
           - 'setup-kubeconfig.sh'
-          - 'simple-kubeconfig-fix.sh'
-          - 'create-github-secrets.sh'
           - 'emergency-cleanup.sh'
           - 'validate-resource-tags.sh'
           - 'setup-governance.sh'
           - 'verify-ssh-keys.sh'
           - 'install-ssm-agent.sh'
-          - 'download-kubeconfig.sh'
-          - 'fix-ssm-agent.sh'
-          - 'fix-ssm-iam.sh'
           - 'refresh-kubeconfig.sh'
           - 'restart-k3s.sh'
       environment:
@@ -36,6 +34,10 @@ on:
           - 'lower'
           - 'higher'
           - 'all'
+      cluster_ip:
+        description: 'Cluster IP (optional - will auto-detect)'
+        required: false
+        type: string
       action:
         description: 'Script action/parameter'
         required: false
@@ -49,6 +51,7 @@ on:
           - 'monitor'
           - 'validate'
           - 'health-check'
+          - '--fix-kubeconfig'
       additional_params:
         description: 'Additional parameters (optional)'
         required: false
@@ -93,39 +96,91 @@ jobs:
             export KUBECONFIG_MONITORING="${{ secrets.KUBECONFIG_MONITORING }}"
           fi
 
+      - name: Get cluster IP
+        id: cluster-ip
+        run: |
+          if [[ -n "${{ github.event.inputs.cluster_ip }}" ]]; then
+            CLUSTER_IP="${{ github.event.inputs.cluster_ip }}"
+            echo "Using provided IP: $CLUSTER_IP"
+          else
+            # Auto-detect from AWS EC2 instances
+            ENV="${{ github.event.inputs.environment }}"
+            echo "Auto-detecting IP for $ENV environment..."
+            
+            CLUSTER_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=*k3s*" \
+                       "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null || echo "")
+            
+            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+              CLUSTER_IP=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=health-app-*" \
+                         "Name=instance-state-name,Values=running" \
+                --query 'Reservations[0].Instances[0].PublicIpAddress' \
+                --output text 2>/dev/null || echo "")
+            fi
+            
+            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+              echo "❌ Could not auto-detect cluster IP"
+              exit 1
+            fi
+          fi
+          
+          echo "cluster_ip=$CLUSTER_IP" >> $GITHUB_OUTPUT
+          echo "🎯 Using cluster IP: $CLUSTER_IP"
+
       - name: Install kubectl and tools
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
           
-          # Install tools for secret creation
+          # Install tools
           sudo apt-get update
-          sudo apt-get install -y python3-pip jq
+          sudo apt-get install -y python3-pip jq netcat-openbsd
           pip3 install PyNaCl
 
       - name: Execute Script
         run: |
           chmod +x scripts/${{ inputs.script_name }}
           
-          # Build command based on inputs
-          CMD="./scripts/${{ inputs.script_name }}"
-          
-          if [ -n "${{ inputs.environment }}" ] && [ "${{ inputs.environment }}" != "all" ]; then
-            CMD="$CMD ${{ inputs.environment }}"
-          fi
-          
-          if [ -n "${{ inputs.action }}" ]; then
-            CMD="$CMD ${{ inputs.action }}"
-          fi
-          
-          if [ -n "${{ inputs.additional_params }}" ]; then
-            CMD="$CMD ${{ inputs.additional_params }}"
-          fi
+          # Build command based on script type
+          case "${{ inputs.script_name }}" in
+            "k8s-cluster-health-check.sh")
+              CMD="./scripts/k8s-cluster-health-check.sh ${{ inputs.environment }} ${{ steps.cluster-ip.outputs.cluster_ip }}"
+              if [ "${{ inputs.action }}" == "--fix-kubeconfig" ]; then
+                CMD="$CMD --fix-kubeconfig"
+              fi
+              ;;
+            "kubeconfig-fix-and-test.sh")
+              CMD="./scripts/kubeconfig-fix-and-test.sh ${{ inputs.environment }} ${{ steps.cluster-ip.outputs.cluster_ip }}"
+              ;;
+            "fix-kubeconfig.sh")
+              CMD="./scripts/fix-kubeconfig.sh ${{ steps.cluster-ip.outputs.cluster_ip }}"
+              ;;
+            *)
+              # Default command building for other scripts
+              CMD="./scripts/${{ inputs.script_name }}"
+              
+              if [ -n "${{ inputs.environment }}" ] && [ "${{ inputs.environment }}" != "all" ]; then
+                CMD="$CMD ${{ inputs.environment }}"
+              fi
+              
+              if [ -n "${{ inputs.action }}" ]; then
+                CMD="$CMD ${{ inputs.action }}"
+              fi
+              
+              if [ -n "${{ inputs.additional_params }}" ]; then
+                CMD="$CMD ${{ inputs.additional_params }}"
+              fi
+              ;;
+          esac
           
           echo "🚀 Executing: $CMD"
           eval $CMD
         env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           KUBECONFIG_DEV: ${{ secrets.KUBECONFIG_DEV }}
           KUBECONFIG_TEST: ${{ secrets.KUBECONFIG_TEST }}
           KUBECONFIG_PROD: ${{ secrets.KUBECONFIG_PROD }}
