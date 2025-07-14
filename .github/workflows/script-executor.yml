@@ -22,6 +22,7 @@ on:
           - 'install-ssm-agent.sh'
           - 'refresh-kubeconfig.sh'
           - 'restart-k3s.sh'
+          - 'check-instance-status.sh'
       environment:
         description: 'Target environment'
         required: true
