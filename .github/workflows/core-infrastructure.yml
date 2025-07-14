@@ -280,9 +280,10 @@ jobs:
           echo "⏳ Waiting for runner to be online..."
           for i in {1..30}; do
             # Check if runner is online via GitHub API
+            ENV_NAME="${{ matrix.env }}"
             RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runners" \
-              | jq -r '.runners[] | select(.name | test("^github-runner-${{ matrix.env }}-.*")) | .status' 2>/dev/null || echo "")
+              "https://api.github.com/repos/${{ github.repository }}/actions/runners?per_page=100" \
+              | jq -r --arg ENV_NAME "$ENV_NAME" '.runners[] | select(.name | test("^github-runner-" + $ENV_NAME + "-.*")) | .status' 2>/dev/null || echo "")
             
             echo "🔍 Found runner status: $RUNNER_ONLINE"
             
