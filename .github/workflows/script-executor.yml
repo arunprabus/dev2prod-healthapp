@@ -23,6 +23,7 @@ on:
           - 'refresh-kubeconfig.sh'
           - 'restart-k3s.sh'
           - 'check-instance-status.sh'
+          - 'fix-security-groups.sh'
       environment:
         description: 'Target environment'
         required: true
