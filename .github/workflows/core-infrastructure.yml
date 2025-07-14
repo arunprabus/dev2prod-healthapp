@@ -131,6 +131,55 @@ jobs:
         
         echo "✅ Infrastructure deployed successfully"
 
+    - name: Upload Kubeconfig to S3
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      env:
+        SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+      run: |
+        echo "🔧 Uploading kubeconfig to S3 for ${{ matrix.env }} network"
+        
+        # Get cluster IP from terraform output
+        cd infra/two-network-setup
+        CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+        
+        if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
+          echo "❌ Could not get cluster IP from terraform output"
+          exit 1
+        fi
+        
+        echo "🎯 Cluster IP: $CLUSTER_IP"
+        cd ../..
+        
+        # Setup SSH key
+        echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+        chmod 600 /tmp/ssh_key
+        
+        # Wait for K3s to be ready
+        echo "⏳ Waiting for K3s cluster to be ready..."
+        for i in {1..30}; do
+          if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+            echo "✅ K3s cluster is ready"
+            break
+          fi
+          echo "⏳ Attempt $i/30 - waiting for K3s..."
+          sleep 10
+        done
+        
+        # Download and fix kubeconfig
+        echo "📥 Downloading kubeconfig from cluster..."
+        ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
+        sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
+        
+        # Upload to S3
+        echo "☁️ Uploading kubeconfig to S3..."
+        S3_KEY="kubeconfig-${{ matrix.env }}.yaml"
+        aws s3 cp /tmp/fixed-config s3://$TF_STATE_BUCKET/$S3_KEY
+        echo "✅ Kubeconfig uploaded to s3://$TF_STATE_BUCKET/$S3_KEY"
+        
+        # Cleanup
+        rm -f /tmp/ssh_key /tmp/k3s-config /tmp/fixed-config
+
 
 
     - name: Terraform Destroy
