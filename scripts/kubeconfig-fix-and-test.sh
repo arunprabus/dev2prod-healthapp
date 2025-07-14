@@ -26,7 +26,8 @@ fi
 echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
 chmod 600 /tmp/ssh_key
 
-scp -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP:/etc/rancher/k3s/k3s.yaml /tmp/k3s-config
+# Download kubeconfig using sudo
+ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
 sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
 
 mkdir -p ~/.kube

@@ -26,7 +26,7 @@ chmod 600 /tmp/ssh_key
 
 # Download kubeconfig from cluster
 echo "📥 Downloading kubeconfig from cluster..."
-scp -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP:/etc/rancher/k3s/k3s.yaml /tmp/k3s-config
+ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
 
 # Fix server IP (replace 127.0.0.1 with actual cluster IP)
 echo "🔄 Updating server IP to $CLUSTER_IP..."
