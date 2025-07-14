@@ -24,6 +24,7 @@ on:
           - 'restart-k3s.sh'
           - 'check-instance-status.sh'
           - 'fix-security-groups.sh'
+          - 'fix-ssh-service.sh'
       environment:
         description: 'Target environment'
         required: true
