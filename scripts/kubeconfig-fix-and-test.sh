@@ -28,12 +28,19 @@ chmod 600 /tmp/ssh_key
 
 # Download kubeconfig using sudo with timeout
 echo "Connecting to $CLUSTER_IP..."
-if timeout 30 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config 2>/dev/null; then
+echo "🔍 Testing SSH connection first..."
+ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "echo 'SSH connection successful'" || { echo "❌ SSH connection failed"; exit 1; }
+
+echo "📁 Checking if K3s config file exists..."
+ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo ls -la /etc/rancher/k3s/k3s.yaml" || { echo "❌ K3s config file not found"; exit 1; }
+
+echo "📥 Downloading kubeconfig..."
+if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config; then
   echo "✅ Kubeconfig downloaded successfully"
 else
   echo "❌ Failed to download kubeconfig"
-  echo "🔍 Checking if K3s is running..."
-  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$CLUSTER_IP "sudo systemctl status k3s --no-pager" || echo "K3s service check failed"
+  echo "🔍 Checking K3s service status..."
+  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo systemctl status k3s --no-pager -l" || echo "K3s service check failed"
   exit 1
 fi
 sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
