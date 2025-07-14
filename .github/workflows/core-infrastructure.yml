@@ -304,8 +304,8 @@ jobs:
         fi
 
   setup-kubeconfig:
-    needs: [infrastructure, cleanup-orphaned, validate-runner]
-    if: needs.validate-runner.outputs.runner-ready == 'true'
+    needs: [infrastructure, cleanup-orphaned]
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || fromJSON('["self-hosted", "github-runner-lower"]') }}
     strategy:
       matrix:

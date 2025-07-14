@@ -106,14 +106,50 @@ data "aws_key_pair" "main" {
   key_name = "${local.name_prefix}-key"
 }
 
-# Use existing IAM role for K3s instance (SSM access)
-data "aws_iam_role" "k3s_role" {
+# IAM role for K3s with Session Manager and S3 access
+resource "aws_iam_role" "k3s_role" {
   name = "${local.name_prefix}-k3s-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+  
+  tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-role" })
 }
 
-# Use existing instance profile for K3s
-data "aws_iam_instance_profile" "k3s_profile" {
+# Attach AWS managed policy for Session Manager
+resource "aws_iam_role_policy_attachment" "k3s_ssm_policy" {
+  role       = aws_iam_role.k3s_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# Instance profile for K3s
+resource "aws_iam_instance_profile" "k3s_profile" {
   name = "${local.name_prefix}-k3s-profile"
+  role = aws_iam_role.k3s_role.name
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+  
+  tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-profile" })
 }
 
 # EC2 instance for K3s cluster
@@ -123,7 +159,7 @@ resource "aws_instance" "k3s" {
   key_name              = data.aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
   subnet_id             = data.aws_subnet.public.id
-  iam_instance_profile   = data.aws_iam_instance_profile.k3s_profile.name
+  iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
   
   lifecycle {
     ignore_changes = [ami]
@@ -134,10 +170,18 @@ resource "aws_instance" "k3s" {
     apt-get update
     apt-get install -y curl docker.io mysql-client
     
-    # Install and configure SSM Agent
-    snap install amazon-ssm-agent --classic
-    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-    systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+    # Fix SSM Agent
+    systemctl stop snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || true
+    snap remove amazon-ssm-agent 2>/dev/null || true
+    
+    # Install SSM Agent properly
+    wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+    dpkg -i amazon-ssm-agent.deb
+    systemctl enable amazon-ssm-agent
+    systemctl start amazon-ssm-agent
+    
+    # Verify SSM Agent
+    systemctl status amazon-ssm-agent --no-pager
     
     # Install K3s
     curl -sfL https://get.k3s.io | sh -

@@ -87,12 +87,20 @@ resource "aws_iam_role" "k3s_role" {
       }
     ]
   })
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Attach AWS managed policy for Session Manager
 resource "aws_iam_role_policy_attachment" "k3s_ssm_policy" {
   role       = aws_iam_role.k3s_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy" "k3s_s3_policy" {
@@ -115,11 +123,19 @@ resource "aws_iam_role_policy" "k3s_s3_policy" {
       }
     ]
   })
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_iam_instance_profile" "k3s_profile" {
   name = "${var.name_prefix}-k3s-profile"
   role = aws_iam_role.k3s_role.name
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # K3s master node
