@@ -25,6 +25,7 @@ on:
           - 'check-instance-status.sh'
           - 'fix-security-groups.sh'
           - 'fix-ssh-service.sh'
+          - 'cleanup-duplicates.sh'
       environment:
         description: 'Target environment'
         required: true
