@@ -26,6 +26,7 @@ on:
           - 'fix-security-groups.sh'
           - 'fix-ssh-service.sh'
           - 'cleanup-duplicates.sh'
+          - 'update-github-secrets.sh'
       environment:
         description: 'Target environment'
         required: true
@@ -56,6 +57,12 @@ on:
           - 'validate'
           - 'health-check'
           - '--fix-kubeconfig'
+          - 'list'
+          - 'update'
+          - 'update-file'
+          - 'update-kubeconfig'
+          - 'update-ssh-key'
+          - 'update-aws-creds'
       additional_params:
         description: 'Additional parameters (optional)'
         required: false

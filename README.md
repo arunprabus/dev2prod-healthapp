@@ -974,6 +974,34 @@ permissions:
 - **Updates**: Automatic on re-deployment
 - **Testing**: Connection verified before secret creation
 
+### **🔑 Secrets Management Tools**
+
+This repository includes comprehensive tools for managing GitHub secrets:
+
+- **GitHub Actions Workflow**: `Update GitHub Secrets` workflow for UI-based management
+- **Bash Script**: `scripts/update-github-secrets.sh` for Linux/macOS users
+- **PowerShell Script**: `scripts/update-github-secrets.ps1` for Windows users
+- **Batch Script**: `scripts/update-github-secrets.bat` for basic Windows command prompt
+- **Interactive Menu**: `update-secrets.bat` for Windows users with guided menu
+
+#### **Quick Secret Management**
+
+```bash
+# List all secrets
+./scripts/update-github-secrets.sh list
+
+# Update kubeconfig for an environment
+./scripts/update-github-secrets.sh update-kubeconfig dev kubeconfig-lower.yaml
+
+# Update SSH keys
+./scripts/update-github-secrets.sh update-ssh-key
+
+# Update AWS credentials
+./scripts/update-github-secrets.sh update-aws-creds
+```
+
+For detailed instructions, see [Secrets Management Guide](docs/SECRETS-MANAGEMENT.md)
+
 **Step 4: Run Governance Validation**
 ```bash
 # Validate governance setup before deployment
