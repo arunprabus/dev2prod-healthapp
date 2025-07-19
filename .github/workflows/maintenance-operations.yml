@@ -1,0 +1,528 @@
+name: Maintenance Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Maintenance operation to perform'
+        required: true
+        type: choice
+        options:
+          - 'cleanup-github-runners'
+          - 'update-secrets'
+          - 'platform-readiness-check'
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - 'dev'
+          - 'test'
+          - 'prod'
+          - 'monitoring'
+          - 'all'
+      check_type:
+        description: 'Type of readiness check (for platform-readiness-check)'
+        required: false
+        type: choice
+        options:
+          - 'full'
+          - 'kubernetes-only'
+          - 'database-only'
+          - 'runner-only'
+      secret_type:
+        description: 'Type of secret to update (for update-secrets)'
+        required: false
+        type: choice
+        options:
+          - 'kubeconfig'
+          - 'ssh-key'
+          - 'aws-credentials'
+          - 'github-token'
+          - 'database'
+      secret_value:
+        description: 'New secret value (for update-secrets, leave empty to generate)'
+        required: false
+        type: string
+
+jobs:
+  cleanup-github-runners:
+    if: ${{ github.event.inputs.operation == 'cleanup-github-runners' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Cleanup GitHub runners
+        run: |
+          echo "🧹 Cleaning up GitHub runners for ${{ github.event.inputs.environment }} environment..."
+          
+          # Get list of EC2 instances with runner tag
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:GitHubRunner,Values=true" \
+                     "Name=tag:Environment,Values=${{ github.event.inputs.environment == 'all' && '*' || github.event.inputs.environment }}" \
+                     "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].InstanceId" \
+            --output text)
+          
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "No running GitHub runner instances found for ${{ github.event.inputs.environment }}"
+            exit 0
+          fi
+          
+          echo "Found runner instances: $INSTANCE_IDS"
+          
+          # Check for duplicate runners
+          for INSTANCE_ID in $INSTANCE_IDS; do
+            INSTANCE_NAME=$(aws ec2 describe-tags \
+              --filters "Name=resource-id,Values=$INSTANCE_ID" "Name=key,Values=Name" \
+              --query "Tags[0].Value" \
+              --output text)
+            
+            echo "Checking runner: $INSTANCE_NAME ($INSTANCE_ID)"
+            
+            # Get instance uptime
+            LAUNCH_TIME=$(aws ec2 describe-instances \
+              --instance-ids $INSTANCE_ID \
+              --query "Reservations[0].Instances[0].LaunchTime" \
+              --output text)
+            
+            # Convert to timestamp
+            LAUNCH_TIMESTAMP=$(date -d "$LAUNCH_TIME" +%s)
+            CURRENT_TIMESTAMP=$(date +%s)
+            UPTIME_HOURS=$(( ($CURRENT_TIMESTAMP - $LAUNCH_TIMESTAMP) / 3600 ))
+            
+            echo "Runner uptime: $UPTIME_HOURS hours"
+            
+            # Check if runner is idle or has been running too long (>24 hours)
+            if [ $UPTIME_HOURS -gt 24 ]; then
+              echo "⚠️ Runner $INSTANCE_NAME has been running for more than 24 hours. Terminating..."
+              aws ec2 terminate-instances --instance-ids $INSTANCE_ID
+              echo "✅ Terminated runner: $INSTANCE_NAME ($INSTANCE_ID)"
+            else
+              echo "✅ Runner $INSTANCE_NAME is within normal uptime range"
+            fi
+          done
+        env:
+          AWS_REGION: ap-south-1
+
+  update-secrets:
+    if: ${{ github.event.inputs.operation == 'update-secrets' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq python3-pip
+          pip3 install boto3 pyyaml
+
+      - name: Update Kubeconfig Secret
+        if: ${{ github.event.inputs.secret_type == 'kubeconfig' }}
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          echo "🔄 Updating kubeconfig for $ENV environment..."
+          
+          # Get cluster IP
+          CLUSTER_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*k3s*" \
+                     "Name=tag:Environment,Values=$ENV" \
+                     "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+          
+          if [ -z "$CLUSTER_IP" ] || [ "$CLUSTER_IP" == "None" ]; then
+            echo "❌ Could not find cluster IP for $ENV environment"
+            exit 1
+          fi
+          
+          echo "Found cluster IP: $CLUSTER_IP"
+          
+          # Generate kubeconfig
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+          chmod 600 ~/.ssh/k3s-key
+          
+          ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > kubeconfig
+          
+          # Replace localhost with actual IP
+          sed -i "s/127.0.0.1/$CLUSTER_IP/g" kubeconfig
+          
+          # Encode kubeconfig
+          KUBECONFIG_B64=$(cat kubeconfig | base64 -w 0)
+          
+          # Update GitHub secret
+          echo "KUBECONFIG_${ENV^^}=$KUBECONFIG_B64" >> $GITHUB_ENV
+          
+          # Clean up
+          rm -f ~/.ssh/k3s-key kubeconfig
+          
+          echo "✅ Kubeconfig updated for $ENV environment"
+
+      - name: Update SSH Key
+        if: ${{ github.event.inputs.secret_type == 'ssh-key' }}
+        run: |
+          echo "🔄 Updating SSH key..."
+          
+          if [ -n "${{ github.event.inputs.secret_value }}" ]; then
+            # Use provided SSH key
+            SSH_KEY="${{ github.event.inputs.secret_value }}"
+          else
+            # Generate new SSH key
+            ssh-keygen -t rsa -b 4096 -f id_rsa -N ""
+            SSH_PRIVATE_KEY=$(cat id_rsa)
+            SSH_PUBLIC_KEY=$(cat id_rsa.pub)
+            
+            echo "Generated new SSH key pair"
+            echo "Public key: $SSH_PUBLIC_KEY"
+            
+            # Deploy public key to instances
+            ENV="${{ github.event.inputs.environment }}"
+            if [ "$ENV" != "all" ]; then
+              INSTANCE_IDS=$(aws ec2 describe-instances \
+                --filters "Name=tag:Environment,Values=$ENV" \
+                         "Name=instance-state-name,Values=running" \
+                --query "Reservations[*].Instances[*].InstanceId" \
+                --output text)
+              
+              for INSTANCE_ID in $INSTANCE_IDS; do
+                echo "Deploying SSH key to instance $INSTANCE_ID..."
+                aws ec2-instance-connect send-ssh-public-key \
+                  --instance-id $INSTANCE_ID \
+                  --availability-zone $(aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].Placement.AvailabilityZone" --output text) \
+                  --instance-os-user ubuntu \
+                  --ssh-public-key "$SSH_PUBLIC_KEY"
+              done
+            fi
+            
+            # Set the private key for GitHub secret update
+            SSH_KEY="$SSH_PRIVATE_KEY"
+            
+            # Clean up
+            rm -f id_rsa id_rsa.pub
+          fi
+          
+          # Update GitHub secret
+          echo "SSH_PRIVATE_KEY=$SSH_KEY" >> $GITHUB_ENV
+          
+          echo "✅ SSH key updated"
+
+      - name: Update AWS Credentials
+        if: ${{ github.event.inputs.secret_type == 'aws-credentials' }}
+        run: |
+          echo "🔄 Updating AWS credentials..."
+          
+          if [ -n "${{ github.event.inputs.secret_value }}" ]; then
+            # Parse provided credentials (format: "ACCESS_KEY:SECRET_KEY")
+            IFS=':' read -r ACCESS_KEY SECRET_KEY <<< "${{ github.event.inputs.secret_value }}"
+          else
+            echo "❌ For AWS credentials, you must provide the credentials in format 'ACCESS_KEY:SECRET_KEY'"
+            exit 1
+          fi
+          
+          # Update GitHub secrets
+          echo "AWS_ACCESS_KEY_ID=$ACCESS_KEY" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$SECRET_KEY" >> $GITHUB_ENV
+          
+          echo "✅ AWS credentials updated"
+
+      - name: Update GitHub Token
+        if: ${{ github.event.inputs.secret_type == 'github-token' }}
+        run: |
+          echo "🔄 Updating GitHub token..."
+          
+          if [ -n "${{ github.event.inputs.secret_value }}" ]; then
+            # Use provided token
+            GITHUB_TOKEN="${{ github.event.inputs.secret_value }}"
+          else
+            echo "❌ For GitHub token, you must provide the token value"
+            exit 1
+          fi
+          
+          # Update GitHub secret
+          echo "GITHUB_TOKEN=$GITHUB_TOKEN" >> $GITHUB_ENV
+          
+          echo "✅ GitHub token updated"
+
+      - name: Update Database Credentials
+        if: ${{ github.event.inputs.secret_type == 'database' }}
+        run: |
+          echo "🔄 Updating database credentials..."
+          
+          ENV="${{ github.event.inputs.environment }}"
+          
+          if [ -n "${{ github.event.inputs.secret_value }}" ]; then
+            # Parse provided credentials (format: "USERNAME:PASSWORD")
+            IFS=':' read -r DB_USER DB_PASS <<< "${{ github.event.inputs.secret_value }}"
+          else
+            # Generate random password
+            DB_USER="healthapp"
+            DB_PASS=$(openssl rand -base64 12)
+            echo "Generated new database password"
+          fi
+          
+          # Update GitHub secrets
+          echo "DB_USERNAME_${ENV^^}=$DB_USER" >> $GITHUB_ENV
+          echo "DB_PASSWORD_${ENV^^}=$DB_PASS" >> $GITHUB_ENV
+          
+          # Update Kubernetes secret if environment is specified
+          if [ "$ENV" != "all" ]; then
+            # Get kubeconfig
+            KUBECONFIG_VAR="KUBECONFIG_${ENV^^}"
+            KUBECONFIG_B64="${!KUBECONFIG_VAR}"
+            
+            if [ -n "$KUBECONFIG_B64" ]; then
+              echo "$KUBECONFIG_B64" | base64 -d > kubeconfig
+              
+              # Create or update Kubernetes secret
+              kubectl --kubeconfig=kubeconfig create secret generic db-credentials \
+                --from-literal=username=$DB_USER \
+                --from-literal=password=$DB_PASS \
+                --namespace=$ENV \
+                --dry-run=client -o yaml | kubectl --kubeconfig=kubeconfig apply -f -
+              
+              echo "✅ Updated Kubernetes secret 'db-credentials' in namespace '$ENV'"
+              
+              # Clean up
+              rm -f kubeconfig
+            else
+              echo "⚠️ Kubeconfig not found for $ENV environment, skipping Kubernetes secret update"
+            fi
+          fi
+          
+          echo "✅ Database credentials updated"
+
+      - name: Update GitHub Secrets
+        uses: gliech/create-github-secret-action@v1
+        with:
+          name: ${{ github.event.inputs.secret_type == 'kubeconfig' && format('KUBECONFIG_{0}', github.event.inputs.environment) || github.event.inputs.secret_type == 'ssh-key' && 'SSH_PRIVATE_KEY' || github.event.inputs.secret_type == 'aws-credentials' && 'AWS_ACCESS_KEY_ID' || github.event.inputs.secret_type == 'github-token' && 'GITHUB_TOKEN' || github.event.inputs.secret_type == 'database' && format('DB_USERNAME_{0}', github.event.inputs.environment) }}
+          value: ${{ github.event.inputs.secret_type == 'kubeconfig' && env[format('KUBECONFIG_{0}', github.event.inputs.environment)] || github.event.inputs.secret_type == 'ssh-key' && env.SSH_PRIVATE_KEY || github.event.inputs.secret_type == 'aws-credentials' && env.AWS_ACCESS_KEY_ID || github.event.inputs.secret_type == 'github-token' && env.GITHUB_TOKEN || github.event.inputs.secret_type == 'database' && env[format('DB_USERNAME_{0}', github.event.inputs.environment)] }}
+          pa_token: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event.inputs.secret_type != 'aws-credentials' && github.event.inputs.secret_type != 'database' }}
+
+      - name: Update Second GitHub Secret for AWS Credentials
+        uses: gliech/create-github-secret-action@v1
+        with:
+          name: AWS_SECRET_ACCESS_KEY
+          value: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          pa_token: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event.inputs.secret_type == 'aws-credentials' }}
+
+      - name: Update Second GitHub Secret for Database Credentials
+        uses: gliech/create-github-secret-action@v1
+        with:
+          name: ${{ format('DB_PASSWORD_{0}', github.event.inputs.environment) }}
+          value: ${{ env[format('DB_PASSWORD_{0}', github.event.inputs.environment)] }}
+          pa_token: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ github.event.inputs.secret_type == 'database' }}
+
+  platform-readiness-check:
+    if: ${{ github.event.inputs.operation == 'platform-readiness-check' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq python3-pip curl
+          pip3 install boto3 pyyaml
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Setup kubeconfig
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [ "$ENV" == "all" ]; then
+            echo "⚠️ Cannot perform platform readiness check on 'all' environments at once"
+            echo "Please select a specific environment"
+            exit 1
+          fi
+          
+          # Get kubeconfig from GitHub secrets
+          KUBECONFIG_VAR="KUBECONFIG_${ENV^^}"
+          KUBECONFIG_B64="${!KUBECONFIG_VAR}"
+          
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "❌ Kubeconfig not found for $ENV environment"
+            exit 1
+          fi
+          
+          echo "$KUBECONFIG_B64" | base64 -d > kubeconfig
+          export KUBECONFIG="$PWD/kubeconfig"
+          echo "KUBECONFIG=$PWD/kubeconfig" >> $GITHUB_ENV
+
+      - name: Full Platform Check
+        if: ${{ github.event.inputs.check_type == 'full' || github.event.inputs.check_type == '' }}
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          echo "🔍 Performing full platform readiness check for $ENV environment..."
+          
+          # Check Kubernetes cluster
+          echo "🔄 Checking Kubernetes cluster..."
+          kubectl cluster-info
+          kubectl get nodes -o wide
+          
+          # Check pods
+          echo "🔄 Checking pods..."
+          kubectl get pods -A
+          
+          # Check deployments
+          echo "🔄 Checking deployments..."
+          kubectl get deployments -A
+          
+          # Check services
+          echo "🔄 Checking services..."
+          kubectl get services -A
+          
+          # Check persistent volumes
+          echo "🔄 Checking persistent volumes..."
+          kubectl get pv,pvc -A
+          
+          # Check database
+          echo "🔄 Checking database connectivity..."
+          DB_POD=$(kubectl get pods -n $ENV -l app=postgres -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || echo "")
+          if [ -n "$DB_POD" ]; then
+            kubectl exec -n $ENV $DB_POD -- pg_isready -U postgres || echo "⚠️ Database is not ready"
+          else
+            echo "⚠️ Database pod not found"
+          fi
+          
+          # Check GitHub runners
+          echo "🔄 Checking GitHub runners..."
+          RUNNER_INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:GitHubRunner,Values=true" \
+                     "Name=tag:Environment,Values=$ENV" \
+                     "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].{ID:InstanceId,Name:Tags[?Key=='Name']|[0].Value,IP:PublicIpAddress,State:State.Name}" \
+            --output json)
+          
+          echo "$RUNNER_INSTANCES" | jq -r '.[] | .[] | "Runner: \(.Name) (\(.ID)) - \(.State) - \(.IP)"'
+          
+          echo "✅ Platform readiness check completed"
+
+      - name: Kubernetes-Only Check
+        if: ${{ github.event.inputs.check_type == 'kubernetes-only' }}
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          echo "🔍 Performing Kubernetes-only readiness check for $ENV environment..."
+          
+          # Check Kubernetes cluster
+          echo "🔄 Checking Kubernetes cluster..."
+          kubectl cluster-info
+          kubectl get nodes -o wide
+          
+          # Check pods
+          echo "🔄 Checking pods..."
+          kubectl get pods -A
+          
+          # Check deployments
+          echo "🔄 Checking deployments..."
+          kubectl get deployments -A
+          
+          # Check services
+          echo "🔄 Checking services..."
+          kubectl get services -A
+          
+          # Check persistent volumes
+          echo "🔄 Checking persistent volumes..."
+          kubectl get pv,pvc -A
+          
+          echo "✅ Kubernetes readiness check completed"
+
+      - name: Database-Only Check
+        if: ${{ github.event.inputs.check_type == 'database-only' }}
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          echo "🔍 Performing database-only readiness check for $ENV environment..."
+          
+          # Check database pods
+          echo "🔄 Checking database pods..."
+          kubectl get pods -n $ENV -l app=postgres
+          
+          # Check database service
+          echo "🔄 Checking database service..."
+          kubectl get services -n $ENV -l app=postgres
+          
+          # Check database connectivity
+          echo "🔄 Checking database connectivity..."
+          DB_POD=$(kubectl get pods -n $ENV -l app=postgres -o jsonpath="{.items[0].metadata.name}" 2>/dev/null || echo "")
+          if [ -n "$DB_POD" ]; then
+            kubectl exec -n $ENV $DB_POD -- pg_isready -U postgres || echo "⚠️ Database is not ready"
+            
+            # Check database size
+            echo "🔄 Checking database size..."
+            kubectl exec -n $ENV $DB_POD -- psql -U postgres -c "SELECT pg_size_pretty(pg_database_size('postgres')) as db_size;"
+            
+            # Check database connections
+            echo "🔄 Checking database connections..."
+            kubectl exec -n $ENV $DB_POD -- psql -U postgres -c "SELECT count(*) as connections FROM pg_stat_activity;"
+          else
+            echo "⚠️ Database pod not found"
+          fi
+          
+          echo "✅ Database readiness check completed"
+
+      - name: Runner-Only Check
+        if: ${{ github.event.inputs.check_type == 'runner-only' }}
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          echo "🔍 Performing GitHub runner-only readiness check for $ENV environment..."
+          
+          # Check GitHub runners
+          echo "🔄 Checking GitHub runners..."
+          RUNNER_INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:GitHubRunner,Values=true" \
+                     "Name=tag:Environment,Values=$ENV" \
+                     "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].{ID:InstanceId,Name:Tags[?Key=='Name']|[0].Value,IP:PublicIpAddress,State:State.Name,Type:InstanceType,LaunchTime:LaunchTime}" \
+            --output json)
+          
+          echo "$RUNNER_INSTANCES" | jq -r '.[] | .[] | "Runner: \(.Name) (\(.ID)) - \(.State) - \(.IP) - \(.Type) - Running since \(.LaunchTime)"'
+          
+          # Check runner status
+          echo "🔄 Checking runner status..."
+          RUNNER_COUNT=$(echo "$RUNNER_INSTANCES" | jq -r '.[] | .[] | .ID' | wc -l)
+          echo "Found $RUNNER_COUNT active runners for $ENV environment"
+          
+          if [ "$RUNNER_COUNT" -eq 0 ]; then
+            echo "⚠️ No active runners found for $ENV environment"
+          fi
+          
+          echo "✅ GitHub runner readiness check completed"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f kubeconfig
+          echo "🧹 Cleanup completed"

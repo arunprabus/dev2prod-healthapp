@@ -8,25 +8,58 @@ on:
         required: true
         type: choice
         options:
+          # Kubernetes Management
           - 'k8s-cluster-health-check.sh'
+          - 'k8s-health-check.sh'
+          - 'k8s-auto-scale.sh'
+          - 'k3s-health-check.sh'
+          - 'k3s-connect.sh'
+          
+          # Kubeconfig Management
           - 'kubeconfig-fix-and-test.sh'
           - 'fix-kubeconfig.sh'
-          - 'k3s-connect.sh'
-          - 'k3s-health-check.sh'
-          - 'k3s-auto-scale.sh'
           - 'setup-kubeconfig.sh'
-          - 'emergency-cleanup.sh'
-          - 'validate-resource-tags.sh'
-          - 'setup-governance.sh'
-          - 'verify-ssh-keys.sh'
-          - 'install-ssm-agent.sh'
           - 'refresh-kubeconfig.sh'
-          - 'restart-k3s.sh'
+          
+          # AWS Management
+          - 'aws-resource-audit.sh'
+          - 'aws-resource-cleanup.sh'
+          - 'cost-breakdown.sh'
+          - 'cost-cleanup-auto.sh'
+          - 'aws-budget-setup.sh'
+          
+          # GitHub Runner Management
+          - 'runner-health-check.sh'
+          - 'runner-setup.sh'
+          - 'cleanup-duplicates.sh'
+          
+          # System Management
           - 'check-instance-status.sh'
           - 'fix-security-groups.sh'
           - 'fix-ssh-service.sh'
-          - 'cleanup-duplicates.sh'
+          - 'restart-k3s.sh'
+          - 'install-ssm-agent.sh'
+          
+          # Secrets Management
           - 'update-github-secrets.sh'
+          - 'update-k8s-secret.sh'
+          
+          # Diagnostics
+          - 'diagnose-deployment.sh'
+          - 'diagnose-runner.sh'
+          - 'platform-readiness-check.sh'
+          
+          # Emergency Operations
+          - 'emergency-cleanup.sh'
+          - 'verify-cleanup.sh'
+          
+          # Validation
+          - 'validate-resource-tags.sh'
+          - 'setup-governance.sh'
+          - 'verify-ssh-keys.sh'
+          - 'test-aws-integrations.sh'
+          - 'test-github-connectivity.sh'
+          
       environment:
         description: 'Target environment'
         required: true
@@ -39,30 +72,57 @@ on:
           - 'lower'
           - 'higher'
           - 'all'
+      
       cluster_ip:
         description: 'Cluster IP (optional - will auto-detect)'
         required: false
         type: string
+      
       action:
         description: 'Script action/parameter'
         required: false
         type: choice
         options:
+          # Connection Methods
           - 'ssh'
           - 'session-manager'
           - 'kubectl'
+          
+          # Operations
           - 'setup'
           - 'cleanup'
           - 'monitor'
           - 'validate'
           - 'health-check'
+          - 'deploy'
+          - 'destroy'
+          - 'plan'
+          - 'redeploy'
+          - 'backup'
+          - 'restore'
+          - 'scale'
+          
+          # Kubeconfig Operations
           - '--fix-kubeconfig'
+          - 'download'
+          - 'test-connection'
+          - 'get-nodes'
+          - 'get-pods'
+          
+          # Secret Operations
           - 'list'
           - 'update'
           - 'update-file'
           - 'update-kubeconfig'
           - 'update-ssh-key'
           - 'update-aws-creds'
+          
+          # Diagnostic Operations
+          - 'full'
+          - 'runner-only'
+          - 'database-only'
+          - 'kubernetes-only'
+      
       additional_params:
         description: 'Additional parameters (optional)'
         required: false
@@ -70,7 +130,7 @@ on:
 
 jobs:
   execute-script:
-    runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('[\"self-hosted\", \"github-runner-lower\"]') || github.event.inputs.environment == 'higher' && fromJSON('[\"self-hosted\", \"github-runner-higher\"]') || github.event.inputs.environment == 'monitoring' && fromJSON('[\"self-hosted\", \"github-runner-monitoring\"]') || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -105,6 +165,21 @@ jobs:
           if [ -n "${{ secrets.KUBECONFIG_MONITORING }}" ]; then
             echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > /tmp/kubeconfig-monitoring
             export KUBECONFIG_MONITORING="${{ secrets.KUBECONFIG_MONITORING }}"
+          fi
+          
+          # Set appropriate kubeconfig based on environment
+          if [ "${{ inputs.environment }}" = "dev" ]; then
+            cp /tmp/kubeconfig-dev /tmp/kubeconfig
+            echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" = "test" ]; then
+            cp /tmp/kubeconfig-test /tmp/kubeconfig
+            echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" = "prod" ]; then
+            cp /tmp/kubeconfig-prod /tmp/kubeconfig
+            echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          elif [ "${{ inputs.environment }}" = "monitoring" ]; then
+            cp /tmp/kubeconfig-monitoring /tmp/kubeconfig
+            echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
           fi
 
       - name: Get cluster IP
@@ -158,6 +233,7 @@ jobs:
           
           # Build command based on script type
           case "${{ inputs.script_name }}" in
+            # Kubernetes Management
             "k8s-cluster-health-check.sh")
               CMD="./scripts/k8s-cluster-health-check.sh ${{ inputs.environment }} ${{ steps.cluster-ip.outputs.cluster_ip }}"
               if [ "${{ inputs.action }}" == "--fix-kubeconfig" ]; then
@@ -170,8 +246,42 @@ jobs:
             "fix-kubeconfig.sh")
               CMD="./scripts/fix-kubeconfig.sh ${{ steps.cluster-ip.outputs.cluster_ip }}"
               ;;
+              
+            # Kubeconfig Access
+            "kubeconfig-access")
+              case "${{ inputs.action }}" in
+                "download")
+                  echo "📁 Kubeconfig for ${{ inputs.environment }}:"
+                  echo "--- KUBECONFIG START ---"
+                  cat /tmp/kubeconfig
+                  echo "--- KUBECONFIG END ---"
+                  exit 0
+                  ;;
+                "test-connection")
+                  echo "🧪 Testing connection to ${{ inputs.environment }}..."
+                  kubectl cluster-info --insecure-skip-tls-verify
+                  exit 0
+                  ;;
+                "get-nodes")
+                  echo "🖥️ Nodes in ${{ inputs.environment }}:"
+                  kubectl get nodes -o wide --insecure-skip-tls-verify
+                  exit 0
+                  ;;
+                "get-pods")
+                  echo "🐳 Pods in ${{ inputs.environment }}:"
+                  kubectl get pods -A --insecure-skip-tls-verify
+                  exit 0
+                  ;;
+              esac
+              ;;
+              
+            # Platform Readiness Check
+            "platform-readiness-check.sh")
+              CMD="./scripts/platform-readiness-check.sh ${{ inputs.environment }} ${{ inputs.action || 'full' }}"
+              ;;
+              
+            # Default command building for other scripts
             *)
-              # Default command building for other scripts
               CMD="./scripts/${{ inputs.script_name }}"
               
               if [ -n "${{ inputs.environment }}" ] && [ "${{ inputs.environment }}" != "all" ]; then
@@ -198,3 +308,10 @@ jobs:
           KUBECONFIG_MONITORING: ${{ secrets.KUBECONFIG_MONITORING }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO_NAME: ${{ github.repository }}
+          
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -f /tmp/kubeconfig-dev /tmp/kubeconfig-test /tmp/kubeconfig-prod /tmp/kubeconfig-monitoring /tmp/kubeconfig
+          rm -f ~/.ssh/k3s-key
+          echo "🧹 Cleanup completed"

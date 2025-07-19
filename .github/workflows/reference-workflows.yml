@@ -1,0 +1,437 @@
+name: Reference Workflows
+# This file contains important logic from deleted workflows for reference purposes
+# DO NOT run this workflow directly - it's for reference only
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_workflow:
+        description: 'Reference workflow to view'
+        required: true
+        type: choice
+        options:
+          - 'argo-rollout-deploy'
+          - 'app-deploy'
+          - 'apply-scaling'
+          - 'kubeconfig-access'
+          - 'quick-kubeconfig-fix'
+
+jobs:
+  # REFERENCE: Argo Rollouts Deployment Logic
+  argo-rollout-deploy-reference:
+    if: ${{ github.event.inputs.reference_workflow == 'argo-rollout-deploy' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reference Only
+        run: echo "This is a reference workflow - do not run directly"
+      
+      - name: Argo Rollouts Deployment Logic
+        run: |
+          # Important logic from argo-rollout-deploy.yml
+          
+          # 1. Install Argo Rollouts CLI
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x ./kubectl-argo-rollouts-linux-amd64
+          sudo mv ./kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+          
+          # 2. Apply Rollout manifest
+          kubectl apply -f kubernetes-manifests/components/health-api/rollout.yaml
+          
+          # 3. Watch rollout status
+          kubectl argo rollouts get rollout health-api -n $ENV --watch
+          
+          # 4. Promote rollout if using canary strategy
+          kubectl argo rollouts promote health-api -n $ENV
+          
+          # 5. Verify service traffic
+          kubectl argo rollouts get rollout health-api -n $ENV
+          
+          # 6. Integration with Istio for traffic management
+          kubectl apply -f kubernetes-manifests/components/networking/virtual-service.yaml
+          
+          # 7. Rollback logic if needed
+          if [ "$ROLLBACK" == "true" ]; then
+            kubectl argo rollouts undo health-api -n $ENV
+          fi
+
+  # REFERENCE: Application Deployment Logic
+  app-deploy-reference:
+    if: ${{ github.event.inputs.reference_workflow == 'app-deploy' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reference Only
+        run: echo "This is a reference workflow - do not run directly"
+      
+      - name: Application Deployment Logic
+        run: |
+          # Important logic from app-deploy.yml
+          
+          # 1. Dynamic environment selection
+          case "$ENV" in
+            "dev")
+              NAMESPACE="dev"
+              REPLICAS=1
+              RESOURCES="requests=cpu=100m,memory=128Mi limits=cpu=200m,memory=256Mi"
+              ;;
+            "test")
+              NAMESPACE="test"
+              REPLICAS=2
+              RESOURCES="requests=cpu=200m,memory=256Mi limits=cpu=400m,memory=512Mi"
+              ;;
+            "prod")
+              NAMESPACE="prod"
+              REPLICAS=3
+              RESOURCES="requests=cpu=400m,memory=512Mi limits=cpu=800m,memory=1Gi"
+              ;;
+          esac
+          
+          # 2. Create namespace if not exists
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          
+          # 3. Apply ConfigMap with environment-specific settings
+          kubectl create configmap app-config -n $NAMESPACE \
+            --from-literal=APP_ENV=$ENV \
+            --from-literal=LOG_LEVEL=$LOG_LEVEL \
+            --from-literal=ENABLE_METRICS=true \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # 4. Apply Secrets
+          kubectl create secret generic app-secrets -n $NAMESPACE \
+            --from-literal=DB_PASSWORD=$DB_PASSWORD \
+            --from-literal=API_KEY=$API_KEY \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          # 5. Dynamic deployment with resource limits
+          cat <<EOF | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: health-api
+            namespace: $NAMESPACE
+          spec:
+            replicas: $REPLICAS
+            selector:
+              matchLabels:
+                app: health-api
+            template:
+              metadata:
+                labels:
+                  app: health-api
+              spec:
+                containers:
+                - name: health-api
+                  image: $IMAGE
+                  resources:
+                    requests:
+                      cpu: ${RESOURCES%% *}
+                      memory: ${RESOURCES#* }
+                    limits:
+                      cpu: ${RESOURCES##* }
+                      memory: ${RESOURCES##* }
+                  envFrom:
+                  - configMapRef:
+                      name: app-config
+                  - secretRef:
+                      name: app-secrets
+                  readinessProbe:
+                    httpGet:
+                      path: /health
+                      port: 8080
+                    initialDelaySeconds: 10
+                    periodSeconds: 5
+                  livenessProbe:
+                    httpGet:
+                      path: /health
+                      port: 8080
+                    initialDelaySeconds: 20
+                    periodSeconds: 10
+          EOF
+          
+          # 6. Apply Service
+          kubectl apply -f kubernetes-manifests/components/health-api/service.yaml
+          
+          # 7. Apply HPA
+          kubectl apply -f kubernetes-manifests/components/health-api/hpa.yaml
+          
+          # 8. Apply NetworkPolicy
+          kubectl apply -f kubernetes-manifests/components/networking/network-policy.yaml
+          
+          # 9. Wait for deployment to be ready
+          kubectl rollout status deployment/health-api -n $NAMESPACE --timeout=300s
+
+  # REFERENCE: Auto-Scaling Logic
+  apply-scaling-reference:
+    if: ${{ github.event.inputs.reference_workflow == 'apply-scaling' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reference Only
+        run: echo "This is a reference workflow - do not run directly"
+      
+      - name: Auto-Scaling Logic
+        run: |
+          # Important logic from apply-scaling.yml
+          
+          # 1. Apply Horizontal Pod Autoscaler with custom metrics
+          cat <<EOF | kubectl apply -f -
+          apiVersion: autoscaling/v2
+          kind: HorizontalPodAutoscaler
+          metadata:
+            name: health-api-hpa
+            namespace: $NAMESPACE
+          spec:
+            scaleTargetRef:
+              apiVersion: apps/v1
+              kind: Deployment
+              name: health-api
+            minReplicas: $MIN_REPLICAS
+            maxReplicas: $MAX_REPLICAS
+            metrics:
+            - type: Resource
+              resource:
+                name: cpu
+                target:
+                  type: Utilization
+                  averageUtilization: 70
+            - type: Resource
+              resource:
+                name: memory
+                target:
+                  type: Utilization
+                  averageUtilization: 80
+            - type: Pods
+              pods:
+                metric:
+                  name: http_requests_per_second
+                target:
+                  type: AverageValue
+                  averageValue: 1000
+            behavior:
+              scaleDown:
+                stabilizationWindowSeconds: 300
+                policies:
+                - type: Percent
+                  value: 10
+                  periodSeconds: 60
+              scaleUp:
+                stabilizationWindowSeconds: 60
+                policies:
+                - type: Percent
+                  value: 20
+                  periodSeconds: 30
+                - type: Pods
+                  value: 2
+                  periodSeconds: 30
+                selectPolicy: Max
+          EOF
+          
+          # 2. Apply Cluster Autoscaler configuration
+          aws autoscaling update-auto-scaling-group \
+            --auto-scaling-group-name $ASG_NAME \
+            --min-size $MIN_NODES \
+            --max-size $MAX_NODES
+          
+          # 3. Apply custom scaling policies
+          aws autoscaling put-scaling-policy \
+            --auto-scaling-group-name $ASG_NAME \
+            --policy-name cpu-scaling-policy \
+            --policy-type TargetTrackingScaling \
+            --target-tracking-configuration file://scaling-policy.json
+          
+          # 4. Apply node affinity and taints for workload separation
+          kubectl label nodes $NODE_NAME workload-type=app-tier
+          kubectl taint nodes $NODE_NAME dedicated=app-tier:NoSchedule
+          
+          # 5. Apply Pod Disruption Budget
+          cat <<EOF | kubectl apply -f -
+          apiVersion: policy/v1
+          kind: PodDisruptionBudget
+          metadata:
+            name: health-api-pdb
+            namespace: $NAMESPACE
+          spec:
+            minAvailable: 1
+            selector:
+              matchLabels:
+                app: health-api
+          EOF
+          
+          # 6. Apply resource quotas
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: ResourceQuota
+          metadata:
+            name: compute-resources
+            namespace: $NAMESPACE
+          spec:
+            hard:
+              requests.cpu: "4"
+              requests.memory: 4Gi
+              limits.cpu: "8"
+              limits.memory: 8Gi
+              pods: "20"
+          EOF
+          
+          # 7. Apply LimitRange
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: LimitRange
+          metadata:
+            name: default-limits
+            namespace: $NAMESPACE
+          spec:
+            limits:
+            - default:
+                cpu: 200m
+                memory: 256Mi
+              defaultRequest:
+                cpu: 100m
+                memory: 128Mi
+              type: Container
+          EOF
+
+  # REFERENCE: Kubeconfig Access Logic
+  kubeconfig-access-reference:
+    if: ${{ github.event.inputs.reference_workflow == 'kubeconfig-access' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reference Only
+        run: echo "This is a reference workflow - do not run directly"
+      
+      - name: Kubeconfig Access Logic
+        run: |
+          # Important logic from kubeconfig-access.yml
+          
+          # 1. SSH into the K3s server to get kubeconfig
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Get kubeconfig from server
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$SERVER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > kubeconfig.yaml
+          
+          # 2. Replace localhost with server IP
+          sed -i "s/127.0.0.1/$SERVER_IP/g" kubeconfig.yaml
+          
+          # 3. Base64 encode for GitHub secrets
+          KUBECONFIG_B64=$(cat kubeconfig.yaml | base64 -w 0)
+          
+          # 4. Create GitHub secret
+          curl -X PUT \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/$REPO_OWNER/$REPO_NAME/actions/secrets/KUBECONFIG_$ENV \
+            -d "{\"encrypted_value\":\"$KUBECONFIG_B64\",\"key_id\":\"$KEY_ID\"}"
+          
+          # 5. Test kubeconfig
+          export KUBECONFIG=kubeconfig.yaml
+          kubectl cluster-info
+          kubectl get nodes
+          
+          # 6. Generate user-specific kubeconfig with limited permissions
+          kubectl create serviceaccount $USERNAME --namespace=default
+          kubectl create clusterrolebinding $USERNAME-binding --clusterrole=view --serviceaccount=default:$USERNAME
+          
+          # Get token
+          SECRET_NAME=$(kubectl get serviceaccount $USERNAME -o jsonpath='{.secrets[0].name}')
+          TOKEN=$(kubectl get secret $SECRET_NAME -o jsonpath='{.data.token}' | base64 --decode)
+          
+          # Create user kubeconfig
+          cat > user-kubeconfig.yaml <<EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - name: k3s-cluster
+            cluster:
+              server: https://$SERVER_IP:6443
+              certificate-authority-data: $(grep certificate-authority-data kubeconfig.yaml | awk '{print $2}')
+          users:
+          - name: $USERNAME
+            user:
+              token: $TOKEN
+          contexts:
+          - name: k3s-context
+            context:
+              cluster: k3s-cluster
+              user: $USERNAME
+          current-context: k3s-context
+          EOF
+
+  # REFERENCE: Quick Kubeconfig Fix Logic
+  quick-kubeconfig-fix-reference:
+    if: ${{ github.event.inputs.reference_workflow == 'quick-kubeconfig-fix' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reference Only
+        run: echo "This is a reference workflow - do not run directly"
+      
+      - name: Quick Kubeconfig Fix Logic
+        run: |
+          # Important logic from quick-kubeconfig-fix.yml
+          
+          # 1. Get instance IP from AWS
+          INSTANCE_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=k3s-server" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+          
+          # 2. Check if kubeconfig exists in GitHub secrets
+          if [ -n "$KUBECONFIG_B64" ]; then
+            echo "$KUBECONFIG_B64" | base64 -d > kubeconfig.yaml
+            
+            # 3. Fix server address in kubeconfig
+            sed -i "s/server: https:\/\/[0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+/server: https:\/\/$INSTANCE_IP/g" kubeconfig.yaml
+            
+            # 4. Test connection
+            export KUBECONFIG=kubeconfig.yaml
+            if kubectl cluster-info; then
+              echo "✅ Kubeconfig fixed successfully"
+              
+              # 5. Update GitHub secret
+              UPDATED_KUBECONFIG_B64=$(cat kubeconfig.yaml | base64 -w 0)
+              # Update GitHub secret logic here
+            else
+              echo "❌ Kubeconfig fix failed"
+              
+              # 6. Regenerate kubeconfig from scratch
+              mkdir -p ~/.ssh
+              echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+              chmod 600 ~/.ssh/id_rsa
+              
+              ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > kubeconfig.yaml
+              sed -i "s/127.0.0.1/$INSTANCE_IP/g" kubeconfig.yaml
+              
+              # 7. Test regenerated kubeconfig
+              export KUBECONFIG=kubeconfig.yaml
+              if kubectl cluster-info; then
+                echo "✅ Kubeconfig regenerated successfully"
+                
+                # 8. Update GitHub secret
+                UPDATED_KUBECONFIG_B64=$(cat kubeconfig.yaml | base64 -w 0)
+                # Update GitHub secret logic here
+              else
+                echo "❌ Kubeconfig regeneration failed"
+              fi
+            fi
+          else
+            echo "❌ No existing kubeconfig found in GitHub secrets"
+            
+            # 9. Generate new kubeconfig
+            mkdir -p ~/.ssh
+            echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+            
+            ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$INSTANCE_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > kubeconfig.yaml
+            sed -i "s/127.0.0.1/$INSTANCE_IP/g" kubeconfig.yaml
+            
+            # 10. Test new kubeconfig
+            export KUBECONFIG=kubeconfig.yaml
+            if kubectl cluster-info; then
+              echo "✅ New kubeconfig generated successfully"
+              
+              # 11. Create GitHub secret
+              NEW_KUBECONFIG_B64=$(cat kubeconfig.yaml | base64 -w 0)
+              # Create GitHub secret logic here
+            else
+              echo "❌ New kubeconfig generation failed"
+            fi
+          fi
