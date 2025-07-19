@@ -47,13 +47,13 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('[\"self-hosted\", \"github-runner-{0}\"]', 'monitoring')) || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON('["self-hosted", "github-runner-monitoring"]') || 'ubuntu-latest' }}
     permissions:
       contents: read
       actions: write
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('[\"lower\", \"higher\", \"monitoring\"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('[\"cleanup\"]') || fromJson(format('[\"{0}\"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Checkout
@@ -268,7 +268,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('[\"lower\", \"higher\", \"monitoring\"]') || fromJson(format('[\"{0}\"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Configure AWS credentials
@@ -341,7 +341,7 @@ jobs:
       runner-ready: ${{ steps.check-runner.outputs.ready }}
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('[\"lower\", \"higher\", \"monitoring\"]') || fromJson(format('[\"{0}\"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Configure AWS credentials
@@ -401,10 +401,10 @@ jobs:
   setup-kubeconfig:
     needs: [infrastructure, cleanup-orphaned]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('[\"self-hosted\", \"github-runner-lower\"]') || github.event.inputs.environment == 'higher' && fromJSON('[\"self-hosted\", \"github-runner-higher\"]') || github.event.inputs.environment == 'monitoring' && fromJSON('[\"self-hosted\", \"github-runner-monitoring\"]') || fromJSON('[\"self-hosted\", \"github-runner-lower\"]') }}
+    runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || fromJSON('["self-hosted", "github-runner-lower"]') }}
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('[\"lower\", \"higher\", \"monitoring\"]') || fromJson(format('[\"{0}\"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Checkout
