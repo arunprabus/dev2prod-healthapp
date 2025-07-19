@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-api-config
+  namespace: health-app-test
+data:
+  ENVIRONMENT: "test"
+  AWS_REGION: "ap-south-1"

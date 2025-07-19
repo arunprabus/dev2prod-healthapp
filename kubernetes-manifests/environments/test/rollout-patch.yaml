@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: health-api-rollout
+  namespace: health-app-test
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: health-api
+        image: health-api:test
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
