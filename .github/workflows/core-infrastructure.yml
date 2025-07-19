@@ -72,7 +72,7 @@ jobs:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
     - name: Terraform Init
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       run: |
         echo "🔍 Backend Configuration:"
         echo "- Bucket: ${{ secrets.TF_STATE_BUCKET }}"
@@ -85,48 +85,39 @@ jobs:
           -backend-config="region=$AWS_REGION"
 
     - name: Terraform Plan
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
         echo "📋 Planning infrastructure changes..."
         terraform plan \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
-          -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
+          -var="enable_istio=true" \
+          -var="enable_prometheus=true" \
+          -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
           -out=tfplan
 
     - name: Terraform Destroy (for redeploy)
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       if: github.event.inputs.action == 'redeploy'
       run: |
         echo "🧹 Destroying existing resources first..."
         terraform destroy \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -var="restore_from_snapshot=false" \
-          -var="snapshot_identifier=null" \
+          -var="enable_istio=true" \
+          -var="enable_prometheus=true" \
+          -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
           -auto-approve || echo "Destroy completed with warnings"
 
     - name: Terraform Apply
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       run: |
         echo "🚀 Applying infrastructure changes..."
         terraform apply \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
-          -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
+          -var="enable_istio=true" \
+          -var="enable_prometheus=true" \
+          -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
           -auto-approve
         
         echo "✅ Infrastructure deployed successfully"
@@ -145,11 +136,14 @@ jobs:
         TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
         GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
         REPO_NAME: ${{ secrets.REPO_NAME }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'changeme123!' }}
+        API_KEY: ${{ secrets.API_KEY || 'api-key-default' }}
+        JWT_SECRET: ${{ secrets.JWT_SECRET || 'jwt-secret-default' }}
       run: |
         echo "🔧 Configuring K3s cluster with Ansible for ${{ matrix.env }} network"
         
         # Get cluster IP from terraform output
-        cd infra/two-network-setup
+        cd infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
         CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
         
         if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
@@ -158,7 +152,7 @@ jobs:
         fi
         
         echo "🎯 Cluster IP: $CLUSTER_IP"
-        cd ../..
+        cd ../../..
         
         # Setup SSH key for Ansible
         echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
@@ -180,11 +174,64 @@ jobs:
         
         # Cleanup
         rm -f /tmp/ssh_key /tmp/kubeconfig-$ENVIRONMENT.yaml
-
-
+        
+    - name: Create Kubernetes Secrets
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'changeme123!' }}
+        API_KEY: ${{ secrets.API_KEY || 'api-key-default' }}
+        JWT_SECRET: ${{ secrets.JWT_SECRET || 'jwt-secret-default' }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
+      run: |
+        echo "🔐 Creating Kubernetes Secrets for ${{ matrix.env }} environment"
+        
+        # Get cluster IP from terraform output
+        cd infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
+        CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+        cd ../../..
+        
+        # Download kubeconfig from S3
+        aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig-${{ matrix.env }}.yaml /tmp/kubeconfig
+        
+        # Set namespace based on environment
+        NAMESPACE="health-app-${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}"
+        
+        # Create namespace if it doesn't exist
+        kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Base64 encode secrets (using proper encoding for Kubernetes secrets)
+        DB_PASSWORD_BASE64=$(echo -n "$DB_PASSWORD" | base64 -w 0)
+        API_KEY_BASE64=$(echo -n "$API_KEY" | base64 -w 0)
+        JWT_SECRET_BASE64=$(echo -n "$JWT_SECRET" | base64 -w 0)
+        AWS_ACCESS_KEY_ID_BASE64=$(echo -n "$AWS_ACCESS_KEY_ID" | base64 -w 0)
+        AWS_SECRET_ACCESS_KEY_BASE64=$(echo -n "$AWS_SECRET_ACCESS_KEY" | base64 -w 0)
+        AWS_REGION_BASE64=$(echo -n "$AWS_REGION" | base64 -w 0)
+        GITHUB_TOKEN_BASE64=$(echo -n "$GITHUB_TOKEN" | base64 -w 0)
+        
+        # Generate secrets from template
+        cat k8s/secrets-template.yaml | \
+          sed "s/\${NAMESPACE}/$NAMESPACE/g" | \
+          sed "s/\${DB_PASSWORD_BASE64}/$DB_PASSWORD_BASE64/g" | \
+          sed "s/\${API_KEY_BASE64}/$API_KEY_BASE64/g" | \
+          sed "s/\${JWT_SECRET_BASE64}/$JWT_SECRET_BASE64/g" | \
+          sed "s/\${AWS_ACCESS_KEY_ID_BASE64}/$AWS_ACCESS_KEY_ID_BASE64/g" | \
+          sed "s/\${AWS_SECRET_ACCESS_KEY_BASE64}/$AWS_SECRET_ACCESS_KEY_BASE64/g" | \
+          sed "s/\${AWS_REGION_BASE64}/$AWS_REGION_BASE64/g" | \
+          sed "s/\${GITHUB_TOKEN_BASE64}/$GITHUB_TOKEN_BASE64/g" > /tmp/secrets.yaml
+        
+        # Apply secrets
+        kubectl apply -f /tmp/secrets.yaml
+        
+        echo "✅ Kubernetes Secrets created successfully"
+        
+        # Cleanup
+        rm -f /tmp/secrets.yaml /tmp/kubeconfig
 
     - name: Terraform Destroy
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       if: github.event.inputs.action == 'destroy'
       run: |
         echo "🧹 Destroying infrastructure..."
@@ -195,20 +242,17 @@ jobs:
         fi
         
         terraform destroy \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
           -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -var="restore_from_snapshot=false" \
-          -var="snapshot_identifier=null" \
+          -var="enable_istio=true" \
+          -var="enable_prometheus=true" \
+          -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
           -auto-approve
         
         echo "✅ Infrastructure destroyed successfully"
 
     - name: Post-deployment Summary
       if: success() && (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       run: |
         echo "✅ Infrastructure deployment completed successfully!"
         echo "📋 Summary for ${{ matrix.env }} network:"
@@ -379,7 +423,7 @@ jobs:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
 
     - name: Terraform Init (for outputs)
-      working-directory: infra/two-network-setup
+      working-directory: infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
       run: |
         terraform init \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
@@ -408,7 +452,7 @@ jobs:
         echo "🔧 Setting up kubeconfig for ${{ matrix.env }} network"
         
         # Get cluster IP from terraform output
-        cd infra/two-network-setup
+        cd infra/envs/${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}
         CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
         
         if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
@@ -417,7 +461,7 @@ jobs:
         fi
         
         echo "🎯 Cluster IP: $CLUSTER_IP"
-        cd ../..
+        cd ../../..
         
         # Setup SSH key
         echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
@@ -475,4 +519,3 @@ jobs:
         echo "🎉 Kubeconfig setup completed!"
         echo "📍 S3 location: s3://$TF_STATE_BUCKET/$S3_KEY"
         echo "🔐 GitHub secret: $SECRET_NAME"
-

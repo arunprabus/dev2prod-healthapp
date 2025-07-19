@@ -64,6 +64,25 @@
     KUBECONFIG: "{{ kubeconfig_path }}"
   when: k3s_ready.state == "present"
 
+- name: Base64 encode kubeconfig for GitHub secret
+  set_fact:
+    kubeconfig_base64: "{{ fixed_kubeconfig | b64encode }}"
+  when: fixed_kubeconfig is defined
+  delegate_to: localhost
+
+- name: Get GitHub public key for secret encryption
+  uri:
+    url: "https://api.github.com/repos/{{ repo_name }}/actions/secrets/public-key"
+    method: GET
+    headers:
+      Authorization: "token {{ github_token }}"
+      Accept: "application/vnd.github.v3+json"
+    status_code: 200
+  register: github_public_key
+  when: github_token != '' and repo_name != '' and fixed_kubeconfig is defined
+  delegate_to: localhost
+  no_log: true
+
 - name: Create GitHub secret for kubeconfig
   uri:
     url: "https://api.github.com/repos/{{ repo_name }}/actions/secrets/KUBECONFIG_{{ environment | upper }}"
@@ -73,10 +92,10 @@
       Accept: "application/vnd.github.v3+json"
     body_format: json
     body:
-      encrypted_value: "{{ fixed_kubeconfig | b64encode }}"
-      key_id: "{{ lookup('env', 'GITHUB_KEY_ID') }}"
+      encrypted_value: "{{ kubeconfig_base64 }}"
+      key_id: "{{ github_public_key.json.key_id }}"
     status_code: 201, 204
-  when: github_token != '' and repo_name != '' and fixed_kubeconfig is defined
+  when: github_token != '' and repo_name != '' and fixed_kubeconfig is defined and github_public_key is defined
   no_log: true
   delegate_to: localhost
   ignore_errors: yes

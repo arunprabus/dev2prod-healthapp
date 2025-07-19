@@ -132,6 +132,91 @@ jobs:
           # Wait for rollout
           echo "⏳ Waiting for deployment rollout..."
           kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s --insecure-skip-tls-verify
+          
+      - name: Apply scaling configuration
+        run: |
+          echo "⚖️ Applying scaling configuration for $APP_NAME"
+          
+          # Apply HPA based on environment
+          if [ "$ENVIRONMENT" = "prod" ]; then
+            # Production gets more resources and advanced scaling
+            cat <<EOF | kubectl apply -f - --insecure-skip-tls-verify
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+            metadata:
+              name: $APP_NAME-hpa
+              namespace: $NAMESPACE
+            spec:
+              scaleTargetRef:
+                apiVersion: apps/v1
+                kind: Deployment
+                name: $APP_NAME
+              minReplicas: 3
+              maxReplicas: 10
+              metrics:
+              - type: Resource
+                resource:
+                  name: cpu
+                  target:
+                    type: Utilization
+                    averageUtilization: 70
+              - type: Resource
+                resource:
+                  name: memory
+                  target:
+                    type: Utilization
+                    averageUtilization: 80
+              behavior:
+                scaleUp:
+                  stabilizationWindowSeconds: 60
+                  policies:
+                  - type: Percent
+                    value: 100
+                    periodSeconds: 15
+                  - type: Pods
+                    value: 4
+                    periodSeconds: 15
+                  selectPolicy: Max
+                scaleDown:
+                  stabilizationWindowSeconds: 300
+                  policies:
+                  - type: Percent
+                    value: 10
+                    periodSeconds: 60
+            EOF
+          else
+            # Dev/Test get standard scaling
+            cat <<EOF | kubectl apply -f - --insecure-skip-tls-verify
+            apiVersion: autoscaling/v2
+            kind: HorizontalPodAutoscaler
+            metadata:
+              name: $APP_NAME-hpa
+              namespace: $NAMESPACE
+            spec:
+              scaleTargetRef:
+                apiVersion: apps/v1
+                kind: Deployment
+                name: $APP_NAME
+              minReplicas: 2
+              maxReplicas: 5
+              metrics:
+              - type: Resource
+                resource:
+                  name: cpu
+                  target:
+                    type: Utilization
+                    averageUtilization: 70
+              - type: Resource
+                resource:
+                  name: memory
+                  target:
+                    type: Utilization
+                    averageUtilization: 80
+            EOF
+          fi
+          
+          echo "✅ Scaling configuration applied"
+          kubectl get hpa $APP_NAME-hpa -n $NAMESPACE --insecure-skip-tls-verify
 
       - name: Verify deployment
         run: |

@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nodejs-app
+  namespace: ${NAMESPACE}
+  labels:
+    app: nodejs-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nodejs-app
+  template:
+    metadata:
+      labels:
+        app: nodejs-app
+    spec:
+      initContainers:
+      - name: init-env
+        image: busybox
+        command: ["sh", "-c"]
+        args:
+          - |
+            echo "# Auto-generated .env file - DO NOT EDIT MANUALLY" > /app/.env
+            echo "# Generated on $(date)" >> /app/.env
+            echo "" >> /app/.env
+            echo "# Database Configuration" >> /app/.env
+            echo "DB_HOST=${DB_HOST}" >> /app/.env
+            echo "DB_PORT=${DB_PORT}" >> /app/.env
+            echo "DB_NAME=${DB_NAME}" >> /app/.env
+            echo "DB_USER=${DB_USER}" >> /app/.env
+            echo "DB_PASSWORD=$(cat /secrets/db-password)" >> /app/.env
+            echo "" >> /app/.env
+            echo "# API Configuration" >> /app/.env
+            echo "API_KEY=$(cat /secrets/api-key)" >> /app/.env
+            echo "JWT_SECRET=$(cat /secrets/jwt-secret)" >> /app/.env
+            echo "NODE_ENV=${NODE_ENV}" >> /app/.env
+            echo "PORT=${PORT}" >> /app/.env
+            echo "" >> /app/.env
+            echo "# AWS Configuration" >> /app/.env
+            echo "AWS_ACCESS_KEY_ID=$(cat /aws-secrets/aws-access-key-id)" >> /app/.env
+            echo "AWS_SECRET_ACCESS_KEY=$(cat /aws-secrets/aws-secret-access-key)" >> /app/.env
+            echo "AWS_REGION=$(cat /aws-secrets/aws-region)" >> /app/.env
+            echo "" >> /app/.env
+            echo "# Application Settings" >> /app/.env
+            echo "LOG_LEVEL=${LOG_LEVEL}" >> /app/.env
+            echo "ENABLE_CACHE=${ENABLE_CACHE}" >> /app/.env
+            echo "RATE_LIMIT=${RATE_LIMIT}" >> /app/.env
+        env:
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: DB_USER
+        - name: NODE_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: NODE_ENV
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: PORT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: LOG_LEVEL
+        - name: ENABLE_CACHE
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: ENABLE_CACHE
+        - name: RATE_LIMIT
+          valueFrom:
+            configMapKeyRef:
+              name: nodejs-config
+              key: RATE_LIMIT
+        volumeMounts:
+        - name: env-file
+          mountPath: /app
+        - name: app-secrets
+          mountPath: /secrets
+        - name: aws-secrets
+          mountPath: /aws-secrets
+      containers:
+      - name: nodejs-app
+        image: ${IMAGE}:${TAG}
+        ports:
+        - containerPort: 3000
+        volumeMounts:
+        - name: env-file
+          mountPath: /app/.env
+          subPath: .env
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 20
+          periodSeconds: 15
+      volumes:
+      - name: env-file
+        emptyDir: {}
+      - name: app-secrets
+        secret:
+          secretName: app-credentials
+      - name: aws-secrets
+        secret:
+          secretName: aws-credentials
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nodejs-config
+  namespace: ${NAMESPACE}
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  DB_HOST: "health-app-db.${NAMESPACE}.svc.cluster.local"
+  DB_PORT: "5432"
+  DB_NAME: "healthapp"
+  DB_USER: "admin"
+  PORT: "3000"
+  ENABLE_CACHE: "true"
+  RATE_LIMIT: "100"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nodejs-app-service
+  namespace: ${NAMESPACE}
+spec:
+  selector:
+    app: nodejs-app
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
