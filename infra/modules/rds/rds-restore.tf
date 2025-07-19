@@ -16,8 +16,8 @@ resource "aws_db_instance" "healthapi_restored" {
   storage_encrypted    = true
   
   db_name  = "healthapi"
-  username = var.db_username
-  password = var.db_password
+  username = var.username
+  password = var.password
   
   vpc_security_group_ids = [aws_security_group.db.id]
   db_subnet_group_name   = aws_db_subnet_group.health_db.name
@@ -34,22 +34,4 @@ resource "aws_db_instance" "healthapi_restored" {
   }
 }
 
-# Variables for restore
-variable "restore_from_snapshot" {
-  description = "Whether to restore from snapshot"
-  type        = bool
-  default     = false
-}
-
-variable "db_username" {
-  description = "Database username"
-  type        = string
-  default     = "postgres"
-}
-
-variable "db_password" {
-  description = "Database password"
-  type        = string
-  sensitive   = true
-  default     = "changeme123!"
-}
+# Using variables from variables.tf

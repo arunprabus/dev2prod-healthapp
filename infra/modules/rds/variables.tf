@@ -43,6 +43,13 @@ variable "username" {
   type        = string
 }
 
+variable "password" {
+  description = "Database password"
+  type        = string
+  sensitive   = true
+  default     = "changeme123!"
+}
+
 variable "backup_retention_period" {
   description = "Backup retention period"
   type        = number

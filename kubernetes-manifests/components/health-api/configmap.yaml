@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: health-api-config
+  namespace: health-app-${ENVIRONMENT}
+data:
+  REDIS_HOST: "redis-service"
+  ENVIRONMENT: "${ENVIRONMENT}"
+  AWS_REGION: "${AWS_REGION}"

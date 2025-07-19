@@ -1,0 +1,86 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: health-api-rollout
+  namespace: health-app-${ENVIRONMENT}
+spec:
+  replicas: ${REPLICAS}
+  selector:
+    matchLabels:
+      app: health-api
+  template:
+    metadata:
+      labels:
+        app: health-api
+    spec:
+      containers:
+      - name: health-api
+        image: ${IMAGE}:${TAG}
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: health-api-ssm-secrets
+              key: db-host
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: health-api-ssm-secrets
+              key: db-name
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: health-api-ssm-secrets
+              key: db-user
+        - name: AWS_REGION
+          valueFrom:
+            configMapKeyRef:
+              name: health-api-config
+              key: AWS_REGION
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: health-api-secrets
+              key: DB_PASSWORD
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: health-api-secrets
+              key: JWT_SECRET
+        - name: ENVIRONMENT
+          valueFrom:
+            configMapKeyRef:
+              name: health-api-config
+              key: ENVIRONMENT
+        resources:
+          requests:
+            memory: "${MEMORY_REQUEST}"
+            cpu: "${CPU_REQUEST}"
+          limits:
+            memory: "${MEMORY_LIMIT}"
+            cpu: "${CPU_LIMIT}"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  strategy:
+    blueGreen:
+      activeService: health-api-active
+      previewService: health-api-preview
+      autoPromotionEnabled: false
+      prePromotionAnalysis:
+        templates:
+        - templateName: smoke-tests
+      postPromotionAnalysis:
+        templates:
+        - templateName: integration-tests

@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: health-app-prod
+
+resources:
+- ../../base/namespaces.yaml
+- ../../components/progressive-delivery/blue-green-rollout.yaml
+- ../../components/health-api/service.yaml
+- ../../components/health-api/configmap.yaml
+- ../../components/health-api/secrets.yaml
+- ../../components/health-api/hpa.yaml
+- ../../components/networking/network-policies.yaml
+
+patchesStrategicMerge:
+- rollout-patch.yaml
+- configmap-patch.yaml
+- hpa-patch.yaml

@@ -1,118 +1,91 @@
-# Infrastructure Setup Guide
+# Health App Infrastructure
 
-## 🎯 Choose Your Learning Path
+This directory contains the infrastructure code for the Health App platform, configured for Kubernetes (K3s) instead of EKS for cost-effective, production-ready deployments.
 
-### 🆓 Option 1: Free Tier Setup (Recommended for Beginners)
-**Cost: $0/month** - Perfect for learning Kubernetes fundamentals
+## Directory Structure
+
+```
+├── backend-configs/         # Terraform state configurations
+├── environments/            # Environment-specific variables
+├── modules/                 # Reusable Terraform modules
+│   ├── argo-rollouts/       # Progressive delivery with Argo Rollouts
+│   ├── deployment/          # Application deployment
+│   ├── github-runner/       # Self-hosted GitHub runners
+│   ├── k3s/                 # K3s cluster setup
+│   ├── lambda/              # AWS Lambda functions for automation
+│   ├── monitoring/          # Prometheus + Grafana monitoring
+│   ├── rds/                 # Database setup
+│   ├── vpc/                 # Network configuration
+│   └── vpc_peering/         # VPC peering connections
+├── three-tier-network/      # Three-tier network architecture
+│   ├── environments/        # Network-specific configurations
+│   ├── main.tf              # Main Terraform configuration
+│   ├── outputs.tf           # Output values
+│   ├── variables.tf         # Input variables
+│   └── README.md            # Network architecture documentation
+├── backend.tf               # Terraform backend configuration
+├── locals.tf                # Local variables and naming conventions
+├── main.tf                  # Main Terraform configuration
+├── outputs.tf               # Output values
+├── variables.tf             # Input variables
+└── variables-tags.tf        # Resource tagging variables
+```
+
+## Network Architecture
+
+The infrastructure is organized into a three-tier network architecture:
+
+1. **Lower Network** - Contains Dev and Test environments with shared database
+2. **Higher Network** - Contains Production environment with dedicated database
+3. **Monitoring Network** - Contains centralized monitoring and connects to both networks
+
+For detailed information about the three-tier network architecture, see the [three-tier-network/README.md](./three-tier-network/README.md) file.
+
+## Deployment Options
+
+You can deploy the infrastructure using either:
+
+1. **Root Directory** - Deploy individual environments using the main.tf in the root directory
+2. **Three-Tier Network** - Deploy the complete three-tier architecture using the three-tier-network directory
+
+### Option 1: Individual Environment Deployment
 
 ```bash
-cd envs/free-tier
-make init-free && make apply-free
+# Initialize Terraform
+terraform init -backend-config=backend-configs/dev.tfbackend
+
+# Deploy Dev Environment
+terraform apply -var-file=environments/dev.tfvars
 ```
 
-**What you get:**
-- K3s Kubernetes cluster on EC2 t2.micro
-- RDS MySQL database (db.t3.micro)
-- Complete VPC networking
-- 100% within AWS free tier
-
-### 💼 Option 2: Production EKS Setup
-**Cost: $73/month per environment** - Enterprise-grade setup
+### Option 2: Three-Tier Network Deployment
 
 ```bash
-# Single environment
-cd envs/dev
-make init-dev && make apply-dev
+# Change to the three-tier-network directory
+cd three-tier-network
 
-# All environments (dev/qa/prod)
-make init-dev && make apply-dev
-make init-qa && make apply-qa  
-make init-prod && make apply-prod
+# Initialize Terraform
+terraform init
+
+# Deploy Lower Network (Dev + Test)
+terraform apply -var-file=environments/lower.tfvars
+
+# Deploy Higher Network (Production)
+terraform apply -var-file=environments/higher.tfvars
+
+# Deploy Monitoring Network
+terraform apply -var-file=environments/monitoring.tfvars
 ```
 
-**What you get:**
-- Managed EKS clusters
-- Blue-green deployments
-- Multi-environment isolation
-- Production-ready architecture
+## Modules
 
-## 📊 Feature Comparison
+The infrastructure is organized into reusable modules:
 
-| Feature | Free Tier (K3s) | Production (EKS) |
-|---------|-----------------|------------------|
-| **Cost** | $0/month | $73/month per env |
-| **Kubernetes** | ✅ K3s | ✅ Managed EKS |
-| **Database** | ✅ RDS MySQL | ✅ RDS MySQL |
-| **Networking** | ✅ VPC | ✅ VPC |
-| **Auto-scaling** | ❌ Manual | ✅ HPA/VPA |
-| **Blue-Green** | ❌ Basic | ✅ Advanced |
-| **Multi-env** | ❌ Single | ✅ Dev/QA/Prod |
-| **Learning Value** | High | Very High |
-
-## 🚀 Quick Commands
-
-### Free Tier Commands
-```bash
-make init-free     # Initialize free tier
-make apply-free    # Deploy (100% FREE)
-make destroy-free  # Clean up
-```
-
-### EKS Commands
-```bash
-make init-dev && make apply-dev      # Dev environment
-make init-qa && make apply-qa        # QA environment  
-make init-prod && make apply-prod    # Prod environment
-```
-
-## 📁 Directory Structure
-
-```
-infra/
-├── envs/
-│   ├── free-tier/    # 🆓 K3s setup ($0/month)
-│   ├── dev/          # 💼 EKS dev ($73/month)
-│   ├── qa/           # 💼 EKS qa ($73/month)
-│   └── prod/         # 💼 EKS prod ($73/month)
-├── modules/
-│   ├── k3s/          # K3s on EC2 module
-│   ├── eks/          # EKS module
-│   ├── vpc/          # VPC module
-│   └── rds/          # RDS module
-└── backend-configs/  # Terraform state configs
-```
-
-## 💡 Recommendations
-
-### For AWS Beginners
-1. **Start with free-tier**: Learn fundamentals without cost
-2. **Master basics**: VPC, EC2, RDS, Security Groups
-3. **Understand Kubernetes**: Pods, services, deployments
-4. **Then upgrade**: Move to EKS when ready
-
-### For Production Learning
-1. **Use single EKS environment**: Start with dev only
-2. **Learn blue-green deployments**: Zero-downtime updates
-3. **Master auto-scaling**: HPA, VPA, cluster scaling
-4. **Add environments**: Expand to QA and prod
-
-## 🔧 Prerequisites
-
-### Free Tier Setup
-- AWS CLI configured
-- SSH key pair generated
-- Basic Terraform knowledge
-
-### EKS Setup
-- AWS CLI configured
-- GitHub repository secrets
-- Docker images ready
-- Advanced Terraform knowledge
-
-## 📚 Learning Resources
-
-- [Free Tier Setup Guide](envs/free-tier/README.md)
-- [Cost Warning Guide](envs/COST-WARNING.md)
-- [Free Tier Features](FREE-TIER-GUIDE.md)
-
-**Start free, learn fundamentals, then scale to production!**
+- **vpc** - Network configuration with public and private subnets
+- **k3s** - Lightweight Kubernetes cluster setup
+- **rds** - Database setup with backup and restore capabilities
+- **github-runner** - Self-hosted GitHub runners for CI/CD
+- **monitoring** - Prometheus and Grafana monitoring stack
+- **argo-rollouts** - Progressive delivery with canary and blue/green deployments
+- **lambda** - AWS Lambda functions for cost optimization and automation
+- **vpc_peering** - VPC peering connections for network communication

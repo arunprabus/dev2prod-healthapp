@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: health-app-dev
+  labels:
+    name: health-app-dev
+    network: lower
+    environment: dev
+    app.kubernetes.io/name: health-app
+    app.kubernetes.io/instance: health-app-dev
+    app.kubernetes.io/managed-by: terraform
+    project: health-app
+    team: devops-team
+    cost-center: engineering
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: health-app-test
+  labels:
+    name: health-app-test
+    network: lower
+    environment: test
+    app.kubernetes.io/name: health-app
+    app.kubernetes.io/instance: health-app-test
+    app.kubernetes.io/managed-by: terraform
+    project: health-app
+    team: devops-team
+    cost-center: engineering
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: health-app-prod
+  labels:
+    name: health-app-prod
+    network: higher
+    environment: prod
+    app.kubernetes.io/name: health-app
+    app.kubernetes.io/instance: health-app-prod
+    app.kubernetes.io/managed-by: terraform
+    project: health-app
+    team: devops-team
+    cost-center: engineering
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    name: monitoring
+    network: monitoring
+    environment: monitoring

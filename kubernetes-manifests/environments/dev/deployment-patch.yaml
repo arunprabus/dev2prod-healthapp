@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: health-api-backend-dev
+  namespace: health-app-dev
+spec:
+  replicas: 2
+  template:
+    spec:
+      containers:
+      - name: health-api
+        image: health-api:latest
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"

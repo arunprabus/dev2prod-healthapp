@@ -1,0 +1,8 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: health-api-hpa
+  namespace: health-app-prod
+spec:
+  minReplicas: 2
+  maxReplicas: 10
