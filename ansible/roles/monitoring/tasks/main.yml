@@ -1,0 +1,64 @@
+---
+# Main tasks for monitoring role
+- name: Create monitoring namespace
+  kubernetes.core.k8s:
+    name: monitoring
+    api_version: v1
+    kind: Namespace
+    state: present
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: environment == 'monitoring'
+
+- name: Install Prometheus operator
+  shell: |
+    kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/main/manifests/setup/namespace.yaml
+    kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/main/manifests/setup/prometheus-operator-deployment.yaml
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: environment == 'monitoring'
+  ignore_errors: yes
+  
+- name: Wait for Prometheus operator to be ready
+  shell: kubectl -n monitoring get pods | grep prometheus-operator
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  register: prometheus_status
+  until: prometheus_status.rc == 0
+  retries: 10
+  delay: 10
+  ignore_errors: yes
+  when: environment == 'monitoring'
+  
+- name: Install Grafana
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ role_path }}/templates/grafana.yaml"
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: environment == 'monitoring'
+  ignore_errors: yes
+  
+- name: Setup monitoring for K3s clusters
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: k3s-metrics
+        namespace: monitoring
+      spec:
+        selector:
+          matchLabels:
+            k8s-app: kubernetes
+        endpoints:
+        - port: https
+          interval: 30s
+          scheme: https
+          tlsConfig:
+            insecureSkipVerify: true
+  environment:
+    KUBECONFIG: "{{ kubeconfig_path }}"
+  when: environment == 'monitoring'
+  ignore_errors: yes

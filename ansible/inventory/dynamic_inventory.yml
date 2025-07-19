@@ -1,0 +1,4 @@
+---
+# Dynamic inventory for K3s clusters
+plugin: script
+inventory_exec: ../scripts/get_k3s_hosts.py

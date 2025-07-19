@@ -1,21 +1,15 @@
-variable "aws_region" {
-  description = "AWS region"
+variable "argo_namespace" {
+  description = "Namespace for Argo Rollouts"
   type        = string
-  default     = "ap-south-1"
+  default     = "argo-rollouts"
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key for K3s instance"
-  type        = string
+variable "app_namespaces" {
+  description = "List of application namespaces to create"
+  type        = list(string)
+  default     = ["health-app-dev", "health-app-test", "health-app-prod"]
 }
 
-variable "k3s_endpoint" {
-  description = "K3s API endpoint"
-  type        = string
-  default     = ""
-}
-
-# Argo Rollouts variables
 variable "enable_istio" {
   description = "Whether to enable Istio service mesh"
   type        = bool
@@ -25,7 +19,7 @@ variable "enable_istio" {
 variable "enable_prometheus" {
   description = "Whether to enable Prometheus monitoring"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "argo_rollouts_version" {
@@ -43,5 +37,5 @@ variable "istio_version" {
 variable "domain_name" {
   description = "Domain name for Istio virtual services"
   type        = string
-  default     = "dev.health-app.local"
+  default     = "example.com"
 }

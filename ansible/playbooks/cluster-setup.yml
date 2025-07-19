@@ -1,0 +1,61 @@
+---
+# Comprehensive playbook for K3s cluster setup and configuration
+- name: Configure K3s cluster
+  hosts: k3s_master
+  become: true
+  vars:
+    environment: "{{ hostvars['k3s_master']['environment'] }}"
+    cluster_ip: "{{ hostvars['k3s_master']['ansible_host'] }}"
+    github_token: "{{ github_token | default('') }}"
+    repo_name: "{{ repo_name | default('') }}"
+    kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
+    namespace: "health-app-{{ environment }}"
+    
+  roles:
+    # Apply the K3s role for all environments
+    - role: k3s
+      vars:
+        environment: "{{ environment }}"
+        cluster_ip: "{{ cluster_ip }}"
+        github_token: "{{ github_token }}"
+        repo_name: "{{ repo_name }}"
+    
+    # Apply the monitoring role only for monitoring environment
+    - role: monitoring
+      when: environment == 'monitoring'
+      
+  tasks:
+    - name: Apply network policies
+      kubernetes.core.k8s:
+        state: present
+        src: "../../k8s/network-policies.yaml"
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      ignore_errors: yes
+      
+    - name: Verify cluster health
+      shell: kubectl get nodes,pods --all-namespaces
+      environment:
+        KUBECONFIG: "{{ kubeconfig_path }}"
+      register: cluster_status
+      changed_when: false
+      
+    - name: Show cluster status
+      debug:
+        var: cluster_status.stdout_lines
+        
+    - name: Show connection information
+      debug:
+        msg: |
+          ✅ K3s cluster setup complete!
+          
+          📋 Connection Information:
+          - Environment: {{ environment }}
+          - Cluster IP: {{ cluster_ip }}
+          - Kubeconfig: /tmp/kubeconfig-{{ environment }}.yaml
+          - GitHub Secret: KUBECONFIG_{{ environment | upper }}
+          
+          🚀 Next Steps:
+          - Deploy applications using kubectl or GitHub Actions
+          - Access monitoring dashboard (if monitoring environment)
+          - Configure additional resources as needed

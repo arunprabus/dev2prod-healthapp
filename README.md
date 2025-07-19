@@ -17,6 +17,8 @@ This repository contains the complete infrastructure and deployment pipeline for
 - ✅ **Production Ready** - Reliable service startup and cleanup
 - ✅ **Session Manager** - Secure browser-based terminal access
 - ✅ **Unified Key Management** - Consistent SSH keys across all instances
+- ✅ **Progressive Delivery** - Argo Rollouts with canary and blue/green deployments
+- ✅ **Service Mesh Integration** - Istio for advanced traffic management
 
 ## 📁 Clean Repository Structure
 
@@ -69,16 +71,46 @@ The infrastructure code manages the following resources:
 
 ### Infrastructure
 
-The infrastructure is deployed using the GitHub Actions workflow in `.github/workflows/infra-deploy.yml`. This creates the base infrastructure for each environment (development, test, production).
+The infrastructure is deployed using the GitHub Actions workflow in `.github/workflows/core-infrastructure.yml`. This creates the base infrastructure for each environment (development, test, production).
 
 ### Applications
 
 Application deployments are handled through the following process:
 
 1. Code is pushed to the application repositories (HealthApi or HealthFrontend)
-2. The `.github/workflows/app-deploy.yml` workflow is triggered
+2. The `.github/workflows/core-deployment.yml` workflow is triggered
 3. The workflow builds the application and pushes it to the container registry
-4. ArgoCD detects the changes and deploys the application to the appropriate environment
+4. Argo Rollouts manages the deployment with advanced strategies
+
+### Progressive Delivery with Argo Rollouts
+
+We use Argo Rollouts for advanced deployment strategies:
+
+1. **Canary Deployments**: Gradually shift traffic to the new version
+2. **Blue/Green Deployments**: Switch traffic all at once after validation
+3. **Traffic Management**: Integration with Istio service mesh
+
+#### Using GitHub Actions for Argo Rollouts Deployments
+
+1. Go to Actions → Argo Rollout Deployment
+2. Click "Run workflow"
+3. Fill in the parameters:
+   - **Environment**: Select `dev`, `test`, or `prod`
+   - **Image tag**: Enter the version to deploy
+   - **Strategy**: Choose `canary` or `blueGreen`
+   - **Traffic router**: Select `istio` for service mesh routing
+4. Click "Run workflow"
+
+#### Monitoring Deployments via Argo Rollouts Dashboard
+
+```bash
+# Port-forward the dashboard service
+kubectl port-forward svc/argo-rollouts-dashboard -n argo-rollouts 3100:3100
+
+# Access the dashboard at http://localhost:3100/rollouts
+```
+
+For more details, see [Argo Rollouts Documentation](docs/ARGO-ROLLOUTS.md)
 
 ### Environment Targeting
 

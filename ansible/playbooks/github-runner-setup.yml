@@ -1,0 +1,198 @@
+---
+# Ansible playbook for GitHub runner setup and management
+- name: Configure GitHub Runner
+  hosts: github_runners
+  become: true
+  vars:
+    github_token: "{{ github_token | default('') }}"
+    repo_name: "{{ repo_name | default('') }}"
+    runner_name: "github-runner-{{ network_tier }}-{{ ansible_hostname }}"
+    runner_version: "2.303.0"
+    runner_user: "github-runner"
+    runner_group: "github-runner"
+    runner_home: "/home/{{ runner_user }}"
+    
+  tasks:
+    - name: Create runner user
+      user:
+        name: "{{ runner_user }}"
+        group: "{{ runner_group }}"
+        home: "{{ runner_home }}"
+        shell: /bin/bash
+        system: yes
+        create_home: yes
+        
+    - name: Install required packages
+      apt:
+        name:
+          - curl
+          - jq
+          - git
+          - build-essential
+          - python3-pip
+          - docker.io
+        state: present
+        update_cache: yes
+        
+    - name: Add runner user to docker group
+      user:
+        name: "{{ runner_user }}"
+        groups: docker
+        append: yes
+        
+    - name: Create runner directory
+      file:
+        path: "{{ runner_home }}/actions-runner"
+        state: directory
+        owner: "{{ runner_user }}"
+        group: "{{ runner_group }}"
+        mode: '0755'
+        
+    - name: Download GitHub runner
+      get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "/tmp/actions-runner.tar.gz"
+        mode: '0644'
+        
+    - name: Extract GitHub runner
+      unarchive:
+        src: "/tmp/actions-runner.tar.gz"
+        dest: "{{ runner_home }}/actions-runner"
+        remote_src: yes
+        owner: "{{ runner_user }}"
+        group: "{{ runner_group }}"
+        
+    - name: Get runner registration token
+      uri:
+        url: "https://api.github.com/repos/{{ repo_name }}/actions/runners/registration-token"
+        method: POST
+        headers:
+          Authorization: "token {{ github_token }}"
+          Accept: "application/vnd.github.v3+json"
+        status_code: 201
+      register: registration_token
+      delegate_to: localhost
+      when: github_token != '' and repo_name != ''
+      
+    - name: Configure GitHub runner
+      shell: |
+        ./config.sh --url https://github.com/{{ repo_name }} \
+                   --token {{ registration_token.json.token }} \
+                   --name {{ runner_name }} \
+                   --labels {{ network_tier }},github-runner-{{ network_tier }} \
+                   --work _work \
+                   --unattended
+      args:
+        chdir: "{{ runner_home }}/actions-runner"
+      become_user: "{{ runner_user }}"
+      when: registration_token is defined and registration_token.json is defined
+      
+    - name: Install runner as a service
+      shell: ./svc.sh install {{ runner_user }}
+      args:
+        chdir: "{{ runner_home }}/actions-runner"
+      when: registration_token is defined and registration_token.json is defined
+      
+    - name: Start runner service
+      shell: ./svc.sh start
+      args:
+        chdir: "{{ runner_home }}/actions-runner"
+      when: registration_token is defined and registration_token.json is defined
+      
+    - name: Install monitoring tools
+      apt:
+        name:
+          - prometheus-node-exporter
+          - htop
+          - iotop
+        state: present
+        
+    - name: Create health check script
+      copy:
+        content: |
+          #!/bin/bash
+          # Health check script for GitHub runner
+          
+          # Check if runner service is running
+          if systemctl is-active --quiet actions.runner.*; then
+            echo "Runner service is running"
+            exit 0
+          else
+            echo "Runner service is not running, restarting..."
+            cd {{ runner_home }}/actions-runner
+            ./svc.sh restart
+            exit 1
+          fi
+        dest: "{{ runner_home }}/health-check.sh"
+        mode: '0755'
+        owner: "{{ runner_user }}"
+        group: "{{ runner_group }}"
+        
+    - name: Setup health check cron job
+      cron:
+        name: "GitHub runner health check"
+        minute: "*/5"
+        job: "{{ runner_home }}/health-check.sh >> {{ runner_home }}/health-check.log 2>&1"
+        user: "{{ runner_user }}"
+        
+    - name: Install AWS CLI
+      pip:
+        name: awscli
+        state: present
+        
+    - name: Install kubectl
+      shell: |
+        curl -LO "https://dl.k8s.io/release/stable.txt"
+        curl -LO "https://dl.k8s.io/release/$(cat stable.txt)/bin/linux/amd64/kubectl"
+        chmod +x kubectl
+        mv kubectl /usr/local/bin/
+        rm stable.txt
+      args:
+        creates: /usr/local/bin/kubectl
+        
+    - name: Install Terraform
+      unarchive:
+        src: "https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip"
+        dest: /usr/local/bin
+        remote_src: yes
+        mode: '0755'
+        creates: /usr/local/bin/terraform
+        
+    - name: Install Ansible
+      pip:
+        name:
+          - ansible
+          - kubernetes
+        state: present
+        
+    - name: Install Docker Compose
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-linux-x86_64"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+        
+    - name: Show runner status
+      shell: systemctl status actions.runner.* | grep Active
+      register: runner_status
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Display runner information
+      debug:
+        msg: |
+          🤖 GitHub Runner Setup Complete!
+          
+          📋 Runner Information:
+          - Name: {{ runner_name }}
+          - Network: {{ network_tier }}
+          - Status: {{ runner_status.stdout | default('Unknown') }}
+          - Home: {{ runner_home }}
+          
+          🔧 Tools Installed:
+          - Docker
+          - kubectl
+          - Terraform
+          - AWS CLI
+          - Ansible
+          - Docker Compose
+          - Monitoring tools

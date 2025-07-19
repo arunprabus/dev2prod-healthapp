@@ -9,6 +9,10 @@ terraform {
       source  = "hashicorp/kubernetes"
       version = "~> 2.23"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.11"
+    }
   }
   
   backend "s3" {
@@ -24,6 +28,14 @@ provider "kubernetes" {
   host                   = var.k3s_endpoint != "" ? var.k3s_endpoint : "https://127.0.0.1:6443"
   insecure               = true
   config_path            = null
+}
+
+provider "helm" {
+  kubernetes {
+    host                   = var.k3s_endpoint != "" ? var.k3s_endpoint : "https://127.0.0.1:6443"
+    insecure               = true
+    config_path            = null
+  }
 }
 
 locals {
@@ -75,4 +87,16 @@ module "rds" {
   db_password         = "changeme123!"
   environment         = local.environment
   tags                = local.tags
+}
+
+module "argo_rollouts" {
+  source = "../../modules/argo-rollouts"
+
+  argo_namespace       = "argo-rollouts"
+  app_namespaces       = ["health-app-${local.environment}"]
+  enable_istio         = var.enable_istio
+  enable_prometheus    = var.enable_prometheus
+  argo_rollouts_version = var.argo_rollouts_version
+  istio_version        = var.istio_version
+  domain_name          = var.domain_name
 }

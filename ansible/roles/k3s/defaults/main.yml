@@ -1,0 +1,9 @@
+---
+# Default variables for K3s role
+kubeconfig_path: "/etc/rancher/k3s/k3s.yaml"
+environment: "dev"
+cluster_ip: "127.0.0.1"
+namespace: "health-app-{{ environment }}"
+github_token: ""
+repo_name: ""
+create_github_secret: false
