@@ -53,7 +53,7 @@ jobs:
       actions: write
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment }}
     
     steps:
     - name: Checkout
@@ -268,7 +268,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment }}
     
     steps:
     - name: Configure AWS credentials
@@ -341,7 +341,7 @@ jobs:
       runner-ready: ${{ steps.check-runner.outputs.ready }}
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment }}
     
     steps:
     - name: Configure AWS credentials
@@ -404,7 +404,7 @@ jobs:
     runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || fromJSON('["self-hosted", "github-runner-lower"]') }}
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || fromJSON(format('["{}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment }}
     
     steps:
     - name: Checkout
