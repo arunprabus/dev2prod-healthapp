@@ -62,7 +62,7 @@ jobs:
           fromJSON('[]')
       }}
 
-    
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -136,7 +136,7 @@ jobs:
         echo "🔧 Setting up Ansible for ${{ matrix.env }} network"
         pip install ansible kubernetes
         ansible-galaxy collection install kubernetes.core
-        
+
     - name: Configure K3s with Ansible
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       env:
@@ -182,7 +182,7 @@ jobs:
         
         # Cleanup
         rm -f /tmp/ssh_key /tmp/kubeconfig-$ENVIRONMENT.yaml
-        
+
     - name: Create Kubernetes Secrets
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       env:
@@ -436,7 +436,7 @@ jobs:
           fromJSON('[]')
       }}
 
-    
+
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -550,4 +550,3 @@ jobs:
         echo "🎉 Kubeconfig setup completed!"
         echo "📍 S3 location: s3://$TF_STATE_BUCKET/$S3_KEY"
         echo "🔐 GitHub secret: $SECRET_NAME"
-
