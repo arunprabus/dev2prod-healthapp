@@ -6,11 +6,6 @@ variable "allowed_regions" {
   description = "List of allowed AWS regions"
   type        = list(string)
   default     = ["ap-south-1"]
-  
-  validation {
-    condition = contains(var.allowed_regions, var.aws_region)
-    error_message = "AWS region must be one of: ${join(", ", var.allowed_regions)}."
-  }
 }
 
 # Validation: Only allow free-tier instance types
@@ -71,6 +66,9 @@ locals {
   
   # Validate network tier
   validate_network_tier = contains(["lower", "higher", "monitoring"], var.network_tier) ? var.network_tier : file("ERROR: Network tier must be one of: lower, higher, monitoring")
+  
+  # Validate AWS region
+  validate_region = contains(var.allowed_regions, var.aws_region) ? var.aws_region : file("ERROR: AWS region must be one of: ${join(", ", var.allowed_regions)}")
   
   # Generate resource names with validation
   resource_prefix = "${var.resource_name_prefix}-${var.environment}"

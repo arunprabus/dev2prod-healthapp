@@ -11,6 +11,12 @@ variable "environment" {
   default     = "dev"
 }
 
+variable "network_tier" {
+  description = "Network tier (lower, higher, monitoring)"
+  type        = string
+  default     = "lower"
+}
+
 # Network Configuration
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
@@ -157,8 +163,6 @@ variable "tf_state_bucket" {
 }
 
 # GitHub Runner Configuration
-
-
 variable "github_pat" {
   description = "GitHub Personal Access Token for runner registration"
   type        = string
@@ -171,33 +175,24 @@ variable "github_repo" {
   default     = "arunprabus/dev2prod-healthapp"
 }
 
-# Additional variables for locals.tf
-variable "team_name" {
-  description = "Team name for tagging"
+# Domain Configuration
+variable "domain_name" {
+  description = "Domain name for the application"
   type        = string
-  default     = "devops-team"
+  default     = "dev.health-app.local"
 }
 
-variable "cost_center" {
-  description = "Cost center for billing"
-  type        = string
-  default     = "engineering"
+variable "enable_istio" {
+  description = "Whether to enable Istio service mesh"
+  type        = bool
+  default     = true
 }
 
-variable "backup_required" {
-  description = "Whether backup is required"
-  type        = string
-  default     = "true"
+variable "enable_prometheus" {
+  description = "Whether to enable Prometheus monitoring"
+  type        = bool
+  default     = true
 }
 
-variable "data_classification" {
-  description = "Data classification level"
-  type        = string
-  default     = "internal"
-}
-
-variable "compliance_scope" {
-  description = "Compliance scope"
-  type        = string
-  default     = "hipaa"
-}
+# These variables are now defined in variables-tags.tf
+# Removed duplicate declarations
