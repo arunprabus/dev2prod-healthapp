@@ -523,3 +523,29 @@ jobs:
           echo "📍 S3 location: s3://$TF_STATE_BUCKET/$S3_KEY"
           echo "🔐 GitHub secret: $SECRET_NAME"
 
+      - name: Setup Kubeconfig and Update GitHub Secret
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🔧 Setting up kubeconfig for ${{ matrix.env }} network"
+          cd infra
+          CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+          cd ..
+          echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+          ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig
+          sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig > /tmp/kubeconfig-fixed
+          KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig-fixed)
+          SECRET_NAME=""
+          case "${{ matrix.env }}" in
+            "lower") SECRET_NAME="KUBECONFIG_DEV" ;;
+            "higher") SECRET_NAME="KUBECONFIG_PROD" ;;
+            "monitoring") SECRET_NAME="KUBECONFIG_MONITORING" ;;
+          esac
+          if [[ -n "$SECRET_NAME" ]]; then
+            echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+            echo "✅ GitHub secret $SECRET_NAME updated"
+          fi
+          rm -f /tmp/ssh_key /tmp/kubeconfig /tmp/kubeconfig-fixed
