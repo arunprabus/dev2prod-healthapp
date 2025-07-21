@@ -53,7 +53,7 @@ jobs:
       actions: write
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
 
 
     steps:
@@ -229,6 +229,20 @@ jobs:
           echo "✅ Kubernetes Secrets created successfully"
           
           # Cleanup
+          rm -f /tmp/secrets.yaml /tmp/kubeconfig_BASE64/g" | \
+            sed "s/\${API_KEY_BASE64}/$API_KEY_BASE64/g" | \
+            sed "s/\${JWT_SECRET_BASE64}/$JWT_SECRET_BASE64/g" | \
+            sed "s/\${AWS_ACCESS_KEY_ID_BASE64}/$AWS_ACCESS_KEY_ID_BASE64/g" | \
+            sed "s/\${AWS_SECRET_ACCESS_KEY_BASE64}/$AWS_SECRET_ACCESS_KEY_BASE64/g" | \
+            sed "s/\${AWS_REGION_BASE64}/$AWS_REGION_BASE64/g" | \
+            sed "s/\${GITHUB_TOKEN_BASE64}/$GITHUB_TOKEN_BASE64/g" > /tmp/secrets.yaml
+          
+          # Apply secrets
+          kubectl apply -f /tmp/secrets.yaml
+          
+          echo "✅ Kubernetes Secrets created successfully"
+          
+          # Cleanup
           rm -f /tmp/secrets.yaml /tmp/kubeconfig
 
       - name: Terraform Destroy
@@ -269,7 +283,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
 
 
     steps:
@@ -343,7 +357,7 @@ jobs:
       runner-ready: ${{ steps.check-runner.outputs.ready }}
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
 
     steps:
       - name: Configure AWS credentials
@@ -406,7 +420,7 @@ jobs:
     runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || fromJSON('["self-hosted", "github-runner-lower"]') }}
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
 
 
     steps:
