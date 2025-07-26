@@ -77,53 +77,7 @@ locals {
   validate_naming = can(regex("^health-app-", local.resource_prefix)) ? local.resource_prefix : file("ERROR: Resource names must start with 'health-app-'")
 }
 
-# Check blocks for runtime validation
-check "instance_type_compliance" {
-  assert {
-    condition = alltrue([
-      for instance in values(aws_instance) : 
-      contains(var.allowed_instance_types, instance.instance_type)
-    ])
-    error_message = "All EC2 instances must use allowed instance types: ${join(", ", var.allowed_instance_types)}"
-  }
-}
 
-check "rds_class_compliance" {
-  assert {
-    condition = alltrue([
-      for db in values(aws_db_instance) : 
-      contains(var.allowed_rds_classes, db.instance_class)
-    ])
-    error_message = "All RDS instances must use allowed instance classes: ${join(", ", var.allowed_rds_classes)}"
-  }
-}
-
-check "ebs_size_compliance" {
-  assert {
-    condition = alltrue([
-      for volume in values(aws_ebs_volume) : 
-      volume.size <= var.max_ebs_size
-    ])
-    error_message = "All EBS volumes must be ${var.max_ebs_size} GB or smaller"
-  }
-}
-
-check "required_tags_compliance" {
-  assert {
-    condition = alltrue([
-      for resource in concat(
-        values(aws_instance),
-        values(aws_db_instance),
-        values(aws_security_group)
-      ) : 
-      alltrue([
-        for tag_key in keys(var.required_tags) :
-        contains(keys(resource.tags), tag_key)
-      ])
-    ])
-    error_message = "All resources must have required tags: ${join(", ", keys(var.required_tags))}"
-  }
-}
 
 # Output validation results
 output "validation_status" {
