@@ -94,7 +94,7 @@ jobs:
           # 3. Delete EBS volumes
           echo "💾 Deleting EBS volumes..."
           VOLUMES=$(aws ec2 describe-volumes \
-            --filters "Name=tag:Project,Values=health-app" "Name=state,Values=available" \
+            --filters "Name=tag:Project,Values=health-app" "Name=status,Values=available" \
             --query 'Volumes[].VolumeId' --output text)
           
           for vol in $VOLUMES; do
