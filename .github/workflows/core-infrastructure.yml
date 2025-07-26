@@ -12,14 +12,14 @@ on:
           - destroy
           - plan
           - redeploy
-      environment:
-        description: 'Environment'
+      network:
+        description: 'Network Tier'
         required: true
-        default: 'dev'
+        default: 'lower'
         type: choice
         options:
-          - dev
-          - prod
+          - lower
+          - higher
           - monitoring
       confirm_destroy:
         description: 'Type "DESTROY" to confirm'
@@ -54,7 +54,7 @@ jobs:
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=health-app-${{ github.event.inputs.environment }}.tfstate" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
             -backend-config="region=$AWS_REGION"
 
       - name: Terraform Plan
@@ -62,9 +62,10 @@ jobs:
         working-directory: infra
         run: |
           terraform plan \
-            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -var-file="environments/network-architecture.tfvars" \
+            -var="network_tier=${{ github.event.inputs.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.GITHUB_TOKEN }}"
+            -var="github_pat=${{ secrets.REPO_PAT }}"
 
       - name: Terraform Apply
         id: apply
@@ -73,16 +74,18 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.action }}" == "redeploy" ]; then
             terraform destroy \
-              -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+              -var-file="environments/network-architecture.tfvars" \
+              -var="network_tier=${{ github.event.inputs.network }}" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-              -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
+              -var="github_pat=${{ secrets.REPO_PAT }}" \
               -auto-approve || true
           fi
           
           terraform apply \
-            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -var-file="environments/network-architecture.tfvars" \
+            -var="network_tier=${{ github.event.inputs.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve
           
           echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
@@ -97,9 +100,10 @@ jobs:
           fi
           
           terraform destroy \
-            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -var-file="environments/network-architecture.tfvars" \
+            -var="network_tier=${{ github.event.inputs.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve
 
   kubeconfig:
@@ -112,7 +116,7 @@ jobs:
       - name: Setup Kubeconfig
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
           CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
         run: |
           if [ -z "$CLUSTER_IP" ]; then
@@ -144,7 +148,8 @@ jobs:
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
           sudo apt update && sudo apt install gh -y
           
-          SECRET_NAME="KUBECONFIG_$(echo ${{ github.event.inputs.environment }} | tr '[:lower:]' '[:upper:]')"
+          ENV_NAME="${{ github.event.inputs.network == 'lower' && 'DEV' || github.event.inputs.network == 'higher' && 'PROD' || 'MONITORING' }}"
+          SECRET_NAME="KUBECONFIG_$ENV_NAME"
           base64 -w 0 /tmp/kubeconfig-fixed | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
           echo "✅ GitHub secret $SECRET_NAME updated"
           

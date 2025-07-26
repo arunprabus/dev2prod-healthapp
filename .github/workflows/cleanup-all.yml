@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        environment: [dev, prod, monitoring]
+        network: [lower, higher, monitoring]
     
     steps:
       - uses: actions/checkout@v4
@@ -39,19 +39,20 @@ jobs:
             exit 1
           fi
 
-      - name: Destroy Environment
+      - name: Destroy Network
         working-directory: infra
         run: |
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=health-app-${{ matrix.environment }}.tfstate" \
+            -backend-config="key=health-app-${{ matrix.network }}.tfstate" \
             -backend-config="region=$AWS_REGION"
           
           terraform destroy \
-            -var-file="environments/${{ matrix.environment }}.tfvars" \
+            -var-file="environments/network-architecture.tfvars" \
+            -var="network_tier=${{ matrix.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
-            -auto-approve || echo "Environment ${{ matrix.environment }} cleanup completed"
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -auto-approve || echo "Network ${{ matrix.network }} cleanup completed"
 
   cleanup-orphaned:
     needs: cleanup-all

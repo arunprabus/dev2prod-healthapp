@@ -25,16 +25,28 @@ provider "kubernetes" {
 locals {
   # Use tags from variables merged with common tags
   tags = merge(local.common_tags, var.tags)
-
-  # Define VPC identifiers for environments
-  lower_env_vpc_name = "health-app-dev-vpc"
-  test_env_vpc_name = "health-app-test-vpc"
-  higher_env_vpc_name = "health-app-prod-vpc"
+  
+  # Map network tier to environment
+  environment = var.network_tier == "lower" ? "dev" : var.network_tier == "higher" ? "prod" : "monitoring"
+  
+  # Define VPC identifiers for networks
+  lower_env_vpc_name = "health-app-lower-vpc"
+  higher_env_vpc_name = "health-app-higher-vpc"
+  monitoring_env_vpc_name = "health-app-monitoring-vpc"
+  
+  # Network-specific CIDR blocks
+  network_cidrs = {
+    lower = "10.0.0.0/16"
+    higher = "10.1.0.0/16"
+    monitoring = "10.3.0.0/16"
+  }
+  
+  vpc_cidr = local.network_cidrs[var.network_tier]
 }
 
 # Data sources for looking up existing VPCs when creating monitoring environment
 data "aws_vpc" "lower_env" {
-  count = var.environment == "monitoring" && var.connect_to_lower_env ? 1 : 0
+  count = var.network_tier == "monitoring" && var.connect_to_lower_env ? 1 : 0
 
   filter {
     name   = "tag:Name"
@@ -43,7 +55,7 @@ data "aws_vpc" "lower_env" {
 }
 
 data "aws_vpc" "higher_env" {
-  count = var.environment == "monitoring" && var.connect_to_higher_env ? 1 : 0
+  count = var.network_tier == "monitoring" && var.connect_to_higher_env ? 1 : 0
 
   filter {
     name   = "tag:Name"
@@ -53,12 +65,12 @@ data "aws_vpc" "higher_env" {
 
 # Get route tables for the environments we need to peer with
 data "aws_route_tables" "lower_env" {
-  count = var.environment == "monitoring" && var.connect_to_lower_env ? 1 : 0
+  count = var.network_tier == "monitoring" && var.connect_to_lower_env ? 1 : 0
   vpc_id = data.aws_vpc.lower_env[0].id
 }
 
 data "aws_route_tables" "higher_env" {
-  count = var.environment == "monitoring" && var.connect_to_higher_env ? 1 : 0
+  count = var.network_tier == "monitoring" && var.connect_to_higher_env ? 1 : 0
   vpc_id = data.aws_vpc.higher_env[0].id
 }
 
@@ -66,11 +78,11 @@ module "vpc" {
   source = "./modules/vpc"
 
   name_prefix           = local.name_prefix
-  vpc_cidr             = var.vpc_cidr
+  vpc_cidr             = local.vpc_cidr
   availability_zones   = var.availability_zones
   public_subnet_cidrs  = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
-  environment          = var.environment
+  environment          = local.environment
   tags                 = local.tags
 }
 
@@ -82,7 +94,7 @@ module "k3s" {
   vpc_cidr          = module.vpc.vpc_cidr_block
   subnet_id         = module.vpc.public_subnet_ids[0]
   k3s_instance_type = var.k3s_instance_type
-  environment       = var.environment
+  environment       = local.environment
   ssh_public_key    = var.ssh_public_key
   s3_bucket         = var.tf_state_bucket
   tags              = local.tags
@@ -105,7 +117,7 @@ module "rds" {
   multi_az                = var.database_config.multi_az
   snapshot_identifier     = var.database_config.snapshot_identifier
   restore_from_snapshot   = var.restore_from_snapshot
-  environment             = var.environment
+  environment             = local.environment
   tags                    = var.tags
 }
 
@@ -130,7 +142,7 @@ module "rds" {
 module "github_runner" {
   source = "./modules/github-runner"
 
-  network_tier     = var.environment
+  network_tier     = var.network_tier
   vpc_id           = module.vpc.vpc_id
   subnet_id        = module.vpc.public_subnet_ids[0]  # Use public subnet for internet access
   ssh_public_key   = var.ssh_public_key
@@ -145,9 +157,9 @@ module "github_runner" {
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {
   source = "./modules/monitoring"
-  count  = var.environment == "monitoring" ? 1 : 0
+  count  = var.network_tier == "monitoring" ? 1 : 0
 
-  environment     = var.environment
+  environment     = local.environment
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.public_subnet_ids
   k3s_instance_ip = module.k3s.instance_public_ip
@@ -160,7 +172,7 @@ module "monitoring" {
 # Only applicable when deploying the monitoring environment
 module "monitoring_to_lower_peering" {
   source = "./modules/vpc_peering"
-  count  = var.environment == "monitoring" && var.connect_to_lower_env ? 1 : 0
+  count  = var.network_tier == "monitoring" && var.connect_to_lower_env ? 1 : 0
 
   requestor_vpc_id        = module.vpc.vpc_id
   acceptor_vpc_id         = data.aws_vpc.lower_env[0].id
@@ -175,7 +187,7 @@ module "monitoring_to_lower_peering" {
 
 module "monitoring_to_higher_peering" {
   source = "./modules/vpc_peering"
-  count  = var.environment == "monitoring" && var.connect_to_higher_env ? 1 : 0
+  count  = var.network_tier == "monitoring" && var.connect_to_higher_env ? 1 : 0
 
   requestor_vpc_id        = module.vpc.vpc_id
   acceptor_vpc_id         = data.aws_vpc.higher_env[0].id
