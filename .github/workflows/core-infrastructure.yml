@@ -61,8 +61,9 @@ jobs:
         if: github.event.inputs.action == 'plan'
         working-directory: infra
         run: |
+          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
           terraform plan \
-            -var-file="environments/network-architecture.tfvars" \
+            -var-file="environments/$ENV.tfvars" \
             -var="network_tier=${{ github.event.inputs.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}"
@@ -72,9 +73,11 @@ jobs:
         if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
         working-directory: infra
         run: |
+          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
+          
           if [ "${{ github.event.inputs.action }}" == "redeploy" ]; then
             terraform destroy \
-              -var-file="environments/network-architecture.tfvars" \
+              -var-file="environments/$ENV.tfvars" \
               -var="network_tier=${{ github.event.inputs.network }}" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
               -var="github_pat=${{ secrets.REPO_PAT }}" \
@@ -82,7 +85,7 @@ jobs:
           fi
           
           terraform apply \
-            -var-file="environments/network-architecture.tfvars" \
+            -var-file="environments/$ENV.tfvars" \
             -var="network_tier=${{ github.event.inputs.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
@@ -99,8 +102,9 @@ jobs:
             exit 1
           fi
           
+          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
           terraform destroy \
-            -var-file="environments/network-architecture.tfvars" \
+            -var-file="environments/$ENV.tfvars" \
             -var="network_tier=${{ github.event.inputs.network }}" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
