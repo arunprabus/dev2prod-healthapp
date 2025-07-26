@@ -85,7 +85,7 @@ jobs:
             -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
             -auto-approve
           
-          echo "cluster_ip=$(terraform output -raw k3s_public_ip)" >> $GITHUB_OUTPUT
+          echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
@@ -106,6 +106,7 @@ jobs:
     needs: infrastructure
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     
     steps:
       - name: Setup Kubeconfig
@@ -114,12 +115,24 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
         run: |
+          if [ -z "$CLUSTER_IP" ]; then
+            echo "❌ Cluster IP not available"
+            exit 1
+          fi
+          
           echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
           chmod 600 /tmp/ssh_key
           
+          # Wait for K3s with timeout
+          echo "⏳ Waiting for K3s cluster at $CLUSTER_IP..."
           for i in {1..30}; do
             if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+              echo "✅ K3s ready"
               break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ K3s not ready after 5 minutes"
+              exit 1
             fi
             sleep 10
           done
@@ -133,5 +146,6 @@ jobs:
           
           SECRET_NAME="KUBECONFIG_$(echo ${{ github.event.inputs.environment }} | tr '[:lower:]' '[:upper:]')"
           base64 -w 0 /tmp/kubeconfig-fixed | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+          echo "✅ GitHub secret $SECRET_NAME updated"
           
           rm -f /tmp/ssh_key /tmp/kubeconfig /tmp/kubeconfig-fixed
