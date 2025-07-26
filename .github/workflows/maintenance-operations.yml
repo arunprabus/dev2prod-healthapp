@@ -319,6 +319,18 @@ jobs:
           name: ${{ github.event.inputs.secret_type == 'kubeconfig' && format('KUBECONFIG_{0}', github.event.inputs.environment) || github.event.inputs.secret_type == 'ssh-key' && 'SSH_PRIVATE_KEY' || github.event.inputs.secret_type == 'aws-credentials' && 'AWS_ACCESS_KEY_ID' || github.event.inputs.secret_type == 'github-token' && 'GITHUB_TOKEN' || github.event.inputs.secret_type == 'database' && format('DB_USERNAME_{0}', github.event.inputs.environment) }}
           value: ${{ github.event.inputs.secret_type == 'kubeconfig' && env[format('KUBECONFIG_{0}', github.event.inputs.environment)] || github.event.inputs.secret_type == 'ssh-key' && env.SSH_PRIVATE_KEY || github.event.inputs.secret_type == 'aws-credentials' && env.AWS_ACCESS_KEY_ID || github.event.inputs.secret_type == 'github-token' && env.GITHUB_TOKEN || github.event.inputs.secret_type == 'database' && env[format('DB_USERNAME_{0}', github.event.inputs.environment)] }}
           pa_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          KUBECONFIG_DEV: ${{ env.KUBECONFIG_DEV }}
+          KUBECONFIG_TEST: ${{ env.KUBECONFIG_TEST }}
+          KUBECONFIG_PROD: ${{ env.KUBECONFIG_PROD }}
+          KUBECONFIG_MONITORING: ${{ env.KUBECONFIG_MONITORING }}
+          SSH_PRIVATE_KEY: ${{ env.SSH_PRIVATE_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+          DB_USERNAME_DEV: ${{ env.DB_USERNAME_DEV }}
+          DB_USERNAME_TEST: ${{ env.DB_USERNAME_TEST }}
+          DB_USERNAME_PROD: ${{ env.DB_USERNAME_PROD }}
+          DB_USERNAME_MONITORING: ${{ env.DB_USERNAME_MONITORING }}
         if: ${{ github.event.inputs.secret_type != 'aws-credentials' && github.event.inputs.secret_type != 'database' }}
 
       - name: Update Second GitHub Secret for AWS Credentials
@@ -327,6 +339,8 @@ jobs:
           name: AWS_SECRET_ACCESS_KEY
           value: ${{ env.AWS_SECRET_ACCESS_KEY }}
           pa_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
         if: ${{ github.event.inputs.secret_type == 'aws-credentials' }}
 
       - name: Update Second GitHub Secret for Database Credentials
@@ -335,11 +349,16 @@ jobs:
           name: ${{ format('DB_PASSWORD_{0}', github.event.inputs.environment) }}
           value: ${{ env[format('DB_PASSWORD_{0}', github.event.inputs.environment)] }}
           pa_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          DB_PASSWORD_DEV: ${{ env.DB_PASSWORD_DEV }}
+          DB_PASSWORD_TEST: ${{ env.DB_PASSWORD_TEST }}
+          DB_PASSWORD_PROD: ${{ env.DB_PASSWORD_PROD }}
+          DB_PASSWORD_MONITORING: ${{ env.DB_PASSWORD_MONITORING }}
         if: ${{ github.event.inputs.secret_type == 'database' }}
 
   platform-readiness-check:
     if: ${{ github.event.inputs.operation == 'platform-readiness-check' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.inputs.environment == 'dev' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'prod' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || github.event.inputs.environment == 'test' && fromJSON('["self-hosted", "github-runner-lower"]') || 'ubuntu-latest' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

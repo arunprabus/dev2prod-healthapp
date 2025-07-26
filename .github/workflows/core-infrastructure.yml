@@ -13,33 +13,18 @@ on:
           - plan
           - redeploy
       environment:
-        description: 'Network/Environment'
+        description: 'Environment'
         required: true
-        default: 'lower'
+        default: 'dev'
         type: choice
         options:
-          - lower
-          - higher
+          - dev
+          - prod
           - monitoring
-          - all
-          - cleanup-all
       confirm_destroy:
         description: 'Type "DESTROY" to confirm'
         required: false
         type: string
-      restore_from_snapshot:
-        description: 'Restore RDS from snapshot'
-        required: false
-        default: false
-        type: boolean
-      runner_type:
-        description: 'Runner Type'
-        required: false
-        default: 'aws'
-        type: choice
-        options:
-          - aws
-          - github
 
 env:
   AWS_REGION: ap-south-1
@@ -47,519 +32,102 @@ env:
 
 jobs:
   infrastructure:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON('["self-hosted", "github-runner-monitoring"]') || 'ubuntu-latest' }}
-    permissions:
-      contents: read
-      actions: write
-    strategy:
-      matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
-
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_ip: ${{ steps.apply.outputs.cluster_ip }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Terraform Init
         working-directory: infra
         run: |
-          echo "🔍 Backend Configuration:"
-          echo "- Bucket: ${{ secrets.TF_STATE_BUCKET }}"
-          echo "- Key: health-app-${{ matrix.env }}.tfstate"
-          echo "- Region: $AWS_REGION"
-          
           terraform init \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
+            -backend-config="key=health-app-${{ github.event.inputs.environment }}.tfstate" \
             -backend-config="region=$AWS_REGION"
 
       - name: Terraform Plan
+        if: github.event.inputs.action == 'plan'
         working-directory: infra
-        if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
         run: |
-          echo "📋 Planning infrastructure changes..."
           terraform plan \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="enable_istio=true" \
-            -var="enable_prometheus=true" \
-            -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
-            -out=tfplan
-
-      - name: Terraform Destroy (for redeploy)
-        working-directory: infra
-        if: github.event.inputs.action == 'redeploy'
-        run: |
-          echo "🧹 Destroying existing resources first..."
-          terraform destroy \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="enable_istio=true" \
-            -var="enable_prometheus=true" \
-            -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
-            -auto-approve || echo "Destroy completed with warnings"
+            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
 
       - name: Terraform Apply
+        id: apply
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
         working-directory: infra
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
         run: |
-          echo "🚀 Applying infrastructure changes..."
-          terraform apply \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="enable_istio=true" \
-            -var="enable_prometheus=true" \
-            -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
-            -auto-approve
-          
-          echo "✅ Infrastructure deployed successfully"
-
-      - name: Setup Ansible
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-        run: |
-          echo "🔧 Setting up Ansible for ${{ matrix.env }} network"
-          pip install ansible kubernetes
-          ansible-galaxy collection install kubernetes.core
-
-      - name: Configure K3s with Ansible
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
-          REPO_NAME: ${{ secrets.REPO_NAME }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'changeme123!' }}
-          API_KEY: ${{ secrets.API_KEY || 'api-key-default' }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET || 'jwt-secret-default' }}
-        run: |
-          echo "🔧 Configuring K3s cluster with Ansible for ${{ matrix.env }} network"
-          
-          # Get cluster IP from terraform output
-          cd infra
-          CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
-          
-          if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
-            echo "❌ Could not get cluster IP from terraform output"
-            exit 1
+          if [ "${{ github.event.inputs.action }}" == "redeploy" ]; then
+            terraform destroy \
+              -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+              -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+              -auto-approve || true
           fi
           
-          echo "🎯 Cluster IP: $CLUSTER_IP"
-          cd ..
+          terraform apply \
+            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -auto-approve
           
-          # Setup SSH key for Ansible
-          echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
-          chmod 600 /tmp/ssh_key
-          
-          # Set environment variables for Ansible
-          export CLUSTER_IP=$CLUSTER_IP
-          export ENVIRONMENT="${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}"
-          
-          # Run Ansible playbook
-          cd ansible
-          ansible-playbook playbooks/cluster-setup.yml -e "github_token=$GITHUB_TOKEN repo_name=$REPO_NAME"
-          
-          # Upload kubeconfig to S3 as backup
-          echo "☁️ Uploading kubeconfig to S3..."
-          S3_KEY="kubeconfig-${{ matrix.env }}.yaml"
-          aws s3 cp /tmp/kubeconfig-$ENVIRONMENT.yaml s3://$TF_STATE_BUCKET/$S3_KEY
-          echo "✅ Kubeconfig uploaded to s3://$TF_STATE_BUCKET/$S3_KEY"
-          
-          # Cleanup
-          rm -f /tmp/ssh_key /tmp/kubeconfig-$ENVIRONMENT.yaml
-
-      - name: Create Kubernetes Secrets
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-        env:
-          KUBECONFIG: /tmp/kubeconfig
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD || 'changeme123!' }}
-          API_KEY: ${{ secrets.API_KEY || 'api-key-default' }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET || 'jwt-secret-default' }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
-        run: |
-          echo "🔐 Creating Kubernetes Secrets for ${{ matrix.env }} environment"
-          
-          # Get cluster IP from terraform output
-          cd infra
-          CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
-          cd ..
-          
-          # Download kubeconfig from S3
-          aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig-${{ matrix.env }}.yaml /tmp/kubeconfig
-          
-          # Set namespace based on environment
-          NAMESPACE="health-app-${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}"
-          
-          # Create namespace if it doesn't exist
-          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Base64 encode secrets (using proper encoding for Kubernetes secrets)
-          DB_PASSWORD_BASE64=$(echo -n "$DB_PASSWORD" | base64 -w 0)
-          API_KEY_BASE64=$(echo -n "$API_KEY" | base64 -w 0)
-          JWT_SECRET_BASE64=$(echo -n "$JWT_SECRET" | base64 -w 0)
-          AWS_ACCESS_KEY_ID_BASE64=$(echo -n "$AWS_ACCESS_KEY_ID" | base64 -w 0)
-          AWS_SECRET_ACCESS_KEY_BASE64=$(echo -n "$AWS_SECRET_ACCESS_KEY" | base64 -w 0)
-          AWS_REGION_BASE64=$(echo -n "$AWS_REGION" | base64 -w 0)
-          GITHUB_TOKEN_BASE64=$(echo -n "$GITHUB_TOKEN" | base64 -w 0)
-          
-          # Generate secrets from template
-          cat kubernetes-manifests/base/secrets-template.yaml | \
-            sed "s/\${NAMESPACE}/$NAMESPACE/g" | \
-            sed "s/\${DB_PASSWORD_BASE64}/$DB_PASSWORD_BASE64/g" | \
-            sed "s/\${API_KEY_BASE64}/$API_KEY_BASE64/g" | \
-            sed "s/\${JWT_SECRET_BASE64}/$JWT_SECRET_BASE64/g" | \
-            sed "s/\${AWS_ACCESS_KEY_ID_BASE64}/$AWS_ACCESS_KEY_ID_BASE64/g" | \
-            sed "s/\${AWS_SECRET_ACCESS_KEY_BASE64}/$AWS_SECRET_ACCESS_KEY_BASE64/g" | \
-            sed "s/\${AWS_REGION_BASE64}/$AWS_REGION_BASE64/g" | \
-            sed "s/\${GITHUB_TOKEN_BASE64}/$GITHUB_TOKEN_BASE64/g" > /tmp/secrets.yaml
-          
-          # Apply secrets
-          kubectl apply -f /tmp/secrets.yaml
-          
-          echo "✅ Kubernetes Secrets created successfully"
-          
-          # Cleanup
-          rm -f /tmp/secrets.yaml /tmp/kubeconfig_BASE64/g" | \
-            sed "s/\${API_KEY_BASE64}/$API_KEY_BASE64/g" | \
-            sed "s/\${JWT_SECRET_BASE64}/$JWT_SECRET_BASE64/g" | \
-            sed "s/\${AWS_ACCESS_KEY_ID_BASE64}/$AWS_ACCESS_KEY_ID_BASE64/g" | \
-            sed "s/\${AWS_SECRET_ACCESS_KEY_BASE64}/$AWS_SECRET_ACCESS_KEY_BASE64/g" | \
-            sed "s/\${AWS_REGION_BASE64}/$AWS_REGION_BASE64/g" | \
-            sed "s/\${GITHUB_TOKEN_BASE64}/$GITHUB_TOKEN_BASE64/g" > /tmp/secrets.yaml
-          
-          # Apply secrets
-          kubectl apply -f /tmp/secrets.yaml
-          
-          echo "✅ Kubernetes Secrets created successfully"
-          
-          # Cleanup
-          rm -f /tmp/secrets.yaml /tmp/kubeconfig
+          echo "cluster_ip=$(terraform output -raw k3s_public_ip)" >> $GITHUB_OUTPUT
 
       - name: Terraform Destroy
-        working-directory: infra
         if: github.event.inputs.action == 'destroy'
+        working-directory: infra
         run: |
-          echo "🧹 Destroying infrastructure..."
-          
           if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
-            echo "❌ Destroy confirmation required - type 'DESTROY' to confirm"
+            echo "❌ Type 'DESTROY' to confirm"
             exit 1
           fi
           
           terraform destroy \
+            -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="enable_istio=true" \
-            -var="enable_prometheus=true" \
-            -var="domain_name=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}.health-app.local" \
             -auto-approve
-          
-          echo "✅ Infrastructure destroyed successfully"
 
-      - name: Post-deployment Summary
-        if: success() && (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
-        working-directory: infra
-        run: |
-          echo "✅ Infrastructure deployment completed successfully!"
-          echo "📋 Summary for ${{ matrix.env }} network:"
-          
-          echo "🔍 Terraform outputs:"
-          terraform output 2>/dev/null || echo "No outputs available"
-          
-          echo "🚀 Proceeding to cleanup and kubeconfig setup..."
-
-  cleanup-orphaned:
+  kubeconfig:
     needs: infrastructure
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
-
-
+    
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Cleanup Orphaned Resources
-        run: |
-          echo "🧹 Cleaning up orphaned resources for ${{ matrix.env }}..."
-          
-          # Get current managed resources from terraform state
-          MANAGED_INSTANCES=$(aws ec2 describe-instances \
-            --filters "Name=tag:ManagedBy,Values=terraform" \
-                     "Name=tag:Environment,Values=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-                     "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].InstanceId' \
-            --output text)
-          
-          echo "✅ Managed instances: $MANAGED_INSTANCES"
-          
-          # Find ALL instances with same name pattern and keep only the newest
-          echo "🔍 Finding duplicate instances..."
-          
-          # Get all K3s instances (sorted by launch time, newest first)
-          ALL_K3S=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=*k3s*" \
-                     "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].[InstanceId,LaunchTime]' \
-            --output text | sort -k2 -r)
-          
-          # Get all runner instances (sorted by launch time, newest first)
-          ALL_RUNNERS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=*runner*" \
-                     "Name=instance-state-name,Values=running" \
-            --query 'Reservations[].Instances[].[InstanceId,LaunchTime]' \
-            --output text | sort -k2 -r)
-          
-          # Keep only the newest K3s instance
-          ORPHANED_K3S=$(echo "$ALL_K3S" | tail -n +2 | cut -f1)
-          
-          # Keep only the newest runner instance
-          ORPHANED_RUNNERS=$(echo "$ALL_RUNNERS" | tail -n +2 | cut -f1)
-          
-          echo "All K3s instances: $ALL_K3S"
-          echo "All runner instances: $ALL_RUNNERS"
-          echo "K3s to terminate: $ORPHANED_K3S"
-          echo "Runners to terminate: $ORPHANED_RUNNERS"
-          
-          # Terminate orphaned instances
-          if [[ -n "$ORPHANED_K3S" ]]; then
-            echo "🗑️ Terminating orphaned K3s instances: $ORPHANED_K3S"
-            aws ec2 terminate-instances --instance-ids $ORPHANED_K3S
-          fi
-          
-          if [[ -n "$ORPHANED_RUNNERS" ]]; then
-            echo "🗑️ Terminating orphaned runner instances: $ORPHANED_RUNNERS"
-            aws ec2 terminate-instances --instance-ids $ORPHANED_RUNNERS
-          fi
-          
-          echo "✅ Cleanup completed for ${{ matrix.env }}"
-
-  validate-runner:
-    needs: [infrastructure, cleanup-orphaned]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ubuntu-latest
-    outputs:
-      runner-ready: ${{ steps.check-runner.outputs.ready }}
-    strategy:
-      matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Check Runner Status
-        id: check-runner
-        run: |
-          echo "🔍 Checking if GitHub runner is ready..."
-          
-          # Get runner instance based on environment
-          RUNNER_NAME="health-app-runner-${{ matrix.env }}"
-          echo "Looking for runner: $RUNNER_NAME"
-          
-          # Check if runner instance is running
-          RUNNER_STATUS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=$RUNNER_NAME" \
-                     "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].State.Name' \
-            --output text 2>/dev/null || echo "None")
-          
-          if [[ "$RUNNER_STATUS" == "running" ]]; then
-            echo "✅ Runner instance is running"
-          
-            # Wait for runner to be online (max 5 minutes)
-            echo "⏳ Waiting for runner to be online..."
-            for i in {1..30}; do
-              # Check if runner is online via GitHub API
-              ENV_NAME="${{ matrix.env }}"
-              RUNNER_ONLINE=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runners?per_page=100" \
-                | jq -r --arg ENV_NAME "$ENV_NAME" '.runners[] | select(.name | test("^github-runner-" + $ENV_NAME + "-.*")) | .status' 2>/dev/null || echo "")
-          
-              echo "🔍 Found runner status: $RUNNER_ONLINE"
-          
-              if [[ "$RUNNER_ONLINE" == "online" ]]; then
-                echo "✅ Runner is online and ready"
-                echo "ready=true" >> $GITHUB_OUTPUT
-                exit 0
-              fi
-          
-              echo "⏳ Attempt $i/30 - Runner not online yet..."
-              sleep 10
-            done
-          
-            echo "❌ Runner instance running but not online after 5 minutes"
-            echo "ready=false" >> $GITHUB_OUTPUT
-          else
-            echo "❌ Runner instance not running: $RUNNER_STATUS"
-            echo "ready=false" >> $GITHUB_OUTPUT
-          fi
-
-  setup-kubeconfig:
-    needs: [infrastructure, cleanup-orphaned]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ${{ github.event.inputs.environment == 'lower' && fromJSON('["self-hosted", "github-runner-lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["self-hosted", "github-runner-higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["self-hosted", "github-runner-monitoring"]') || fromJSON('["self-hosted", "github-runner-lower"]') }}
-    strategy:
-      matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJSON('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJSON('["cleanup"]') || github.event.inputs.environment == 'lower' && fromJSON('["lower"]') || github.event.inputs.environment == 'higher' && fromJSON('["higher"]') || github.event.inputs.environment == 'monitoring' && fromJSON('["monitoring"]') }}
-
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Terraform Init (for outputs)
-        working-directory: infra
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
-            -backend-config="region=$AWS_REGION"
-
-      - name: Install kubectl and GitHub CLI
-        run: |
-          # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-          
-          # Install GitHub CLI
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          sudo apt update
-          sudo apt install gh -y
-
-      - name: Setup Kubeconfig and Upload to S3
+      - name: Setup Kubeconfig
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
         run: |
-          echo "🔧 Setting up kubeconfig for ${{ matrix.env }} network"
-          
-          # Get cluster IP from terraform output
-          cd infra
-          CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
-          
-          if [[ -z "$CLUSTER_IP" || "$CLUSTER_IP" == "null" ]]; then
-            echo "❌ Could not get cluster IP from terraform output"
-            exit 1
-          fi
-          
-          echo "🎯 Cluster IP: $CLUSTER_IP"
-          cd ..
-          
-          # Setup SSH key
           echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
           chmod 600 /tmp/ssh_key
           
-          # Wait for K3s to be ready
-          echo "⏳ Waiting for K3s cluster to be ready..."
           for i in {1..30}; do
             if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
-              echo "✅ K3s cluster is ready"
               break
             fi
-            echo "⏳ Attempt $i/30 - waiting for K3s..."
             sleep 10
           done
           
-          # Download and fix kubeconfig
-          echo "📥 Downloading kubeconfig from cluster..."
-          ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/k3s-config
-          sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/k3s-config > /tmp/fixed-config
-          
-          # Upload to S3
-          echo "☁️ Uploading kubeconfig to S3..."
-          S3_KEY="kubeconfig-${{ matrix.env }}.yaml"
-          aws s3 cp /tmp/fixed-config s3://$TF_STATE_BUCKET/$S3_KEY
-          echo "✅ Kubeconfig uploaded to s3://$TF_STATE_BUCKET/$S3_KEY"
-          
-          # Test kubeconfig
-          echo "🧪 Testing kubeconfig..."
-          export KUBECONFIG=/tmp/fixed-config
-          if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
-            echo "✅ Kubeconfig test successful"
-          else
-            echo "⚠️ Kubeconfig test failed, but uploaded to S3"
-          fi
-          
-          # Create GitHub secret
-          echo "🔐 Creating GitHub secret..."
-          SECRET_NAME=""
-          case "${{ matrix.env }}" in
-            "lower") SECRET_NAME="KUBECONFIG_DEV" ;;
-            "higher") SECRET_NAME="KUBECONFIG_PROD" ;;
-            "monitoring") SECRET_NAME="KUBECONFIG_MONITORING" ;;
-          esac
-          
-          if [[ -n "$SECRET_NAME" ]]; then
-            KUBECONFIG_B64=$(base64 -w 0 /tmp/fixed-config)
-            echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
-            echo "✅ GitHub secret $SECRET_NAME created"
-          fi
-          
-          # Cleanup
-          rm -f /tmp/ssh_key /tmp/k3s-config /tmp/fixed-config
-          
-          echo "🎉 Kubeconfig setup completed!"
-          echo "📍 S3 location: s3://$TF_STATE_BUCKET/$S3_KEY"
-          echo "🔐 GitHub secret: $SECRET_NAME"
-
-      - name: Setup Kubeconfig and Update GitHub Secret
-        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "🔧 Setting up kubeconfig for ${{ matrix.env }} network"
-          cd infra
-          CLUSTER_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
-          cd ..
-          echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
-          chmod 600 /tmp/ssh_key
           ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig
           sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig > /tmp/kubeconfig-fixed
-          KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig-fixed)
-          SECRET_NAME=""
-          case "${{ matrix.env }}" in
-            "lower") SECRET_NAME="KUBECONFIG_DEV" ;;
-            "higher") SECRET_NAME="KUBECONFIG_PROD" ;;
-            "monitoring") SECRET_NAME="KUBECONFIG_MONITORING" ;;
-          esac
-          if [[ -n "$SECRET_NAME" ]]; then
-            echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
-            echo "✅ GitHub secret $SECRET_NAME updated"
-          fi
+          
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update && sudo apt install gh -y
+          
+          SECRET_NAME="KUBECONFIG_$(echo ${{ github.event.inputs.environment }} | tr '[:lower:]' '[:upper:]')"
+          base64 -w 0 /tmp/kubeconfig-fixed | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+          
           rm -f /tmp/ssh_key /tmp/kubeconfig /tmp/kubeconfig-fixed
