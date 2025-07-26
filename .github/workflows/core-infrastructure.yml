@@ -68,6 +68,16 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}"
 
+      - name: Import Existing Resources
+        working-directory: infra
+        run: |
+          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
+          
+          # Import existing resources if they exist
+          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_role.runner_role health-app-runner-role-${{ github.event.inputs.network }} || true
+          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.k3s.aws_key_pair.main health-app-$ENV-key || true
+          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.k3s.aws_iam_role.k3s_role health-app-$ENV-k3s-role || true
+
       - name: Terraform Apply
         id: apply
         if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
