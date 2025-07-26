@@ -63,7 +63,8 @@ jobs:
         run: |
           terraform plan \
             -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}"
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.GITHUB_TOKEN }}"
 
       - name: Terraform Apply
         id: apply
@@ -74,12 +75,14 @@ jobs:
             terraform destroy \
               -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+              -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
               -auto-approve || true
           fi
           
           terraform apply \
             -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
             -auto-approve
           
           echo "cluster_ip=$(terraform output -raw k3s_public_ip)" >> $GITHUB_OUTPUT
@@ -96,6 +99,7 @@ jobs:
           terraform destroy \
             -var-file="environments/${{ github.event.inputs.environment }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
             -auto-approve
 
   kubeconfig:
