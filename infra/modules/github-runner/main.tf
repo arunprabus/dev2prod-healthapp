@@ -29,7 +29,7 @@ resource "aws_instance" "github_runner" {
   vpc_security_group_ids     = [aws_security_group.runner.id]
   subnet_id                  = var.subnet_id
   associate_public_ip_address = true  # Ensure public IP for internet access
-  iam_instance_profile       = data.aws_iam_instance_profile.runner_profile.name
+  iam_instance_profile       = aws_iam_instance_profile.runner_profile.name
   
   user_data_replace_on_change = true
   user_data = base64encode(templatefile("${path.module}/user_data_simple.sh", {

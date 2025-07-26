@@ -1,0 +1,104 @@
+name: Cleanup All Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_cleanup:
+        description: 'Type "CLEANUP-ALL" to confirm'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  cleanup-all:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, prod, monitoring]
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Confirm Cleanup
+        run: |
+          if [ "${{ github.event.inputs.confirm_cleanup }}" != "CLEANUP-ALL" ]; then
+            echo "❌ Type 'CLEANUP-ALL' to confirm"
+            exit 1
+          fi
+
+      - name: Destroy Environment
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ matrix.environment }}.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform destroy \
+            -var-file="environments/${{ matrix.environment }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.GITHUB_TOKEN }}" \
+            -auto-approve || echo "Environment ${{ matrix.environment }} cleanup completed"
+
+  cleanup-orphaned:
+    needs: cleanup-all
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Cleanup Orphaned Resources
+        run: |
+          # Terminate all health-app instances
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=health-app" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          
+          if [ -n "$INSTANCES" ]; then
+            aws ec2 terminate-instances --instance-ids $INSTANCES
+          fi
+          
+          # Delete all health-app security groups (after instances are terminated)
+          sleep 60
+          SG_IDS=$(aws ec2 describe-security-groups \
+            --filters "Name=tag:Project,Values=health-app" \
+            --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text)
+          
+          for sg in $SG_IDS; do
+            aws ec2 delete-security-group --group-id $sg || true
+          done
+          
+          # Delete all health-app key pairs
+          KEY_PAIRS=$(aws ec2 describe-key-pairs \
+            --filters "Name=key-name,Values=health-app-*" \
+            --query 'KeyPairs[].KeyName' --output text)
+          
+          for key in $KEY_PAIRS; do
+            aws ec2 delete-key-pair --key-name $key || true
+          done
+          
+          # Delete all health-app EBS volumes
+          VOLUMES=$(aws ec2 describe-volumes \
+            --filters "Name=tag:Project,Values=health-app" "Name=state,Values=available" \
+            --query 'Volumes[].VolumeId' --output text)
+          
+          for vol in $VOLUMES; do
+            aws ec2 delete-volume --volume-id $vol || true
+          done
