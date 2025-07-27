@@ -149,7 +149,9 @@ jobs:
               for i in {1..30}; do
                 if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
                   ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-dev
-                  sed "s/127.0.0.1/$DEV_CLUSTER_IP/g" /tmp/kubeconfig-dev > /tmp/kubeconfig-dev-fixed
+                  # Use public IP with insecure connection for external access
+                  sed "s/127.0.0.1/$DEV_CLUSTER_IP/g" /tmp/kubeconfig-dev > /tmp/kubeconfig-dev-temp
+                  sed '/server:/a\    insecure-skip-tls-verify: true' /tmp/kubeconfig-dev-temp > /tmp/kubeconfig-dev-fixed
                   base64 -w 0 /tmp/kubeconfig-dev-fixed | gh secret set KUBECONFIG_DEV --repo $GITHUB_REPOSITORY
                   echo "✅ KUBECONFIG_DEV updated"
                   break
@@ -163,7 +165,9 @@ jobs:
               for i in {1..30}; do
                 if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
                   ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-test
-                  sed "s/127.0.0.1/$TEST_CLUSTER_IP/g" /tmp/kubeconfig-test > /tmp/kubeconfig-test-fixed
+                  # Use public IP with insecure connection for external access
+                  sed "s/127.0.0.1/$TEST_CLUSTER_IP/g" /tmp/kubeconfig-test > /tmp/kubeconfig-test-temp
+                  sed '/server:/a\    insecure-skip-tls-verify: true' /tmp/kubeconfig-test-temp > /tmp/kubeconfig-test-fixed
                   base64 -w 0 /tmp/kubeconfig-test-fixed | gh secret set KUBECONFIG_TEST --repo $GITHUB_REPOSITORY
                   echo "✅ KUBECONFIG_TEST updated"
                   break
