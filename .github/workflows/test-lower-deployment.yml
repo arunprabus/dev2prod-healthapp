@@ -59,28 +59,20 @@ jobs:
 
       - name: Test Dev Environment
         run: |
-          if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
-            echo "Testing Dev Environment..."
-            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig-dev
-            export KUBECONFIG=kubeconfig-dev
-            
-            kubectl get nodes
-            kubectl get namespaces
-            kubectl get pods -n health-app-dev || echo "No pods in dev namespace"
-          else
-            echo "⚠️ KUBECONFIG_DEV secret not found - skipping dev test"
-          fi
+          echo "Testing Dev Environment..."
+          export KUBECONFIG=${{ github.workspace }}/scripts/kubeconfig/kubeconfig-clean.yaml
+          
+          kubectl config current-context
+          kubectl get nodes
+          kubectl get namespaces
+          kubectl get pods -n health-app-dev || echo "No pods in dev namespace"
 
       - name: Test Test Environment
         run: |
-          if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
-            echo "Testing Test Environment..."
-            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > kubeconfig-test
-            export KUBECONFIG=kubeconfig-test
-            
-            kubectl get nodes
-            kubectl get namespaces
-            kubectl get pods -n health-app-test || echo "No pods in test namespace"
-          else
-            echo "⚠️ KUBECONFIG_TEST secret not found - skipping test environment"
-          fi
+          echo "Testing Test Environment..."
+          export KUBECONFIG=${{ github.workspace }}/scripts/kubeconfig/kubeconfig-clean.yaml
+          
+          kubectl config current-context
+          kubectl get nodes
+          kubectl get namespaces
+          kubectl get pods -n health-app-test || echo "No pods in test namespace"
