@@ -225,11 +225,11 @@ jobs:
               echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
               export KUBECONFIG=/tmp/kubeconfig-dev
               
-              kubectl create namespace health-app-dev --dry-run=client -o yaml | kubectl apply -f -
+              kubectl create namespace health-app-dev --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
               kubectl create secret generic kubeconfig-dev \
                 --from-file=config=/tmp/kubeconfig-dev \
                 --namespace=health-app-dev \
-                --dry-run=client -o yaml | kubectl apply -f -
+                --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
               echo "✅ Dev kubeconfig secret created"
             fi
             
@@ -238,11 +238,11 @@ jobs:
               echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
               export KUBECONFIG=/tmp/kubeconfig-test
               
-              kubectl create namespace health-app-test --dry-run=client -o yaml | kubectl apply -f -
+              kubectl create namespace health-app-test --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
               kubectl create secret generic kubeconfig-test \
                 --from-file=config=/tmp/kubeconfig-test \
                 --namespace=health-app-test \
-                --dry-run=client -o yaml | kubectl apply -f -
+                --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
               echo "✅ Test kubeconfig secret created"
             fi
             
@@ -262,11 +262,11 @@ jobs:
             
             export KUBECONFIG=/tmp/kubeconfig
             
-            kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+            kubectl create namespace $NAMESPACE --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
             kubectl create secret generic kubeconfig-$ENV_NAME \
               --from-file=config=/tmp/kubeconfig \
               --namespace=$NAMESPACE \
-              --dry-run=client -o yaml | kubectl apply -f -
+              --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
             echo "✅ $ENV_NAME kubeconfig secret created"
           fi
           
@@ -293,18 +293,18 @@ jobs:
               echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
               export KUBECONFIG=/tmp/kubeconfig-dev
               
-              if kubectl get nodes --timeout=30s; then
+              if kubectl get nodes --timeout=30s --insecure-skip-tls-verify; then
                 echo "✅ Dev cluster accessible"
                 
                 # Test kubeconfig secret
-                if kubectl get secret kubeconfig-dev -n health-app-dev; then
+                if kubectl get secret kubeconfig-dev -n health-app-dev --insecure-skip-tls-verify; then
                   echo "✅ Kubeconfig secret exists in health-app-dev namespace"
                 else
                   echo "❌ Kubeconfig secret missing in health-app-dev namespace"
                 fi
                 
-                kubectl get namespaces
-                kubectl get pods -A --field-selector=status.phase=Running
+                kubectl get namespaces --insecure-skip-tls-verify
+                kubectl get pods -A --field-selector=status.phase=Running --insecure-skip-tls-verify
               else
                 echo "❌ Dev cluster connection failed"
               fi
@@ -320,18 +320,18 @@ jobs:
               echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
               export KUBECONFIG=/tmp/kubeconfig-test
               
-              if kubectl get nodes --timeout=30s; then
+              if kubectl get nodes --timeout=30s --insecure-skip-tls-verify; then
                 echo "✅ Test cluster accessible"
                 
                 # Test kubeconfig secret
-                if kubectl get secret kubeconfig-test -n health-app-test; then
+                if kubectl get secret kubeconfig-test -n health-app-test --insecure-skip-tls-verify; then
                   echo "✅ Kubeconfig secret exists in health-app-test namespace"
                 else
                   echo "❌ Kubeconfig secret missing in health-app-test namespace"
                 fi
                 
-                kubectl get namespaces
-                kubectl get pods -A --field-selector=status.phase=Running
+                kubectl get namespaces --insecure-skip-tls-verify
+                kubectl get pods -A --field-selector=status.phase=Running --insecure-skip-tls-verify
               else
                 echo "❌ Test cluster connection failed"
               fi
@@ -356,10 +356,10 @@ jobs:
             
             export KUBECONFIG=/tmp/kubeconfig
             
-            if kubectl get nodes --timeout=30s; then
+            if kubectl get nodes --timeout=30s --insecure-skip-tls-verify; then
               echo "✅ $ENV_NAME cluster accessible"
-              kubectl get namespaces
-              kubectl get pods -A --field-selector=status.phase=Running
+              kubectl get namespaces --insecure-skip-tls-verify
+              kubectl get pods -A --field-selector=status.phase=Running --insecure-skip-tls-verify
             else
               echo "❌ $ENV_NAME cluster connection failed"
             fi
