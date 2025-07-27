@@ -35,6 +35,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       cluster_ip: ${{ steps.apply.outputs.cluster_ip }}
+      dev_cluster_ip: ${{ steps.apply.outputs.dev_cluster_ip }}
+      test_cluster_ip: ${{ steps.apply.outputs.test_cluster_ip }}
 
     steps:
       - uses: actions/checkout@v4
@@ -203,3 +205,82 @@ jobs:
           fi
           
           rm -f /tmp/ssh_key /tmp/kubeconfig* 2>/dev/null || true
+
+  test-deployment:
+    needs: kubeconfig
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    
+    steps:
+      - name: Test Cluster Connectivity
+        run: |
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "🧪 Testing Lower Environment Clusters..."
+            
+            # Test Dev Environment
+            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
+              echo "Testing Dev Environment..."
+              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
+              export KUBECONFIG=/tmp/kubeconfig-dev
+              
+              if kubectl get nodes --timeout=30s; then
+                echo "✅ Dev cluster accessible"
+                kubectl get namespaces
+                kubectl get pods -A --field-selector=status.phase=Running
+              else
+                echo "❌ Dev cluster connection failed"
+              fi
+            else
+              echo "⚠️ KUBECONFIG_DEV secret not found"
+            fi
+            
+            echo ""
+            
+            # Test Test Environment
+            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
+              echo "Testing Test Environment..."
+              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
+              export KUBECONFIG=/tmp/kubeconfig-test
+              
+              if kubectl get nodes --timeout=30s; then
+                echo "✅ Test cluster accessible"
+                kubectl get namespaces
+                kubectl get pods -A --field-selector=status.phase=Running
+              else
+                echo "❌ Test cluster connection failed"
+              fi
+            else
+              echo "⚠️ KUBECONFIG_TEST secret not found"
+            fi
+            
+          else
+            echo "🧪 Testing Single Cluster Environment..."
+            
+            ENV_NAME="${{ github.event.inputs.network == 'higher' && 'PROD' || 'MONITORING' }}"
+            KUBECONFIG_SECRET="KUBECONFIG_$ENV_NAME"
+            
+            if [ "$ENV_NAME" == "PROD" ] && [ -n "${{ secrets.KUBECONFIG_PROD }}" ]; then
+              echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
+            elif [ "$ENV_NAME" == "MONITORING" ] && [ -n "${{ secrets.KUBECONFIG_MONITORING }}" ]; then
+              echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > /tmp/kubeconfig
+            else
+              echo "⚠️ $KUBECONFIG_SECRET secret not found"
+              exit 0
+            fi
+            
+            export KUBECONFIG=/tmp/kubeconfig
+            
+            if kubectl get nodes --timeout=30s; then
+              echo "✅ $ENV_NAME cluster accessible"
+              kubectl get namespaces
+              kubectl get pods -A --field-selector=status.phase=Running
+            else
+              echo "❌ $ENV_NAME cluster connection failed"
+            fi
+          fi
+          
+          # Cleanup
+          rm -f /tmp/kubeconfig* 2>/dev/null || true
+          
+          echo "🎉 Deployment testing complete!"
