@@ -45,7 +45,7 @@ jobs:
 
   test-application:
     if: ${{ github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'application' }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: [test-infrastructure]
     steps:
       - uses: actions/checkout@v4
