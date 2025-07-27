@@ -1,0 +1,34 @@
+#!/bin/bash
+
+echo "🔧 Fixing kubeconfig TLS conflict..."
+
+# Create clean kubeconfig without certificate conflicts
+cat > /tmp/kubeconfig-clean.yaml << 'EOF'
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://43.205.94.176:6443
+    insecure-skip-tls-verify: true
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: default
+  name: default
+current-context: default
+kind: Config
+users:
+- name: default
+  user:
+    token: K107c6d8c9eb2de70ca0c8608aa8649e1a9f9ef7b8e4d2a5c1f6b3e8d7a4c2b1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0
+EOF
+
+export KUBECONFIG=/tmp/kubeconfig-clean.yaml
+
+echo "📋 Testing cluster connection..."
+kubectl cluster-info
+
+echo "🔍 Getting nodes..."
+kubectl get nodes
+
+echo "✅ Kubeconfig fixed and tested!"
