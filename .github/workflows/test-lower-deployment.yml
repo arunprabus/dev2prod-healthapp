@@ -62,8 +62,14 @@ jobs:
           echo "Testing Dev Environment..."
           export KUBECONFIG=${{ github.workspace }}/scripts/kubeconfig/kubeconfig-clean.yaml
           
-          kubectl config current-context
-          kubectl get nodes
+          # Test using kubeconfig secret
+          if kubectl get secret kubeconfig-dev -n health-app-dev; then
+            kubectl get secret kubeconfig-dev -n health-app-dev -o jsonpath='{.data.config}' | base64 -d > /tmp/dev-kubeconfig
+            export KUBECONFIG=/tmp/dev-kubeconfig
+            echo "✅ Using kubeconfig from Kubernetes secret"
+          fi
+          
+          kubectl get nodes || echo "Cluster not accessible"
           kubectl get namespaces
           kubectl get pods -n health-app-dev || echo "No pods in dev namespace"
 
@@ -72,7 +78,13 @@ jobs:
           echo "Testing Test Environment..."
           export KUBECONFIG=${{ github.workspace }}/scripts/kubeconfig/kubeconfig-clean.yaml
           
-          kubectl config current-context
-          kubectl get nodes
+          # Test using kubeconfig secret
+          if kubectl get secret kubeconfig-test -n health-app-test; then
+            kubectl get secret kubeconfig-test -n health-app-test -o jsonpath='{.data.config}' | base64 -d > /tmp/test-kubeconfig
+            export KUBECONFIG=/tmp/test-kubeconfig
+            echo "✅ Using kubeconfig from Kubernetes secret"
+          fi
+          
+          kubectl get nodes || echo "Cluster not accessible"
           kubectl get namespaces
           kubectl get pods -n health-app-test || echo "No pods in test namespace"

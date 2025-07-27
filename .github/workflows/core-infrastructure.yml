@@ -206,7 +206,77 @@ jobs:
           
           rm -f /tmp/ssh_key /tmp/kubeconfig* 2>/dev/null || true
 
+  setup-k8s-secrets:
+    needs: kubeconfig
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Kubernetes Secrets
+        run: |
+          echo "🔐 Setting up Kubernetes secrets for kubeconfig..."
+          
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            # Setup secrets for dev environment
+            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
+              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
+              export KUBECONFIG=/tmp/kubeconfig-dev
+              
+              kubectl create namespace health-app-dev --dry-run=client -o yaml | kubectl apply -f -
+              kubectl create secret generic kubeconfig-dev \
+                --from-file=config=/tmp/kubeconfig-dev \
+                --namespace=health-app-dev \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "✅ Dev kubeconfig secret created"
+            fi
+            
+            # Setup secrets for test environment  
+            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
+              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
+              export KUBECONFIG=/tmp/kubeconfig-test
+              
+              kubectl create namespace health-app-test --dry-run=client -o yaml | kubectl apply -f -
+              kubectl create secret generic kubeconfig-test \
+                --from-file=config=/tmp/kubeconfig-test \
+                --namespace=health-app-test \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "✅ Test kubeconfig secret created"
+            fi
+            
+          else
+            # Setup secrets for single cluster environments
+            ENV_NAME="${{ github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
+            NAMESPACE="health-app-$ENV_NAME"
+            
+            if [ "$ENV_NAME" == "prod" ] && [ -n "${{ secrets.KUBECONFIG_PROD }}" ]; then
+              echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
+            elif [ "$ENV_NAME" == "monitoring" ] && [ -n "${{ secrets.KUBECONFIG_MONITORING }}" ]; then
+              echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > /tmp/kubeconfig
+            else
+              echo "⚠️ Kubeconfig secret not found for $ENV_NAME"
+              exit 0
+            fi
+            
+            export KUBECONFIG=/tmp/kubeconfig
+            
+            kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+            kubectl create secret generic kubeconfig-$ENV_NAME \
+              --from-file=config=/tmp/kubeconfig \
+              --namespace=$NAMESPACE \
+              --dry-run=client -o yaml | kubectl apply -f -
+            echo "✅ $ENV_NAME kubeconfig secret created"
+          fi
+          
+          # Cleanup
+          rm -f /tmp/kubeconfig* 2>/dev/null || true
+          
+          echo "🎉 Kubernetes secrets setup complete!"
+
   test-deployment:
+    needs: setup-k8s-secrets
     needs: kubeconfig
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
@@ -218,7 +288,7 @@ jobs:
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
             echo "🧪 Testing Lower Environment Clusters..."
             
-            # Test Dev Environment
+            # Test Dev Environment using K8s secret
             if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
               echo "Testing Dev Environment..."
               echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
@@ -226,6 +296,14 @@ jobs:
               
               if kubectl get nodes --timeout=30s; then
                 echo "✅ Dev cluster accessible"
+                
+                # Test kubeconfig secret
+                if kubectl get secret kubeconfig-dev -n health-app-dev; then
+                  echo "✅ Kubeconfig secret exists in health-app-dev namespace"
+                else
+                  echo "❌ Kubeconfig secret missing in health-app-dev namespace"
+                fi
+                
                 kubectl get namespaces
                 kubectl get pods -A --field-selector=status.phase=Running
               else
@@ -237,7 +315,7 @@ jobs:
             
             echo ""
             
-            # Test Test Environment
+            # Test Test Environment using K8s secret
             if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
               echo "Testing Test Environment..."
               echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
@@ -245,6 +323,14 @@ jobs:
               
               if kubectl get nodes --timeout=30s; then
                 echo "✅ Test cluster accessible"
+                
+                # Test kubeconfig secret
+                if kubectl get secret kubeconfig-test -n health-app-test; then
+                  echo "✅ Kubeconfig secret exists in health-app-test namespace"
+                else
+                  echo "❌ Kubeconfig secret missing in health-app-test namespace"
+                fi
+                
                 kubectl get namespaces
                 kubectl get pods -A --field-selector=status.phase=Running
               else

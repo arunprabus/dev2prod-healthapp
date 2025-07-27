@@ -100,9 +100,17 @@ jobs:
           export KUBECONFIG=/tmp/kubeconfig
           echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
           
-          # Test connection with insecure TLS (K3s uses self-signed certs)
+          # Test connection
           kubectl cluster-info --insecure-skip-tls-verify
           kubectl get nodes --insecure-skip-tls-verify
+          
+          # Try to use kubeconfig from Kubernetes secret if available
+          if kubectl get secret kubeconfig-$ENVIRONMENT -n health-app-$ENVIRONMENT --insecure-skip-tls-verify 2>/dev/null; then
+            echo "🔐 Found kubeconfig in Kubernetes secret - using it for deployment"
+            kubectl get secret kubeconfig-$ENVIRONMENT -n health-app-$ENVIRONMENT -o jsonpath='{.data.config}' --insecure-skip-tls-verify | base64 -d > /tmp/kubeconfig-from-k8s
+            export KUBECONFIG=/tmp/kubeconfig-from-k8s
+            echo "KUBECONFIG=/tmp/kubeconfig-from-k8s" >> $GITHUB_ENV
+          fi
 
       - name: Create namespace
         run: |
