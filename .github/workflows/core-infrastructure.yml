@@ -128,7 +128,7 @@ jobs:
     needs: infrastructure
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     
     steps:
       - name: Setup Kubeconfig
@@ -152,8 +152,9 @@ jobs:
               echo "⏳ Setting up Dev kubeconfig at $DEV_CLUSTER_IP..."
               echo "⏳ Waiting for K3s installation to complete..."
               sleep 60
-              for i in {1..60}; do
-                if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
+              for i in {1..30}; do
+                echo "Attempt $i/30 for Dev cluster..."
+                if timeout 20 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
                   ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-dev
                   # Use public IP with insecure connection for external access
                   sed "s/127.0.0.1/$DEV_CLUSTER_IP/g" /tmp/kubeconfig-dev > /tmp/kubeconfig-dev-temp
@@ -169,9 +170,10 @@ jobs:
             if [ -n "$TEST_CLUSTER_IP" ]; then
               echo "⏳ Setting up Test kubeconfig at $TEST_CLUSTER_IP..."
               echo "⏳ Waiting for K3s installation to complete..."
-              sleep 60
-              for i in {1..60}; do
-                if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
+              sleep 120
+              for i in {1..30}; do
+                echo "Attempt $i/30 for Test cluster..."
+                if timeout 20 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
                   ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-test
                   # Use public IP with insecure connection for external access
                   sed "s/127.0.0.1/$TEST_CLUSTER_IP/g" /tmp/kubeconfig-test > /tmp/kubeconfig-test-temp

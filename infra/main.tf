@@ -118,26 +118,27 @@ module "k3s_clusters" {
   tags              = merge(local.tags, { Environment = each.key })
 }
 
-module "rds" {
-  source = "./modules/rds"
-  count  = var.database_config != null ? 1 : 0
-
-  identifier                = var.database_config.identifier
-  vpc_id                   = module.vpc.vpc_id
-  private_subnet_ids       = module.vpc.private_subnet_ids
-  instance_class           = var.database_config.instance_class
-  allocated_storage        = var.database_config.allocated_storage
-  engine                   = var.database_config.engine
-  engine_version          = var.database_config.engine_version
-  db_name                 = var.database_config.db_name
-  username                = var.database_config.username
-  backup_retention_period = var.database_config.backup_retention_period
-  multi_az                = var.database_config.multi_az
-  snapshot_identifier     = var.database_config.snapshot_identifier
-  restore_from_snapshot   = var.restore_from_snapshot
-  environment             = local.environment
-  tags                    = var.tags
-}
+# RDS module temporarily disabled for faster deployment
+# module "rds" {
+#   source = "./modules/rds"
+#   count  = var.database_config != null ? 1 : 0
+#
+#   identifier                = var.database_config.identifier
+#   vpc_id                   = module.vpc.vpc_id
+#   private_subnet_ids       = module.vpc.private_subnet_ids
+#   instance_class           = var.database_config.instance_class
+#   allocated_storage        = var.database_config.allocated_storage
+#   engine                   = var.database_config.engine
+#   engine_version          = var.database_config.engine_version
+#   db_name                 = var.database_config.db_name
+#   username                = var.database_config.username
+#   backup_retention_period = var.database_config.backup_retention_period
+#   multi_az                = var.database_config.multi_az
+#   snapshot_identifier     = var.database_config.snapshot_identifier
+#   restore_from_snapshot   = var.restore_from_snapshot
+#   environment             = local.environment
+#   tags                    = var.tags
+# }
 
 # Deployment configuration for applications (disabled until K3s is ready)
 # module "deployment" {
