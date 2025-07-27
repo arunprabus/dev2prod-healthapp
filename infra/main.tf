@@ -89,7 +89,7 @@ module "vpc" {
 # Single cluster for higher/monitoring environments
 module "k3s" {
   source = "./modules/k3s"
-  count  = var.environment != "lower" ? 1 : 0
+  count  = var.network_tier != "lower" ? 1 : 0
 
   name_prefix       = local.name_prefix
   vpc_id            = module.vpc.vpc_id
@@ -105,7 +105,7 @@ module "k3s" {
 # Multiple clusters for lower environment
 module "k3s_clusters" {
   source   = "./modules/k3s"
-  for_each = var.environment == "lower" ? var.k8s_clusters : {}
+  for_each = var.network_tier == "lower" ? var.k8s_clusters : {}
 
   name_prefix       = "${local.name_prefix}-${each.key}"
   vpc_id            = module.vpc.vpc_id
