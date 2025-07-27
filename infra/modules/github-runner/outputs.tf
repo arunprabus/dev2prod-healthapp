@@ -14,6 +14,6 @@ output "runner_instance_id" {
 }
 
 output "key_pair_name" {
-  description = "Name of the existing key pair"
-  value       = data.aws_key_pair.github_runner.key_name
+  description = "Name of the created key pair"
+  value       = aws_key_pair.github_runner.key_name
 }
