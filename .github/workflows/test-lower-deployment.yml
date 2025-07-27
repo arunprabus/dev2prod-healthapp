@@ -58,9 +58,9 @@ jobs:
           aws-region: ap-south-1
 
       - name: Test Dev Environment
-        if: ${{ vars.KUBECONFIG_DEV }}
+        if: ${{ secrets.KUBECONFIG_DEV }}
         run: |
-          echo "${{ vars.KUBECONFIG_DEV }}" | base64 -d > kubeconfig-dev
+          echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig-dev
           export KUBECONFIG=kubeconfig-dev
           
           kubectl get nodes
@@ -68,9 +68,9 @@ jobs:
           kubectl get pods -n health-app-dev || echo "No pods in dev namespace"
 
       - name: Test Test Environment
-        if: ${{ vars.KUBECONFIG_TEST }}
+        if: ${{ secrets.KUBECONFIG_TEST }}
         run: |
-          echo "${{ vars.KUBECONFIG_TEST }}" | base64 -d > kubeconfig-test
+          echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > kubeconfig-test
           export KUBECONFIG=kubeconfig-test
           
           kubectl get nodes
