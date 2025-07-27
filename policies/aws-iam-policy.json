@@ -90,8 +90,7 @@
         "rds:*",
         "iam:*",
         "s3:*",
-        "logs:*",
-        "ssm:*"
+        "logs:*"
       ],
       "Resource": "*",
       "Condition": {
@@ -99,6 +98,28 @@
           "aws:RequestedRegion": "ap-south-1"
         }
       }
+    },
+    {
+      "Sid": "AllowSSMParameterStore",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter",
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:DeleteParameter",
+        "ssm:DescribeParameters"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowKMSForSSM",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
     }
   ]
 }
