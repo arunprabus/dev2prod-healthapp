@@ -276,8 +276,7 @@ jobs:
           echo "🎉 Kubernetes secrets setup complete!"
 
   test-deployment:
-    needs: setup-k8s-secrets
-    needs: kubeconfig
+    needs: [kubeconfig, setup-k8s-secrets]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 10
