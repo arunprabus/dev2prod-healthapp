@@ -35,6 +35,10 @@ resource "aws_db_parameter_group" "health_db" {
   family = var.engine == "postgres" ? "postgres15" : "mysql8.0"
   name   = "${var.identifier}-params"
 
+  lifecycle {
+    ignore_changes = [name]
+  }
+
   tags = var.tags
 }
 
