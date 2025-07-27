@@ -66,12 +66,7 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}"
 
-      - name: Import Existing Resources
-        working-directory: infra
-        run: |
-          # Import existing resources if they exist
-          terraform import -var-file="environments/${{ github.event.inputs.network }}.tfvars" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_role.runner_role health-app-runner-role-${{ github.event.inputs.network }} || true
-          terraform import -var-file="environments/${{ github.event.inputs.network }}.tfvars" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_instance_profile.runner_profile health-app-runner-profile-${{ github.event.inputs.network }} || true
+
 
       - name: Terraform Apply
         id: apply

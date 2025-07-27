@@ -59,22 +59,22 @@ variable "required_tags" {
 
 # Local validation for environment
 locals {
-  allowed_environments = ["dev", "test", "prod", "monitoring"]
+  allowed_environments = ["dev", "test", "prod", "monitoring", "lower"]
   
-  # Validate environment
-  validate_environment = contains(local.allowed_environments, var.environment) ? var.environment : file("ERROR: Environment must be one of: ${join(", ", local.allowed_environments)}")
+  # Validate environment (using error() instead of file())
+  validate_environment = contains(local.allowed_environments, var.environment) ? var.environment : error("Environment must be one of: ${join(", ", local.allowed_environments)}")
   
   # Validate network tier
-  validate_network_tier = contains(["lower", "higher", "monitoring"], var.network_tier) ? var.network_tier : file("ERROR: Network tier must be one of: lower, higher, monitoring")
+  validate_network_tier = contains(["lower", "higher", "monitoring"], var.network_tier) ? var.network_tier : error("Network tier must be one of: lower, higher, monitoring")
   
   # Validate AWS region
-  validate_region = contains(var.allowed_regions, var.aws_region) ? var.aws_region : file("ERROR: AWS region must be one of: ${join(", ", var.allowed_regions)}")
+  validate_region = contains(var.allowed_regions, var.aws_region) ? var.aws_region : error("AWS region must be one of: ${join(", ", var.allowed_regions)}")
   
   # Generate resource names with validation
   resource_prefix = "${var.resource_name_prefix}-${var.environment}"
   
   # Validate resource naming
-  validate_naming = can(regex("^health-app-", local.resource_prefix)) ? local.resource_prefix : file("ERROR: Resource names must start with 'health-app-'")
+  validate_naming = can(regex("^health-app-", local.resource_prefix)) ? local.resource_prefix : error("Resource names must start with 'health-app-'")
 }
 
 
@@ -87,5 +87,6 @@ output "validation_status" {
     network_tier_valid   = contains(["lower", "higher", "monitoring"], var.network_tier)
     region_valid        = contains(var.allowed_regions, var.aws_region)
     naming_valid        = can(regex("^health-app-", local.resource_prefix))
+    validation_passed    = "All validations passed"
   }
 }

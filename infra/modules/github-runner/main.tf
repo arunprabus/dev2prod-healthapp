@@ -1,6 +1,6 @@
 # Use the same key pair as K3s cluster for consistency
 data "aws_key_pair" "github_runner" {
-  key_name = "health-app-${var.network_tier}-key"
+  key_name = "health-app-${var.network_tier == "lower" ? "lower" : var.network_tier}-key"
 }
 
 # EBS volume for runner logs
