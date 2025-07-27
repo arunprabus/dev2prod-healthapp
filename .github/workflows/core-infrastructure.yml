@@ -74,11 +74,21 @@ jobs:
         working-directory: infra
         run: |
           if [ "${{ github.event.inputs.action }}" == "redeploy" ]; then
+            echo "🧹 Destroying existing resources..."
             terraform destroy \
               -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
               -var="github_pat=${{ secrets.REPO_PAT }}" \
-              -auto-approve || true
+              -auto-approve
+            
+            echo "⏳ Waiting 30 seconds for AWS cleanup..."
+            sleep 30
+            
+            echo "🧹 Manual cleanup of persistent resources..."
+            aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
+            aws kms delete-alias --alias-name alias/health-app-rds-export || true
+            
+            echo "✅ Cleanup complete, starting fresh deployment..."
           fi
           
           terraform apply \
