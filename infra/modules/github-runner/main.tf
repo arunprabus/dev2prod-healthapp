@@ -1,6 +1,11 @@
-# Use the same key pair as K3s cluster for consistency
-data "aws_key_pair" "github_runner" {
-  key_name = "health-app-${var.network_tier == "lower" ? "lower" : var.network_tier}-key"
+# Create key pair if it doesn't exist
+resource "aws_key_pair" "github_runner" {
+  key_name   = "health-app-${var.network_tier}-key"
+  public_key = var.ssh_public_key
+  
+  lifecycle {
+    ignore_changes = [public_key]
+  }
 }
 
 # EBS volume for runner logs
@@ -25,7 +30,7 @@ data "aws_subnet" "runner_subnet" {
 resource "aws_instance" "github_runner" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type              = "t2.micro"
-  key_name                   = data.aws_key_pair.github_runner.key_name
+  key_name                   = aws_key_pair.github_runner.key_name
   vpc_security_group_ids     = [aws_security_group.runner.id]
   subnet_id                  = var.subnet_id
   associate_public_ip_address = true  # Ensure public IP for internet access

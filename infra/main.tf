@@ -169,7 +169,7 @@ module "github_runner" {
   s3_bucket        = var.tf_state_bucket
   aws_region       = var.aws_region
 
-  depends_on = [module.vpc, module.k3s, module.k3s_clusters]
+  depends_on = [module.vpc]
 }
 
 # Deploy monitoring tools (only for monitoring environment)
