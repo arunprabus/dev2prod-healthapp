@@ -194,5 +194,16 @@ variable "enable_prometheus" {
   default     = true
 }
 
+# Parameter Store Configuration
+variable "app_parameters" {
+  description = "Application parameters for Parameter Store"
+  type = map(object({
+    type        = string
+    value       = string
+    description = string
+  }))
+  default = {}
+}
+
 # These variables are now defined in variables-tags.tf
 # Removed duplicate declarations
