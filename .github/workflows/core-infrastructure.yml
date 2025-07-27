@@ -96,7 +96,6 @@ jobs:
           
           terraform apply \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
-            -var-file="environments/parameter-store.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve

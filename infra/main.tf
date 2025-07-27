@@ -172,15 +172,15 @@ module "github_runner" {
   depends_on = [module.vpc]
 }
 
-# Deploy Parameter Store for configuration management
-module "parameter_store" {
-  source = "./modules/parameter-store"
-
-  environment = local.environment
-  aws_region  = var.aws_region
-  parameters  = var.app_parameters
-  tags        = local.tags
-}
+# Deploy Parameter Store for configuration management (temporarily disabled)
+# module "parameter_store" {
+#   source = "./modules/parameter-store"
+#
+#   environment = local.environment
+#   aws_region  = var.aws_region
+#   parameters  = var.app_parameters
+#   tags        = local.tags
+# }
 
 # Deploy monitoring tools (only for monitoring environment)
 module "monitoring" {
