@@ -53,16 +53,16 @@ output "cluster_ips" {
 
 
 
-# RDS Outputs (temporarily disabled)
-# output "db_instance_endpoint" {
-#   description = "Connection endpoint for the RDS database"
-#   value       = var.database_config != null ? module.rds[0].db_instance_endpoint : null
-# }
-#
-# output "db_instance_name" {
-#   description = "Name of the RDS instance"
-#   value       = var.database_config != null ? module.rds[0].db_instance_name : null
-# }
+# RDS Outputs
+output "db_instance_endpoint" {
+  description = "Connection endpoint for the RDS database"
+  value       = var.database_config != null ? module.rds[0].db_instance_endpoint : null
+}
+
+output "db_instance_name" {
+  description = "Name of the RDS instance"
+  value       = var.database_config != null ? module.rds[0].db_instance_name : null
+}
 
 # Deployment Outputs
 # output "kubernetes_namespace" {
