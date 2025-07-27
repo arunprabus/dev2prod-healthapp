@@ -1,0 +1,159 @@
+name: Scale and Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      application:
+        description: 'Application to deploy'
+        required: true
+        type: choice
+        options:
+          - nginx
+          - health-api
+          - frontend
+      cleanup_after:
+        description: 'Cleanup worker after deployment'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  scale-and-deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      worker_id: ${{ steps.create-worker.outputs.worker_id }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Master Node IP
+        id: master-ip
+        run: |
+          if [ "${{ github.event.inputs.environment }}" == "dev" ] || [ "${{ github.event.inputs.environment }}" == "test" ]; then
+            MASTER_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-lower-${{ github.event.inputs.environment }}" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          else
+            MASTER_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-higher-*" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+          fi
+          echo "master_ip=$MASTER_IP" >> $GITHUB_OUTPUT
+
+      - name: Create Worker Node
+        id: create-worker
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+          eval $(ssh-agent -s)
+          ssh-add /tmp/ssh_key
+          
+          chmod +x scripts/create-worker-node.sh
+          ./scripts/create-worker-node.sh ${{ github.event.inputs.environment }} ${{ steps.master-ip.outputs.master_ip }}
+
+      - name: Wait for Worker Ready
+        run: |
+          ENV_UPPER=$(echo "${{ github.event.inputs.environment }}" | tr '[:lower:]' '[:upper:]')
+          KUBECONFIG_VAR="KUBECONFIG_$ENV_UPPER"
+          
+          if [ "${{ github.event.inputs.environment }}" == "dev" ]; then
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig
+          elif [ "${{ github.event.inputs.environment }}" == "test" ]; then
+            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > kubeconfig
+          else
+            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig
+          fi
+          
+          export KUBECONFIG=kubeconfig
+          
+          echo "⏳ Waiting for worker node to join cluster..."
+          for i in {1..30}; do
+            if kubectl get nodes | grep -q worker; then
+              echo "✅ Worker node joined cluster"
+              kubectl get nodes
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ Worker node failed to join"
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Deploy Application
+        run: |
+          export KUBECONFIG=kubeconfig
+          
+          case "${{ github.event.inputs.application }}" in
+            "nginx")
+              kubectl create deployment nginx --image=nginx -n health-app-${{ github.event.inputs.environment }} || true
+              kubectl expose deployment nginx --port=80 --type=NodePort -n health-app-${{ github.event.inputs.environment }} || true
+              ;;
+            "health-api")
+              kubectl apply -f kubernetes-manifests/components/health-api/ -n health-app-${{ github.event.inputs.environment }}
+              ;;
+            "frontend")
+              kubectl apply -f kubernetes-manifests/components/frontend/ -n health-app-${{ github.event.inputs.environment }}
+              ;;
+          esac
+          
+          echo "✅ Application deployed"
+          kubectl get pods -n health-app-${{ github.event.inputs.environment }}
+
+  cleanup:
+    needs: scale-and-deploy
+    if: ${{ github.event.inputs.cleanup_after == 'true' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Kubeconfig
+        run: |
+          if [ "${{ github.event.inputs.environment }}" == "dev" ]; then
+            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > kubeconfig
+          elif [ "${{ github.event.inputs.environment }}" == "test" ]; then
+            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > kubeconfig
+          else
+            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > kubeconfig
+          fi
+          export KUBECONFIG=kubeconfig
+
+      - name: Cleanup Worker Node
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+          chmod 600 /tmp/ssh_key
+          eval $(ssh-agent -s)
+          ssh-add /tmp/ssh_key
+          
+          chmod +x scripts/cleanup-worker-node.sh
+          ./scripts/cleanup-worker-node.sh ${{ needs.scale-and-deploy.outputs.worker_id }}

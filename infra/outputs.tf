@@ -19,20 +19,36 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-# K3s Outputs
+# K3s Outputs - Single cluster (higher/monitoring)
 output "k3s_instance_ip" {
   description = "Public IP of the K3s instance"
-  value       = module.k3s.instance_public_ip
+  value       = var.environment != "lower" ? module.k3s[0].instance_public_ip : null
 }
 
 output "k3s_instance_id" {
   description = "Instance ID of the K3s instance"
-  value       = module.k3s.instance_id
+  value       = var.environment != "lower" ? module.k3s[0].instance_id : null
 }
 
 output "k3s_cluster_endpoint" {
   description = "Endpoint for the K3s cluster API server"
-  value       = module.k3s.cluster_endpoint
+  value       = var.environment != "lower" ? module.k3s[0].cluster_endpoint : null
+}
+
+# K3s Outputs - Multiple clusters (lower environment)
+output "dev_cluster_ip" {
+  description = "Public IP of the dev cluster"
+  value       = var.environment == "lower" && contains(keys(var.k8s_clusters), "dev") ? module.k3s_clusters["dev"].instance_public_ip : null
+}
+
+output "test_cluster_ip" {
+  description = "Public IP of the test cluster"
+  value       = var.environment == "lower" && contains(keys(var.k8s_clusters), "test") ? module.k3s_clusters["test"].instance_public_ip : null
+}
+
+output "cluster_ips" {
+  description = "Map of cluster names to IPs for lower environment"
+  value       = var.environment == "lower" ? { for k, v in module.k3s_clusters : k => v.instance_public_ip } : {}
 }
 
 

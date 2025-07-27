@@ -61,49 +61,44 @@ jobs:
         if: github.event.inputs.action == 'plan'
         working-directory: infra
         run: |
-          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
           terraform plan \
-            -var-file="environments/$ENV.tfvars" \
-            -var="network_tier=${{ github.event.inputs.network }}" \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}"
 
       - name: Import Existing Resources
         working-directory: infra
         run: |
-          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
-          
           # Import existing resources if they exist
-          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_role.runner_role health-app-runner-role-${{ github.event.inputs.network }} || true
-          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_instance_profile.runner_profile health-app-runner-profile-${{ github.event.inputs.network }} || true
-          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.k3s.aws_key_pair.main health-app-$ENV-key || true
-          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.k3s.aws_iam_role.k3s_role health-app-$ENV-k3s-role || true
-          terraform import -var-file="environments/$ENV.tfvars" -var="network_tier=${{ github.event.inputs.network }}" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.k3s.aws_iam_instance_profile.k3s_profile health-app-$ENV-k3s-profile || true
+          terraform import -var-file="environments/${{ github.event.inputs.network }}.tfvars" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_role.runner_role health-app-runner-role-${{ github.event.inputs.network }} || true
+          terraform import -var-file="environments/${{ github.event.inputs.network }}.tfvars" -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" -var="github_pat=${{ secrets.REPO_PAT }}" module.github_runner.aws_iam_instance_profile.runner_profile health-app-runner-profile-${{ github.event.inputs.network }} || true
 
       - name: Terraform Apply
         id: apply
         if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
         working-directory: infra
         run: |
-          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
-          
           if [ "${{ github.event.inputs.action }}" == "redeploy" ]; then
             terraform destroy \
-              -var-file="environments/$ENV.tfvars" \
-              -var="network_tier=${{ github.event.inputs.network }}" \
+              -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
               -var="github_pat=${{ secrets.REPO_PAT }}" \
               -auto-approve || true
           fi
           
           terraform apply \
-            -var-file="environments/$ENV.tfvars" \
-            -var="network_tier=${{ github.event.inputs.network }}" \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve
           
-          echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
+          # Output cluster IPs for lower environment (multiple clusters)
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
+            echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
+          else
+            echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
+          fi
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
@@ -114,10 +109,8 @@ jobs:
             exit 1
           fi
           
-          ENV="${{ github.event.inputs.network == 'lower' && 'dev' || github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
           terraform destroy \
-            -var-file="environments/$ENV.tfvars" \
-            -var="network_tier=${{ github.event.inputs.network }}" \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve
@@ -126,47 +119,78 @@ jobs:
     needs: infrastructure
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     
     steps:
       - name: Setup Kubeconfig
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
+          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
+          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
           CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
         run: |
-          if [ -z "$CLUSTER_IP" ]; then
-            echo "❌ Cluster IP not available"
-            exit 1
-          fi
-          
           echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
           chmod 600 /tmp/ssh_key
-          
-          # Wait for K3s with timeout
-          echo "⏳ Waiting for K3s cluster at $CLUSTER_IP..."
-          for i in {1..30}; do
-            if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
-              echo "✅ K3s ready"
-              break
-            fi
-            if [ $i -eq 30 ]; then
-              echo "❌ K3s not ready after 5 minutes"
-              exit 1
-            fi
-            sleep 10
-          done
-          
-          ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig
-          sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig > /tmp/kubeconfig-fixed
           
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
           sudo apt update && sudo apt install gh -y
           
-          ENV_NAME="${{ github.event.inputs.network == 'lower' && 'DEV' || github.event.inputs.network == 'higher' && 'PROD' || 'MONITORING' }}"
-          SECRET_NAME="KUBECONFIG_$ENV_NAME"
-          base64 -w 0 /tmp/kubeconfig-fixed | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
-          echo "✅ GitHub secret $SECRET_NAME updated"
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            # Handle lower environment with dev and test clusters
+            if [ -n "$DEV_CLUSTER_IP" ]; then
+              echo "⏳ Setting up Dev kubeconfig at $DEV_CLUSTER_IP..."
+              for i in {1..30}; do
+                if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+                  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-dev
+                  sed "s/127.0.0.1/$DEV_CLUSTER_IP/g" /tmp/kubeconfig-dev > /tmp/kubeconfig-dev-fixed
+                  base64 -w 0 /tmp/kubeconfig-dev-fixed | gh secret set KUBECONFIG_DEV --repo $GITHUB_REPOSITORY
+                  echo "✅ KUBECONFIG_DEV updated"
+                  break
+                fi
+                sleep 10
+              done
+            fi
+            
+            if [ -n "$TEST_CLUSTER_IP" ]; then
+              echo "⏳ Setting up Test kubeconfig at $TEST_CLUSTER_IP..."
+              for i in {1..30}; do
+                if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+                  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-test
+                  sed "s/127.0.0.1/$TEST_CLUSTER_IP/g" /tmp/kubeconfig-test > /tmp/kubeconfig-test-fixed
+                  base64 -w 0 /tmp/kubeconfig-test-fixed | gh secret set KUBECONFIG_TEST --repo $GITHUB_REPOSITORY
+                  echo "✅ KUBECONFIG_TEST updated"
+                  break
+                fi
+                sleep 10
+              done
+            fi
+          else
+            # Handle single cluster environments (higher, monitoring)
+            if [ -z "$CLUSTER_IP" ]; then
+              echo "❌ Cluster IP not available"
+              exit 1
+            fi
+            
+            echo "⏳ Waiting for K3s cluster at $CLUSTER_IP..."
+            for i in {1..30}; do
+              if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+                ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig
+                sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig > /tmp/kubeconfig-fixed
+                
+                ENV_NAME="${{ github.event.inputs.network == 'higher' && 'PROD' || 'MONITORING' }}"
+                SECRET_NAME="KUBECONFIG_$ENV_NAME"
+                base64 -w 0 /tmp/kubeconfig-fixed | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+                echo "✅ GitHub secret $SECRET_NAME updated"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "❌ K3s not ready after 5 minutes"
+                exit 1
+              fi
+              sleep 10
+            done
+          fi
           
-          rm -f /tmp/ssh_key /tmp/kubeconfig /tmp/kubeconfig-fixed
+          rm -f /tmp/ssh_key /tmp/kubeconfig* 2>/dev/null || true

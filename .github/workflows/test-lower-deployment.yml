@@ -1,0 +1,78 @@
+name: Test Lower Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - infrastructure
+          - application
+
+jobs:
+  test-infrastructure:
+    if: ${{ github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'infrastructure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Test Infrastructure Status
+        run: |
+          echo "🧪 Testing Lower Infrastructure..."
+          
+          # Check instances
+          aws ec2 describe-instances \
+            --filters "Name=tag:Environment,Values=lower" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[].Instances[].{Name:Tags[?Key==`Name`].Value|[0],IP:PublicIpAddress,State:State.Name}' \
+            --output table
+          
+          # Check database
+          aws rds describe-db-instances \
+            --db-instance-identifier health-app-shared-db \
+            --query 'DBInstances[0].{Status:DBInstanceStatus,Endpoint:Endpoint.Address}' \
+            --output table
+
+  test-application:
+    if: ${{ github.event.inputs.test_type == 'full' || github.event.inputs.test_type == 'application' }}
+    runs-on: ubuntu-latest
+    needs: [test-infrastructure]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Configure AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-south-1
+
+      - name: Test Dev Environment
+        if: ${{ vars.KUBECONFIG_DEV }}
+        run: |
+          echo "${{ vars.KUBECONFIG_DEV }}" | base64 -d > kubeconfig-dev
+          export KUBECONFIG=kubeconfig-dev
+          
+          kubectl get nodes
+          kubectl get namespaces
+          kubectl get pods -n health-app-dev || echo "No pods in dev namespace"
+
+      - name: Test Test Environment
+        if: ${{ vars.KUBECONFIG_TEST }}
+        run: |
+          echo "${{ vars.KUBECONFIG_TEST }}" | base64 -d > kubeconfig-test
+          export KUBECONFIG=kubeconfig-test
+          
+          kubectl get nodes
+          kubectl get namespaces
+          kubectl get pods -n health-app-test || echo "No pods in test namespace"

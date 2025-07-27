@@ -86,8 +86,10 @@ module "vpc" {
   tags                 = local.tags
 }
 
+# Single cluster for higher/monitoring environments
 module "k3s" {
   source = "./modules/k3s"
+  count  = var.environment != "lower" ? 1 : 0
 
   name_prefix       = local.name_prefix
   vpc_id            = module.vpc.vpc_id
@@ -98,6 +100,22 @@ module "k3s" {
   ssh_public_key    = var.ssh_public_key
   s3_bucket         = var.tf_state_bucket
   tags              = local.tags
+}
+
+# Multiple clusters for lower environment
+module "k3s_clusters" {
+  source   = "./modules/k3s"
+  for_each = var.environment == "lower" ? var.k8s_clusters : {}
+
+  name_prefix       = "${local.name_prefix}-${each.key}"
+  vpc_id            = module.vpc.vpc_id
+  vpc_cidr          = module.vpc.vpc_cidr_block
+  subnet_id         = module.vpc.public_subnet_ids[each.value.subnet_index]
+  k3s_instance_type = each.value.instance_type
+  environment       = each.key
+  ssh_public_key    = var.ssh_public_key
+  s3_bucket         = var.tf_state_bucket
+  tags              = merge(local.tags, { Environment = each.key })
 }
 
 module "rds" {
@@ -162,7 +180,7 @@ module "monitoring" {
   environment     = local.environment
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.public_subnet_ids
-  k3s_instance_ip = module.k3s.instance_public_ip
+  k3s_instance_ip = var.environment != "lower" ? module.k3s[0].instance_public_ip : ""
   tags            = local.tags
 
   depends_on = [module.k3s]
