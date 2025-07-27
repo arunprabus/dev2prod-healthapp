@@ -79,6 +79,7 @@ jobs:
             echo "🧹 Destroying existing resources..."
             terraform destroy \
               -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+              -var-file="environments/parameter-store.tfvars" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
               -var="github_pat=${{ secrets.REPO_PAT }}" \
               -auto-approve
@@ -95,6 +96,7 @@ jobs:
           
           terraform apply \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/parameter-store.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve
@@ -118,6 +120,7 @@ jobs:
           
           terraform destroy \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/parameter-store.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -auto-approve
@@ -148,8 +151,10 @@ jobs:
             # Handle lower environment with dev and test clusters
             if [ -n "$DEV_CLUSTER_IP" ]; then
               echo "⏳ Setting up Dev kubeconfig at $DEV_CLUSTER_IP..."
-              for i in {1..30}; do
-                if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+              echo "⏳ Waiting for K3s installation to complete..."
+              sleep 60
+              for i in {1..60}; do
+                if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
                   ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-dev
                   # Use public IP with insecure connection for external access
                   sed "s/127.0.0.1/$DEV_CLUSTER_IP/g" /tmp/kubeconfig-dev > /tmp/kubeconfig-dev-temp
@@ -164,8 +169,10 @@ jobs:
             
             if [ -n "$TEST_CLUSTER_IP" ]; then
               echo "⏳ Setting up Test kubeconfig at $TEST_CLUSTER_IP..."
-              for i in {1..30}; do
-                if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+              echo "⏳ Waiting for K3s installation to complete..."
+              sleep 60
+              for i in {1..60}; do
+                if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
                   ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-test
                   # Use public IP with insecure connection for external access
                   sed "s/127.0.0.1/$TEST_CLUSTER_IP/g" /tmp/kubeconfig-test > /tmp/kubeconfig-test-temp
@@ -185,8 +192,10 @@ jobs:
             fi
             
             echo "⏳ Waiting for K3s cluster at $CLUSTER_IP..."
-            for i in {1..30}; do
-              if timeout 10 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml" 2>/dev/null; then
+            echo "⏳ Waiting for K3s installation to complete..."
+            sleep 60
+            for i in {1..60}; do
+              if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
                 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig
                 sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig > /tmp/kubeconfig-fixed
                 
@@ -206,8 +215,65 @@ jobs:
           
           rm -f /tmp/ssh_key /tmp/kubeconfig* 2>/dev/null || true
 
-  setup-k8s-secrets:
+  setup-parameter-store:
     needs: kubeconfig
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Parameter Store Integration
+        run: |
+          echo "🔧 Setting up Parameter Store integration..."
+          
+          # Install External Secrets Operator CRDs
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            # Setup for dev environment
+            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
+              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
+              export KUBECONFIG=/tmp/kubeconfig-dev
+              
+              if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+                echo "📦 Installing External Secrets Operator for dev..."
+                kubectl apply -f https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml --insecure-skip-tls-verify || true
+                kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f - --insecure-skip-tls-verify || true
+                
+                # Apply Parameter Store configuration
+                envsubst < kubernetes-manifests/components/external-secrets/parameter-store-secret.yaml | kubectl apply -f - --insecure-skip-tls-verify || true
+                echo "✅ Parameter Store setup complete for dev"
+              fi
+            fi
+            
+            # Setup for test environment
+            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
+              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
+              export KUBECONFIG=/tmp/kubeconfig-test
+              
+              if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+                echo "📦 Installing External Secrets Operator for test..."
+                kubectl apply -f https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml --insecure-skip-tls-verify || true
+                kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f - --insecure-skip-tls-verify || true
+                
+                # Apply Parameter Store configuration for test
+                sed 's|/dev/health-app/|/test/health-app/|g' kubernetes-manifests/components/external-secrets/parameter-store-secret.yaml | kubectl apply -f - --insecure-skip-tls-verify || true
+                echo "✅ Parameter Store setup complete for test"
+              fi
+            fi
+          fi
+          
+          rm -f /tmp/kubeconfig* 2>/dev/null || true
+          echo "🎉 Parameter Store integration complete!"
+
+  setup-k8s-secrets:
+    needs: [kubeconfig, setup-parameter-store]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 10
@@ -294,7 +360,7 @@ jobs:
           echo "🎉 Kubernetes secrets setup complete!"
 
   test-deployment:
-    needs: [kubeconfig, setup-k8s-secrets]
+    needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 10
