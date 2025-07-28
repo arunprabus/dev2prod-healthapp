@@ -201,8 +201,10 @@ else
   systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 fi
 
-# Install K3s with write permissions
-curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+# Install K3s with write permissions and bind to all interfaces
+PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)
+curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --bind-address=0.0.0.0 --advertise-address=$PUBLIC_IP --node-external-ip=$PUBLIC_IP
 
 # Setup Docker
 systemctl enable docker
