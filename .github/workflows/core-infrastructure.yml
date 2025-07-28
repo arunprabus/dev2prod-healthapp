@@ -51,6 +51,17 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
+      - name: Cache Terraform
+        uses: actions/cache@v3
+        with:
+          path: |
+            infra/.terraform
+            infra/.terraform.lock.hcl
+          key: terraform-${{ github.event.inputs.network }}-${{ hashFiles('infra/**/*.tf') }}
+          restore-keys: |
+            terraform-${{ github.event.inputs.network }}-
+            terraform-
+
       - name: Terraform Init
         working-directory: infra
         run: |
@@ -79,7 +90,6 @@ jobs:
             echo "🧹 Destroying existing resources..."
             terraform destroy \
               -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
-              -var-file="environments/parameter-store.tfvars" \
               -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
               -var="github_pat=${{ secrets.REPO_PAT }}" \
               -auto-approve
@@ -89,6 +99,7 @@ jobs:
             
             echo "🧹 Manual cleanup of persistent resources..."
             aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
+            aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group || true
             aws kms delete-alias --alias-name alias/health-app-rds-export || true
             
             echo "✅ Cleanup complete, starting fresh deployment..."
