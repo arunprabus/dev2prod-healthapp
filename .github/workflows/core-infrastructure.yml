@@ -292,7 +292,7 @@ jobs:
                 export KUBECONFIG=/tmp/kubeconfig-dev
                 
                 # Create service account and get token
-                if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+                if timeout 30 kubectl get nodes --insecure-skip-tls-verify --request-timeout=10s >/dev/null 2>&1; then
                   kubectl create namespace gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
                   kubectl create serviceaccount gha-deployer -n gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
                   
@@ -346,7 +346,7 @@ jobs:
               if [ -n "$SERVER" ]; then
                 export KUBECONFIG=/tmp/kubeconfig-test
                 
-                if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+                if timeout 30 kubectl get nodes --insecure-skip-tls-verify --request-timeout=10s >/dev/null 2>&1; then
                   kubectl create namespace gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
                   kubectl create serviceaccount gha-deployer -n gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
                   
@@ -503,7 +503,7 @@ jobs:
               echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
               export KUBECONFIG=/tmp/kubeconfig-dev
               
-              if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
+              if timeout 60 kubectl get nodes --insecure-skip-tls-verify --request-timeout=30s; then
                 echo "✅ Dev cluster accessible"
                 
                 # Test using kubeconfig from K8s secret
@@ -549,7 +549,7 @@ jobs:
               echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
               export KUBECONFIG=/tmp/kubeconfig-test
               
-              if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
+              if timeout 60 kubectl get nodes --insecure-skip-tls-verify --request-timeout=30s; then
                 echo "✅ Test cluster accessible"
                 
                 # Test using kubeconfig from K8s secret

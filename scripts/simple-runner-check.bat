@@ -1,0 +1,3 @@
+@echo off
+echo Checking runner status...
+aws ec2 describe-instances --filters "Name=tag:Name,Values=*runner*" "Name=instance-state-name,Values=running" --query "Reservations[*].Instances[*].[InstanceId,Tags[?Key=='Name'].Value|[0],PublicIpAddress]" --output table

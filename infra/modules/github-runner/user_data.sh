@@ -68,21 +68,21 @@ chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 echo "🔐 Registering runner with GitHub..."
 echo "Repository: ${github_repo}"
 
-# Clean up offline runners for this network tier
-echo "🧹 Cleaning up offline runners for network: ${network_tier}..."
-OFFLINE_RUNNERS=$(curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners | jq -r ".runners[] | select(.name | contains(\"github-runner-${network_tier}\") and .status == \"offline\") | .id")
+# Clean up ALL existing runners for this network tier to avoid conflicts
+echo "🧹 Cleaning up existing runners for network: ${network_tier}..."
+EXISTING_RUNNERS=$(curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners | jq -r ".runners[] | select(.name | contains(\"github-runner-${network_tier}\")) | .id")
 
-echo "Found offline runners for ${network_tier}: $OFFLINE_RUNNERS"
-for runner_id in $OFFLINE_RUNNERS; do
+echo "Found existing runners for ${network_tier}: $EXISTING_RUNNERS"
+for runner_id in $EXISTING_RUNNERS; do
     if [ ! -z "$runner_id" ] && [ "$runner_id" != "null" ]; then
-        echo "🗑️ Removing offline runner ID: $runner_id"
+        echo "🗑️ Removing runner ID: $runner_id"
         curl -s -X DELETE -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/$runner_id
         sleep 2
     fi
 done
 
 echo "⏳ Waiting for cleanup to complete..."
-sleep 5
+sleep 10
 
 # Get registration token
 echo "Getting registration token..."
@@ -99,17 +99,13 @@ echo "🌐 Network tier: ${network_tier}"
 
 # Configure runner as ubuntu user
 echo "Running configuration as ubuntu user..."
-sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended" > /var/log/runner-config.log 2>&1
+sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended --replace" > /var/log/runner-config.log 2>&1
 CONFIG_EXIT_CODE=$?
 echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 
 # Install and start service
 echo "Installing runner service..."
 cd /home/ubuntu/actions-runner
-
-# Add ubuntu to sudoers for service management
-echo "ubuntu ALL=(ALL) NOPASSWD: /home/ubuntu/actions-runner/svc.sh" >> /etc/sudoers.d/github-runner
-echo "ubuntu ALL=(ALL) NOPASSWD: /bin/systemctl" >> /etc/sudoers.d/github-runner
 
 # Install service as root, but run as ubuntu
 echo "Installing service..."
@@ -124,28 +120,12 @@ START_EXIT_CODE=$?
 echo "Service start exit code: $START_EXIT_CODE"
 
 # Wait and check service status
-sleep 10
+sleep 15
 echo "Checking service status..."
 systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1 || true
 
-# If service failed, try alternative startup
-if ! systemctl is-active --quiet actions.runner.*; then
-    echo "Service not active, trying alternative startup..."
-    # Kill any existing processes
-    pkill -f Runner.Listener || true
-    sleep 5
-    
-    # Start directly as ubuntu user
-    sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh > /var/log/runner-config.log 2>&1 &"
-    sleep 5
-    
-    # Check if process is running
-    if pgrep -f Runner.Listener > /dev/null; then
-        echo "Runner started successfully via direct method"
-    else
-        echo "Failed to start runner via direct method"
-    fi
-fi
+# Ensure service starts on boot
+systemctl enable actions.runner.* >> /var/log/runner-config.log 2>&1 || true
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
