@@ -17,3 +17,8 @@ output "key_pair_name" {
   description = "Name of the created key pair"
   value       = aws_key_pair.github_runner.key_name
 }
+
+output "runner_security_group_id" {
+  description = "Security group ID of the GitHub runner"
+  value       = aws_security_group.runner.id
+}

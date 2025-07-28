@@ -28,6 +28,24 @@ resource "aws_security_group" "k3s" {
     cidr_blocks = ["10.0.0.0/8"]
     description = "K3s API server access from VPC (GitHub runners)"
   }
+  
+  # Allow all traffic from runner security group
+  ingress {
+    from_port       = 0
+    to_port         = 65535
+    protocol        = "tcp"
+    security_groups = [var.runner_security_group_id]
+    description     = "Allow all TCP from GitHub runner"
+  }
+  
+  # Allow SSH from runner security group
+  ingress {
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    security_groups = [var.runner_security_group_id]
+    description     = "SSH from GitHub runner"
+  }
 
   # HTTP/HTTPS for applications
   ingress {

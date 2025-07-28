@@ -107,15 +107,16 @@ module "k3s_clusters" {
   source   = "./modules/k3s"
   for_each = var.network_tier == "lower" ? var.k8s_clusters : {}
 
-  name_prefix       = "${local.name_prefix}-${each.key}"
-  vpc_id            = module.vpc.vpc_id
-  vpc_cidr          = module.vpc.vpc_cidr_block
-  subnet_id         = module.vpc.public_subnet_ids[each.value.subnet_index]
-  k3s_instance_type = each.value.instance_type
-  environment       = each.key
-  ssh_public_key    = var.ssh_public_key
-  s3_bucket         = var.tf_state_bucket
-  tags              = merge(local.tags, { Environment = each.key })
+  name_prefix              = "${local.name_prefix}-${each.key}"
+  vpc_id                   = module.vpc.vpc_id
+  vpc_cidr                 = module.vpc.vpc_cidr_block
+  subnet_id                = module.vpc.public_subnet_ids[each.value.subnet_index]
+  k3s_instance_type        = each.value.instance_type
+  environment              = each.key
+  ssh_public_key           = var.ssh_public_key
+  s3_bucket                = var.tf_state_bucket
+  runner_security_group_id = module.github_runner.runner_security_group_id
+  tags                     = merge(local.tags, { Environment = each.key })
 }
 
 module "rds" {

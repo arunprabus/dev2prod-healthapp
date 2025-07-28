@@ -40,6 +40,12 @@ variable "tags" {
   default     = {}
 }
 
+variable "runner_security_group_id" {
+  description = "Security group ID of the GitHub runner"
+  type        = string
+  default     = ""
+}
+
 variable "s3_bucket" {
   description = "S3 bucket for kubeconfig upload"
   type        = string
