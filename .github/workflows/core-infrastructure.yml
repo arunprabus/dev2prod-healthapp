@@ -65,7 +65,7 @@ jobs:
       - name: Terraform Init
         working-directory: infra
         run: |
-          terraform init \
+          terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
             -backend-config="region=$AWS_REGION"
