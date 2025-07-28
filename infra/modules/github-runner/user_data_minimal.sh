@@ -1,63 +1,46 @@
 #!/bin/bash
 set -e
-exec > >(tee /var/log/runner-setup.log) 2>&1
 
-echo "=== USER DATA SCRIPT STARTED ==="
-echo "Time: $(date)"
-echo "Instance ID: $(curl -s http://169.254.169.254/latest/meta-data/instance-id)"
-echo "Instance Type: $(curl -s http://169.254.169.254/latest/meta-data/instance-type)"
-echo "Availability Zone: $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)"
-echo "🚀 Setting up GitHub Runner..."
-
-# Update system
-echo "Updating system..."
+# Update and install essentials
 apt-get update
-apt-get install -y curl wget unzip git jq docker.io
+apt-get install -y curl wget unzip docker.io git jq
+
+# Install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip && ./aws/install
+
+# Configure AWS CLI
+mkdir -p /home/ubuntu/.aws
+echo "[default]" > /home/ubuntu/.aws/config
+echo "region = ${aws_region}" >> /home/ubuntu/.aws/config
+chown -R ubuntu:ubuntu /home/ubuntu/.aws
+
+# Install kubectl
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl && mv kubectl /usr/local/bin/
+
+# Install Terraform
+wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
+apt-get update && apt-get install -y terraform
 
 # Setup GitHub Actions runner
-echo "Setting up runner directory..."
 cd /home/ubuntu
 mkdir -p actions-runner && cd actions-runner
-
-echo "Downloading runner..."
 curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
 tar xzf ./actions-runner-linux-x64-2.311.0.tar.gz
 chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 
-echo "Getting registration token..."
+# Get registration token and configure
 REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | jq -r '.token')
-RUNNER_NAME="github-runner-${network_tier}-$(hostname | cut -d'-' -f3-)"
+RUNNER_NAME="github-runner-${network_tier}"
 LABELS="github-runner-${network_tier}"
 
-echo "Configuring runner: $RUNNER_NAME"
 sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended"
 
-echo "Installing service..."
+# Install and start service
 ./svc.sh install ubuntu
-
-echo "Starting service..."
 ./svc.sh start
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
-
-echo "✅ Setup completed at $(date)"
-echo "Runner: $RUNNER_NAME"
-echo "Labels: $LABELS"
-
-# Create completion marker
-echo "SUCCESS: $(date)" > /var/log/user-data-complete
-echo "=== USER DATA SCRIPT COMPLETED SUCCESSFULLY ==="
-
-# Create debug script
-cat > /home/ubuntu/debug-runner.sh << 'EOF'
-#!/bin/bash
-echo "=== Runner Status ==="
-sudo systemctl status actions.runner.* --no-pager
-echo "=== Setup Log ==="
-tail -50 /var/log/runner-setup.log
-echo "=== Directory ==="
-ls -la /home/ubuntu/actions-runner/
-EOF
-chmod +x /home/ubuntu/debug-runner.sh
-chown ubuntu:ubuntu /home/ubuntu/debug-runner.sh
