@@ -224,7 +224,7 @@ jobs:
   setup-parameter-store:
     needs: kubeconfig
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     
     steps:
@@ -238,10 +238,6 @@ jobs:
       
       - name: Setup Parameter Store Integration
         run: |
-          # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
           echo "🔧 Setting up Parameter Store integration..."
           
           # Install External Secrets Operator CRDs
@@ -400,7 +396,7 @@ jobs:
   setup-k8s-secrets:
     needs: [kubeconfig, setup-parameter-store]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     
     steps:
@@ -408,10 +404,6 @@ jobs:
       
       - name: Setup Kubernetes Secrets
         run: |
-          # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
           echo "🔐 Setting up Kubernetes secrets for kubeconfig..."
           
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
@@ -489,16 +481,12 @@ jobs:
   test-deployment:
     needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 10
     
     steps:
       - name: Test Cluster Connectivity
         run: |
-          # Install kubectl
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
             echo "🧪 Testing Lower Environment Clusters..."
             

@@ -25,17 +25,8 @@ curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip
 unzip awscliv2.zip
 ./aws/install
 
-# Configure AWS CLI with region (using IAM role)
-echo "🔧 Configuring AWS CLI..."
-mkdir -p /home/ubuntu/.aws
-echo "[default]" > /home/ubuntu/.aws/config
-echo "region = ${aws_region}" >> /home/ubuntu/.aws/config
-echo "output = json" >> /home/ubuntu/.aws/config
-chown -R ubuntu:ubuntu /home/ubuntu/.aws
-
-# Test AWS CLI with IAM role (no credentials needed)
-echo "🧪 Testing AWS CLI with IAM role..."
-aws sts get-caller-identity || echo "AWS CLI will use IAM instance profile"
+# AWS CLI will use IAM instance profile automatically
+echo "🔧 AWS CLI configured to use IAM instance profile"
 
 # Install Docker Compose
 echo "🐳 Installing Docker Compose..."
@@ -107,23 +98,18 @@ echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 echo "Installing runner service..."
 cd /home/ubuntu/actions-runner
 
-# Start runner directly without service (more reliable)
-echo "Starting runner directly..."
-chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
-
-# Start runner in background as ubuntu user
-sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh > /var/log/runner-direct.log 2>&1 &"
+# Install and start service (original working method)
+echo "Installing runner service..."
+./svc.sh install ubuntu
+./svc.sh start
 sleep 10
 
-# Check if runner is running
-if pgrep -f Runner.Listener > /dev/null; then
-    echo "✅ Runner started successfully"
-    echo "Runner PID: $(pgrep -f Runner.Listener)"
+# Check service status
+if systemctl is-active --quiet actions.runner.*; then
+    echo "✅ Runner service started successfully"
 else
-    echo "❌ Runner failed to start"
-    echo "Trying service method as fallback..."
-    ./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
-    ./svc.sh start >> /var/log/runner-config.log 2>&1
+    echo "⚠️ Service failed, trying direct start..."
+    sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh > /dev/null 2>&1 &"
 fi
 
 # Add ubuntu to docker group
