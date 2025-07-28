@@ -20,6 +20,7 @@ on:
           - 'fix-kubeconfig.sh'
           - 'setup-kubeconfig.sh'
           - 'refresh-kubeconfig.sh'
+          - 'quick-fix-kubeconfig.sh'
           
           # AWS Management
           - 'aws-resource-audit.sh'
