@@ -21,6 +21,7 @@ on:
           - 'setup-kubeconfig.sh'
           - 'refresh-kubeconfig.sh'
           - 'quick-fix-kubeconfig.sh'
+          - 'simple-parameter-store-fix.sh'
           
           # AWS Management
           - 'aws-resource-audit.sh'
