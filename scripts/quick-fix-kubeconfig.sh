@@ -30,8 +30,8 @@ echo "Test IP: $TEST_IP"
 if [ "$DEV_IP" != "None" ]; then
   echo "🔧 Fixing dev cluster..."
   
-  # Get token directly from cluster
-  TOKEN=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$DEV_IP \
+  # Get token directly from cluster using SSH key
+  TOKEN=$(ssh -i ~/.ssh/k3s-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$DEV_IP \
     "sudo k3s kubectl create token gha-deployer -n gha-access --duration=24h 2>/dev/null || \
      (sudo k3s kubectl create namespace gha-access && \
       sudo k3s kubectl create serviceaccount gha-deployer -n gha-access && \
@@ -52,7 +52,7 @@ fi
 if [ "$TEST_IP" != "None" ]; then
   echo "🔧 Fixing test cluster..."
   
-  TOKEN=$(ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$TEST_IP \
+  TOKEN=$(ssh -i ~/.ssh/k3s-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$TEST_IP \
     "sudo k3s kubectl create token gha-deployer -n gha-access --duration=24h 2>/dev/null || \
      (sudo k3s kubectl create namespace gha-access && \
       sudo k3s kubectl create serviceaccount gha-deployer -n gha-access && \
