@@ -107,25 +107,24 @@ echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 echo "Installing runner service..."
 cd /home/ubuntu/actions-runner
 
-# Install service as root, but run as ubuntu
-echo "Installing service..."
-./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
-INSTALL_EXIT_CODE=$?
-echo "Service install exit code: $INSTALL_EXIT_CODE"
+# Start runner directly without service (more reliable)
+echo "Starting runner directly..."
+chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 
-# Start service
-echo "Starting service..."
-./svc.sh start >> /var/log/runner-config.log 2>&1
-START_EXIT_CODE=$?
-echo "Service start exit code: $START_EXIT_CODE"
+# Start runner in background as ubuntu user
+sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh > /var/log/runner-direct.log 2>&1 &"
+sleep 10
 
-# Wait and check service status
-sleep 15
-echo "Checking service status..."
-systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1 || true
-
-# Ensure service starts on boot
-systemctl enable actions.runner.* >> /var/log/runner-config.log 2>&1 || true
+# Check if runner is running
+if pgrep -f Runner.Listener > /dev/null; then
+    echo "✅ Runner started successfully"
+    echo "Runner PID: $(pgrep -f Runner.Listener)"
+else
+    echo "❌ Runner failed to start"
+    echo "Trying service method as fallback..."
+    ./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
+    ./svc.sh start >> /var/log/runner-config.log 2>&1
+fi
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
