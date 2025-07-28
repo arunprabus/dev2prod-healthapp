@@ -25,7 +25,7 @@ curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip
 unzip awscliv2.zip
 ./aws/install
 
-# Configure AWS CLI with region
+# Configure AWS CLI with region (using IAM role)
 echo "🔧 Configuring AWS CLI..."
 mkdir -p /home/ubuntu/.aws
 echo "[default]" > /home/ubuntu/.aws/config
@@ -33,9 +33,9 @@ echo "region = ${aws_region}" >> /home/ubuntu/.aws/config
 echo "output = json" >> /home/ubuntu/.aws/config
 chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-# Test AWS CLI
-echo "🧪 Testing AWS CLI..."
-sudo -u ubuntu aws sts get-caller-identity || echo "AWS CLI test failed - will use IAM role"
+# Test AWS CLI with IAM role (no credentials needed)
+echo "🧪 Testing AWS CLI with IAM role..."
+aws sts get-caller-identity || echo "AWS CLI will use IAM instance profile"
 
 # Install Docker Compose
 echo "🐳 Installing Docker Compose..."
@@ -68,21 +68,21 @@ chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
 echo "🔐 Registering runner with GitHub..."
 echo "Repository: ${github_repo}"
 
-# Clean up ALL old runners for this network tier (aggressive cleanup)
-echo "🧹 Cleaning up ALL old runners for network: ${network_tier}..."
-ALL_RUNNERS=$(curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners | jq -r ".runners[] | select(.name | contains(\"github-runner-${network_tier}\")) | .id")
+# Clean up offline runners for this network tier
+echo "🧹 Cleaning up offline runners for network: ${network_tier}..."
+OFFLINE_RUNNERS=$(curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners | jq -r ".runners[] | select(.name | contains(\"github-runner-${network_tier}\") and .status == \"offline\") | .id")
 
-echo "Found existing runners for ${network_tier}: $ALL_RUNNERS"
-for runner_id in $ALL_RUNNERS; do
+echo "Found offline runners for ${network_tier}: $OFFLINE_RUNNERS"
+for runner_id in $OFFLINE_RUNNERS; do
     if [ ! -z "$runner_id" ] && [ "$runner_id" != "null" ]; then
-        echo "🗑️ Removing runner ID: $runner_id"
+        echo "🗑️ Removing offline runner ID: $runner_id"
         curl -s -X DELETE -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/$runner_id
         sleep 2
     fi
 done
 
 echo "⏳ Waiting for cleanup to complete..."
-sleep 10
+sleep 5
 
 # Get registration token
 echo "Getting registration token..."
