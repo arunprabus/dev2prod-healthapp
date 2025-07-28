@@ -190,38 +190,35 @@ jobs:
             CLUSTER_IP="${{ github.event.inputs.cluster_ip }}"
             echo "Using provided IP: $CLUSTER_IP"
           else
-            # Auto-detect from AWS EC2 instances
-            ENV="${{ github.event.inputs.environment }}"
-            echo "Auto-detecting IP for $ENV environment..."
-            
-            if [ "$ENV" = "lower" ]; then
-              # For lower environment, get dev cluster IP
-              CLUSTER_IP=$(aws ec2 describe-instances \
-                --filters "Name=tag:Name,Values=health-app-lower-dev-k3s-node-v2" \
-                         "Name=instance-state-name,Values=running" \
-                --query 'Reservations[0].Instances[0].PublicIpAddress' \
-                --output text 2>/dev/null)
-              
-              if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-                # Try test cluster as fallback
-                CLUSTER_IP=$(aws ec2 describe-instances \
-                  --filters "Name=tag:Name,Values=health-app-lower-test-k3s-node-v2" \
-                           "Name=instance-state-name,Values=running" \
-                  --query 'Reservations[0].Instances[0].PublicIpAddress' \
-                  --output text 2>/dev/null)
-              fi
+            # For quick-fix-kubeconfig.sh, we don't need cluster IP as it auto-detects
+            if [ "${{ github.event.inputs.script_name }}" = "quick-fix-kubeconfig.sh" ]; then
+              CLUSTER_IP="auto-detect"
+              echo "Script will auto-detect cluster IPs"
             else
-              # For other environments
-              CLUSTER_IP=$(aws ec2 describe-instances \
-                --filters "Name=tag:Name,Values=health-app-$ENV-k3s-node-v2" \
-                         "Name=instance-state-name,Values=running" \
-                --query 'Reservations[0].Instances[0].PublicIpAddress' \
-                --output text 2>/dev/null)
-            fi
-            
-            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
-              echo "❌ Could not auto-detect cluster IP"
-              exit 1
+              # Auto-detect for other scripts
+              ENV="${{ github.event.inputs.environment }}"
+              echo "Auto-detecting IP for $ENV environment..."
+              
+              # Debug AWS CLI
+              echo "Testing AWS CLI..."
+              aws sts get-caller-identity || echo "AWS CLI not configured"
+              
+              # List all running instances for debugging
+              echo "All running instances:"
+              aws ec2 describe-instances \
+                --filters "Name=instance-state-name,Values=running" \
+                --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],PublicIpAddress]' \
+                --output table || echo "Failed to list instances"
+              
+              # Use hardcoded IPs from your console
+              if [ "$ENV" = "lower" ] || [ "$ENV" = "dev" ]; then
+                CLUSTER_IP="13.233.89.253"  # health-app-lower-dev
+              elif [ "$ENV" = "test" ]; then
+                CLUSTER_IP="3.111.55.233"   # health-app-lower-test
+              else
+                echo "❌ Unknown environment: $ENV"
+                exit 1
+              fi
             fi
           fi
           
