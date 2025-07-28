@@ -38,28 +38,36 @@ echo "🎯 Cluster IPs:"
 echo "  Dev:  $DEV_IP"
 echo "  Test: $TEST_IP"
 
-# Test K3s Connectivity
+# Test K3s Connectivity using Parameter Store
 echo "🔗 Testing K3s Connectivity..."
-if [ "$DEV_IP" != "None" ]; then
-  echo "Testing Dev cluster..."
-  ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$DEV_IP "sudo k3s kubectl get nodes" || echo "❌ Dev cluster unreachable"
+echo "🧪 Testing Lower Environment Clusters..."
+
+# Test Dev Environment
+echo "Testing Dev Environment..."
+if ./scripts/get-kubeconfig-from-parameter-store.sh dev /tmp/kubeconfig-dev.yaml; then
+    export KUBECONFIG=/tmp/kubeconfig-dev.yaml
+    if timeout 30 kubectl get nodes --request-timeout=20s > /dev/null 2>&1; then
+        echo "✅ Dev cluster connection successful"
+        kubectl get nodes
+    else
+        echo "❌ Dev cluster connection failed"
+    fi
+else
+    echo "❌ Dev cluster connection failed"
 fi
 
-if [ "$TEST_IP" != "None" ]; then
-  echo "Testing Test cluster..."
-  ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$TEST_IP "sudo k3s kubectl get nodes" || echo "❌ Test cluster unreachable"
-fi
-
-# Generate Kubeconfigs
-echo "🔑 Generating Kubeconfigs..."
-if [ "$DEV_IP" != "None" ]; then
-  ./scripts/setup-kubeconfig.sh dev $DEV_IP > /tmp/kubeconfig-dev.yaml
-  echo "✅ Dev kubeconfig generated"
-fi
-
-if [ "$TEST_IP" != "None" ]; then
-  ./scripts/setup-kubeconfig.sh test $TEST_IP > /tmp/kubeconfig-test.yaml
-  echo "✅ Test kubeconfig generated"
+# Test Test Environment
+echo "Testing Test Environment..."
+if ./scripts/get-kubeconfig-from-parameter-store.sh test /tmp/kubeconfig-test.yaml; then
+    export KUBECONFIG=/tmp/kubeconfig-test.yaml
+    if timeout 30 kubectl get nodes --request-timeout=20s > /dev/null 2>&1; then
+        echo "✅ Test cluster connection successful"
+        kubectl get nodes
+    else
+        echo "❌ Test cluster connection failed"
+    fi
+else
+    echo "❌ Test cluster connection failed"
 fi
 
 echo "🎉 Lower Infrastructure Test Complete!"

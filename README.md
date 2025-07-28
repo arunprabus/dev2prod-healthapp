@@ -20,6 +20,7 @@ This repository contains the complete infrastructure and deployment pipeline for
 - ✅ **Progressive Delivery** - Argo Rollouts with canary and blue/green deployments
 - ✅ **Service Mesh Integration** - Istio for advanced traffic management
 - ✅ **Kubernetes Secrets** - Secure credential management
+- ✅ **Parameter Store Integration** - AWS SSM for kubeconfig management
 
 ## 📁 Clean Repository Structure
 
@@ -126,6 +127,16 @@ For quick setup instructions, see the [Quick Setup Guide](docs/guides/QUICK-SETU
 - Terraform CLI (v1.6.0 or later)
 - kubectl
 
+### Fixing Cluster Connection Issues
+
+If you're experiencing cluster connection failures, run:
+
+```bash
+./scripts/fix-cluster-connections.sh
+```
+
+This enables Parameter Store integration for secure kubeconfig management.
+
 ### Deploying Infrastructure
 
 You can deploy the infrastructure using the GitHub Actions workflow or manually:
@@ -138,6 +149,21 @@ terraform init \
   -backend-config="region=ap-south-1"
 terraform apply -var-file="environments/dev.tfvars"
 ```
+
+### Parameter Store Integration
+
+The infrastructure uses AWS Systems Manager Parameter Store for kubeconfig management:
+
+```bash
+# Get kubeconfig for any environment
+./scripts/get-kubeconfig-from-parameter-store.sh dev
+./scripts/get-kubeconfig-from-parameter-store.sh test
+
+# Test cluster connections
+./scripts/test-lower-deployment.sh
+```
+
+For detailed information, see [Parameter Store Kubeconfig Guide](docs/PARAMETER-STORE-KUBECONFIG.md).
 
 ## Network Architecture
 

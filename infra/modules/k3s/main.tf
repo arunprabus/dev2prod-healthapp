@@ -129,6 +129,33 @@ resource "aws_iam_role_policy" "k3s_s3_policy" {
   }
 }
 
+# IAM policy for Parameter Store access
+resource "aws_iam_role_policy" "k3s_parameter_store_policy" {
+  name = "${var.name_prefix}-k3s-parameter-store-policy"
+  role = aws_iam_role.k3s_role.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:PutParameter",
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ]
+        Resource = [
+          "arn:aws:ssm:*:*:parameter/${var.environment}/health-app/*"
+        ]
+      }
+    ]
+  })
+  
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 resource "aws_iam_instance_profile" "k3s_profile" {
   name = "${var.name_prefix}-k3s-profile"
   role = aws_iam_role.k3s_role.name
@@ -208,6 +235,32 @@ TOKEN=$$(kubectl create token gha-deployer -n gha-access --duration=24h)
 if [[ -n "$$TOKEN" ]]; then
   PUBLIC_IP=$$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
   
+  # Store kubeconfig data in Parameter Store
+  echo "Storing kubeconfig data in Parameter Store..."
+  aws ssm put-parameter \
+    --name "/$$ENVIRONMENT/health-app/kubeconfig/server" \
+    --value "https://$$PUBLIC_IP:6443" \
+    --type "String" \
+    --overwrite \
+    --region ap-south-1
+  
+  aws ssm put-parameter \
+    --name "/$$ENVIRONMENT/health-app/kubeconfig/token" \
+    --value "$$TOKEN" \
+    --type "SecureString" \
+    --overwrite \
+    --region ap-south-1
+  
+  # Store cluster name for reference
+  aws ssm put-parameter \
+    --name "/$$ENVIRONMENT/health-app/kubeconfig/cluster-name" \
+    --value "k3s-cluster" \
+    --type "String" \
+    --overwrite \
+    --region ap-south-1
+  
+  echo "SUCCESS: Kubeconfig data stored in Parameter Store"
+  
   # Create kubeconfig with dynamic token
   cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
 apiVersion: v1
@@ -230,11 +283,11 @@ users:
     token: $$TOKEN
 KUBE_EOF
   
-  # Upload to S3
+  # Upload to S3 (backup)
   if [[ -n "$$S3_BUCKET" ]]; then
     echo "Uploading kubeconfig to S3..."
     aws s3 cp /tmp/gha-kubeconfig.yaml s3://$$S3_BUCKET/kubeconfig/$$ENVIRONMENT-gha.yaml
-    echo "SUCCESS: Service account kubeconfig uploaded"
+    echo "SUCCESS: Service account kubeconfig uploaded to S3"
   fi
 else
   echo "ERROR: Failed to generate token"

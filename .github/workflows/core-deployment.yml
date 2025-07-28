@@ -88,29 +88,74 @@ jobs:
 
       - name: Configure kubectl for environment
         run: |
-          # Use appropriate kubeconfig secret
-          if [ "$ENVIRONMENT" = "dev" ]; then
-            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig
-          elif [ "$ENVIRONMENT" = "test" ]; then
-            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig
+          echo "🔧 Setting up kubeconfig from Parameter Store..."
+          
+          # Get kubeconfig from Parameter Store
+          SERVER=$(aws ssm get-parameter \
+              --name "/$ENVIRONMENT/health-app/kubeconfig/server" \
+              --region $AWS_REGION \
+              --query 'Parameter.Value' \
+              --output text)
+          
+          TOKEN=$(aws ssm get-parameter \
+              --name "/$ENVIRONMENT/health-app/kubeconfig/token" \
+              --with-decryption \
+              --region $AWS_REGION \
+              --query 'Parameter.Value' \
+              --output text)
+          
+          CLUSTER_NAME=$(aws ssm get-parameter \
+              --name "/$ENVIRONMENT/health-app/kubeconfig/cluster-name" \
+              --region $AWS_REGION \
+              --query 'Parameter.Value' \
+              --output text 2>/dev/null || echo "k3s-cluster")
+          
+          if [ -z "$SERVER" ] || [ -z "$TOKEN" ]; then
+            echo "❌ Error: Could not retrieve kubeconfig from Parameter Store"
+            echo "Falling back to GitHub Secrets..."
+            
+            # Fallback to GitHub secrets
+            if [ "$ENVIRONMENT" = "dev" ]; then
+              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig
+            elif [ "$ENVIRONMENT" = "test" ]; then
+              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig
+            else
+              echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
+            fi
           else
-            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
+            echo "✅ Retrieved kubeconfig from Parameter Store"
+            
+            # Create kubeconfig from Parameter Store data
+            cat > /tmp/kubeconfig << EOF
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              insecure-skip-tls-verify: true
+              server: $SERVER
+            name: $CLUSTER_NAME
+          contexts:
+          - context:
+              cluster: $CLUSTER_NAME
+              namespace: gha-access
+              user: gha-deployer
+            name: gha-context
+          current-context: gha-context
+          users:
+          - name: gha-deployer
+            user:
+              token: $TOKEN
+          EOF
           fi
           
           export KUBECONFIG=/tmp/kubeconfig
           echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          chmod 600 /tmp/kubeconfig
           
           # Test connection
+          echo "🧪 Testing cluster connection..."
           kubectl cluster-info --insecure-skip-tls-verify
           kubectl get nodes --insecure-skip-tls-verify
-          
-          # Try to use kubeconfig from Kubernetes secret if available
-          if kubectl get secret kubeconfig-$ENVIRONMENT -n health-app-$ENVIRONMENT --insecure-skip-tls-verify 2>/dev/null; then
-            echo "🔐 Found kubeconfig in Kubernetes secret - using it for deployment"
-            kubectl get secret kubeconfig-$ENVIRONMENT -n health-app-$ENVIRONMENT -o jsonpath='{.data.config}' --insecure-skip-tls-verify | base64 -d > /tmp/kubeconfig-from-k8s
-            export KUBECONFIG=/tmp/kubeconfig-from-k8s
-            echo "KUBECONFIG=/tmp/kubeconfig-from-k8s" >> $GITHUB_ENV
-          fi
 
       - name: Create namespace
         run: |

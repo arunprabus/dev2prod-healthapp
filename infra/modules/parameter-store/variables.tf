@@ -29,3 +29,22 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "kubeconfig_server" {
+  description = "Kubernetes API server endpoint"
+  type        = string
+  default     = ""
+}
+
+variable "kubeconfig_token" {
+  description = "Kubernetes service account token"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "kubeconfig_ca_cert" {
+  description = "Kubernetes cluster CA certificate"
+  type        = string
+  default     = ""
+}
