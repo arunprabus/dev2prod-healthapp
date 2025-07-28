@@ -194,15 +194,17 @@ jobs:
             ENV="${{ github.event.inputs.environment }}"
             echo "Auto-detecting IP for $ENV environment..."
             
-            CLUSTER_IP=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=*k3s*" \
-                       "Name=instance-state-name,Values=running" \
-              --query 'Reservations[0].Instances[0].PublicIpAddress' \
-              --output text 2>/dev/null || echo "")
-            
-            if [[ "$CLUSTER_IP" == "None" || -z "$CLUSTER_IP" ]]; then
+            if [ "$ENV" = "lower" ]; then
+              # For lower environment, get dev cluster IP
               CLUSTER_IP=$(aws ec2 describe-instances \
-                --filters "Name=tag:Name,Values=health-app-*" \
+                --filters "Name=tag:Name,Values=health-app-lower-dev" \
+                         "Name=instance-state-name,Values=running" \
+                --query 'Reservations[0].Instances[0].PublicIpAddress' \
+                --output text 2>/dev/null || echo "")
+            else
+              # For other environments
+              CLUSTER_IP=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=health-app-$ENV" \
                          "Name=instance-state-name,Values=running" \
                 --query 'Reservations[0].Instances[0].PublicIpAddress' \
                 --output text 2>/dev/null || echo "")
