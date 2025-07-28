@@ -131,7 +131,7 @@ on:
 
 jobs:
   execute-script:
-    runs-on: ${{ (github.event.inputs.environment == 'lower' || github.event.inputs.environment == 'dev' || github.event.inputs.environment == 'test') && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: [self-hosted, github-runner-lower]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
