@@ -25,6 +25,18 @@ curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip
 unzip awscliv2.zip
 ./aws/install
 
+# Configure AWS CLI with region
+echo "🔧 Configuring AWS CLI..."
+mkdir -p /home/ubuntu/.aws
+echo "[default]" > /home/ubuntu/.aws/config
+echo "region = ${aws_region}" >> /home/ubuntu/.aws/config
+echo "output = json" >> /home/ubuntu/.aws/config
+chown -R ubuntu:ubuntu /home/ubuntu/.aws
+
+# Test AWS CLI
+echo "🧪 Testing AWS CLI..."
+sudo -u ubuntu aws sts get-caller-identity || echo "AWS CLI test failed - will use IAM role"
+
 # Install Docker Compose
 echo "🐳 Installing Docker Compose..."
 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose

@@ -271,7 +271,84 @@ jobs:
           fi
           
           rm -f /tmp/kubeconfig* 2>/dev/null || true
-          echo "🎉 Parameter Store integration complete!"
+          
+          # Populate Parameter Store with kubeconfig data
+          echo "📝 Populating Parameter Store with kubeconfig data..."
+          
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            # Extract and store dev kubeconfig data
+            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
+              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
+              
+              # Extract server and token from kubeconfig
+              SERVER=$(grep "server:" /tmp/kubeconfig-dev | awk '{print $2}')
+              TOKEN=$(grep "token:" /tmp/kubeconfig-dev | awk '{print $2}' || echo "")
+              
+              if [ -n "$SERVER" ]; then
+                aws ssm put-parameter \
+                  --name "/dev/health-app/kubeconfig/server" \
+                  --value "$SERVER" \
+                  --type "String" \
+                  --overwrite \
+                  --region $AWS_REGION || true
+                
+                if [ -n "$TOKEN" ]; then
+                  aws ssm put-parameter \
+                    --name "/dev/health-app/kubeconfig/token" \
+                    --value "$TOKEN" \
+                    --type "SecureString" \
+                    --overwrite \
+                    --region $AWS_REGION || true
+                fi
+                
+                aws ssm put-parameter \
+                  --name "/dev/health-app/kubeconfig/cluster-name" \
+                  --value "k3s-cluster" \
+                  --type "String" \
+                  --overwrite \
+                  --region $AWS_REGION || true
+                
+                echo "✅ Dev kubeconfig data stored in Parameter Store"
+              fi
+            fi
+            
+            # Extract and store test kubeconfig data
+            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
+              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
+              
+              SERVER=$(grep "server:" /tmp/kubeconfig-test | awk '{print $2}')
+              TOKEN=$(grep "token:" /tmp/kubeconfig-test | awk '{print $2}' || echo "")
+              
+              if [ -n "$SERVER" ]; then
+                aws ssm put-parameter \
+                  --name "/test/health-app/kubeconfig/server" \
+                  --value "$SERVER" \
+                  --type "String" \
+                  --overwrite \
+                  --region $AWS_REGION || true
+                
+                if [ -n "$TOKEN" ]; then
+                  aws ssm put-parameter \
+                    --name "/test/health-app/kubeconfig/token" \
+                    --value "$TOKEN" \
+                    --type "SecureString" \
+                    --overwrite \
+                    --region $AWS_REGION || true
+                fi
+                
+                aws ssm put-parameter \
+                  --name "/test/health-app/kubeconfig/cluster-name" \
+                  --value "k3s-cluster" \
+                  --type "String" \
+                  --overwrite \
+                  --region $AWS_REGION || true
+                
+                echo "✅ Test kubeconfig data stored in Parameter Store"
+              fi
+            fi
+          fi
+          
+          echo "🎉 Parameter Store population complete!"
 
   setup-k8s-secrets:
     needs: [kubeconfig, setup-parameter-store]
