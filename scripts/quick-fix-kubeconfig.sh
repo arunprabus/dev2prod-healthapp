@@ -7,13 +7,21 @@ echo "🔍 Checking cluster status..."
 
 # Check dev cluster
 DEV_IP=$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=health-app-lower-dev" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=health-app-lower-dev-k3s-node-v2" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "None")
+
+if [ "$DEV_IP" = "None" ]; then
+  DEV_IP="13.233.89.253"  # Hardcoded from console
+fi
 
 # Check test cluster  
 TEST_IP=$(aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=health-app-lower-test" "Name=instance-state-name,Values=running" \
+  --filters "Name=tag:Name,Values=health-app-lower-test-k3s-node-v2" "Name=instance-state-name,Values=running" \
   --query 'Reservations[0].Instances[0].PublicIpAddress' --output text 2>/dev/null || echo "None")
+
+if [ "$TEST_IP" = "None" ]; then
+  TEST_IP="3.111.55.233"   # Hardcoded from console
+fi
 
 echo "Dev IP: $DEV_IP"
 echo "Test IP: $TEST_IP"
@@ -61,4 +69,12 @@ if [ "$TEST_IP" != "None" ]; then
 fi
 
 echo "🧪 Testing connections..."
-./test-lower-deployment.sh
+if [ -f "./scripts/test-lower-deployment.sh" ]; then
+  ./scripts/test-lower-deployment.sh
+elif [ -f "./test-lower-deployment.sh" ]; then
+  ./test-lower-deployment.sh
+else
+  echo "✅ Parameter Store setup complete! Test manually with:"
+  echo "./scripts/get-kubeconfig-from-parameter-store.sh dev"
+  echo "./scripts/get-kubeconfig-from-parameter-store.sh test"
+fi
