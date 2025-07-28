@@ -3,6 +3,10 @@ resource "aws_db_subnet_group" "health_db" {
   name       = "${var.identifier}-subnet-group"
   subnet_ids = var.private_subnet_ids
 
+  lifecycle {
+    ignore_changes = [name, subnet_ids]
+  }
+
   tags = merge(var.tags, {
     Name = "${var.identifier}-subnet-group"
   })
