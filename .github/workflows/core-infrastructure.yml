@@ -157,90 +157,13 @@ jobs:
           TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
           CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
         run: |
-          # Install GitHub CLI
+          # Install GitHub CLI and kubectl
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
           sudo apt update && sudo apt install gh kubectl -y
           
-          # Function to wait for K3s API and get kubeconfig from Parameter Store
-          wait_for_k3s_and_setup() {
-            local env_name=$1
-            local cluster_ip=$2
-            local param_prefix="/$env_name/health-app/kubeconfig"
-            
-            echo "⏳ Waiting for K3s API at $cluster_ip:6443..."
-            
-            # Wait for K3s API to be accessible
-            for i in {1..30}; do
-              echo "Attempt $i/30: Testing K3s API..."
-              if timeout 10 curl -k -s "https://$cluster_ip:6443/version" >/dev/null 2>&1; then
-                echo "✅ K3s API is accessible"
-                break
-              fi
-              if [ $i -eq 30 ]; then
-                echo "❌ K3s API not accessible after 10 minutes"
-                return 1
-              fi
-              sleep 20
-            done
-            
-            # Get kubeconfig data from Parameter Store (set by K3s user-data)
-            echo "📥 Retrieving kubeconfig from Parameter Store..."
-            
-            for attempt in {1..10}; do
-              echo "Parameter Store attempt $attempt/10..."
-              
-              SERVER=$(aws ssm get-parameter --name "$param_prefix/server" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-              TOKEN=$(aws ssm get-parameter --name "$param_prefix/token" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || echo "")
-              
-              if [ -n "$SERVER" ] && [ -n "$TOKEN" ]; then
-                echo "✅ Retrieved kubeconfig data from Parameter Store"
-                
-                # Create kubeconfig
-                cat > /tmp/kubeconfig-$env_name << EOF
-                apiVersion: v1
-                kind: Config
-                clusters:
-                - cluster:
-                    insecure-skip-tls-verify: true
-                    server: $SERVER
-                  name: k3s-cluster
-                contexts:
-                - context:
-                    cluster: k3s-cluster
-                    namespace: gha-access
-                    user: gha-deployer
-                  name: gha-context
-                current-context: gha-context
-                users:
-                - name: gha-deployer
-                  user:
-                    token: $TOKEN
-                EOF
-                                
-                # Test the kubeconfig
-                export KUBECONFIG=/tmp/kubeconfig-$env_name
-                if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
-                  echo "✅ Kubeconfig test successful"
-                  
-                  # Store in GitHub secrets
-                  SECRET_NAME="KUBECONFIG_$(echo $env_name | tr '[:lower:]' '[:upper:]')"
-                  base64 -w 0 /tmp/kubeconfig-$env_name | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
-                  echo "✅ GitHub secret $SECRET_NAME updated"
-                  return 0
-                else
-                  echo "⚠️ Kubeconfig test failed, retrying..."
-                fi
-              else
-                echo "⚠️ Parameter Store data not ready, waiting..."
-              fi
-              
-              sleep 30
-            done
-            
-            echo "❌ Failed to setup kubeconfig for $env_name"
-            return 1
-          }
+          # Make script executable
+          chmod +x scripts/setup-kubeconfig.sh
           
           # Setup kubeconfigs based on network tier
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
@@ -248,12 +171,12 @@ jobs:
             
             if [ -n "$DEV_CLUSTER_IP" ]; then
               echo "🔧 Setting up Dev kubeconfig..."
-              wait_for_k3s_and_setup "dev" "$DEV_CLUSTER_IP" || success=false
+              ./scripts/setup-kubeconfig.sh "dev" "$DEV_CLUSTER_IP" || success=false
             fi
             
             if [ -n "$TEST_CLUSTER_IP" ]; then
               echo "🔧 Setting up Test kubeconfig..."
-              wait_for_k3s_and_setup "test" "$TEST_CLUSTER_IP" || success=false
+              ./scripts/setup-kubeconfig.sh "test" "$TEST_CLUSTER_IP" || success=false
             fi
             
             if [ "$success" = false ]; then
@@ -269,7 +192,7 @@ jobs:
             
             ENV_NAME="${{ github.event.inputs.network }}"
             echo "🔧 Setting up $ENV_NAME kubeconfig..."
-            wait_for_k3s_and_setup "$ENV_NAME" "$CLUSTER_IP"
+            ./scripts/setup-kubeconfig.sh "$ENV_NAME" "$CLUSTER_IP"
           fi
           
           # Cleanup

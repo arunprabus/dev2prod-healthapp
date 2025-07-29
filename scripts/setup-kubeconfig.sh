@@ -1,72 +1,83 @@
 #!/bin/bash
 
-# Setup Kubeconfig Script
-# Usage: ./setup-kubeconfig.sh <environment> <public-ip> [ssh-key-path]
+# Kubeconfig setup script for GitHub Actions
+# Usage: ./setup-kubeconfig.sh <env_name> <cluster_ip>
 
 set -e
 
-ENVIRONMENT=${1:-dev}
-PUBLIC_IP=${2}
-SSH_KEY=${3:-~/.ssh/k3s-key}
+ENV_NAME=$1
+CLUSTER_IP=$2
+PARAM_PREFIX="/$ENV_NAME/health-app/kubeconfig"
 
-if [ -z "$PUBLIC_IP" ]; then
-    echo "❌ Error: Public IP is required"
-    echo "Usage: $0 <environment> <public-ip> [ssh-key-path]"
-    echo "Example: $0 dev 1.2.3.4 ~/.ssh/k3s-key"
+echo "⏳ Waiting for K3s API at $CLUSTER_IP:6443..."
+
+# Wait for K3s API to be accessible
+for i in {1..30}; do
+  echo "Attempt $i/30: Testing K3s API..."
+  if timeout 10 curl -k -s "https://$CLUSTER_IP:6443/version" >/dev/null 2>&1; then
+    echo "✅ K3s API is accessible"
+    break
+  fi
+  if [ $i -eq 30 ]; then
+    echo "❌ K3s API not accessible after 10 minutes"
     exit 1
-fi
-
-echo "🔧 Setting up kubeconfig for $ENVIRONMENT environment..."
-echo "📡 Cluster IP: $PUBLIC_IP"
-echo "🔑 SSH Key: $SSH_KEY"
-
-# Download kubeconfig from K3s cluster
-echo "📥 Downloading kubeconfig..."
-scp -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@"$PUBLIC_IP":/etc/rancher/k3s/k3s.yaml "kubeconfig-$ENVIRONMENT.yaml"
-
-# Replace localhost with public IP
-echo "🔄 Updating server IP in kubeconfig..."
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/127.0.0.1/$PUBLIC_IP/" "kubeconfig-$ENVIRONMENT.yaml"
-else
-    # Linux
-    sed -i "s/127.0.0.1/$PUBLIC_IP/" "kubeconfig-$ENVIRONMENT.yaml"
-fi
-
-# Set permissions
-chmod 600 "kubeconfig-$ENVIRONMENT.yaml"
-
-echo "✅ Kubeconfig setup complete!"
-echo ""
-echo "🚀 To use this kubeconfig:"
-echo "export KUBECONFIG=\$PWD/kubeconfig-$ENVIRONMENT.yaml"
-echo "kubectl get nodes"
-echo ""
-echo "📁 Kubeconfig saved as: kubeconfig-$ENVIRONMENT.yaml"
-
-# Test connection with retries
-echo "🧪 Testing connection..."
-export KUBECONFIG="$PWD/kubeconfig-$ENVIRONMENT.yaml"
-
-CONNECTION_SUCCESS=false
-for i in {1..3}; do
-    echo "Connection test attempt $i/3..."
-    if timeout 30 kubectl get nodes --request-timeout=20s > /dev/null 2>&1; then
-        echo "✅ Connection successful!"
-        kubectl get nodes
-        CONNECTION_SUCCESS=true
-        break
-    else
-        echo "Connection failed, waiting 30s before retry..."
-        sleep 30
-    fi
+  fi
+  sleep 20
 done
 
-if [ "$CONNECTION_SUCCESS" = "false" ]; then
-    echo "⚠️  All connection tests failed. Please check:"
-    echo "   - SSH key permissions: chmod 600 $SSH_KEY"
-    echo "   - Security group allows port 6443"
-    echo "   - K3s service is running on the cluster"
-    echo "   - Wait a few minutes for K3s to fully initialize"
-fi
+# Get kubeconfig data from Parameter Store
+echo "📥 Retrieving kubeconfig from Parameter Store..."
+
+for attempt in {1..10}; do
+  echo "Parameter Store attempt $attempt/10..."
+  
+  SERVER=$(aws ssm get-parameter --name "$PARAM_PREFIX/server" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+  TOKEN=$(aws ssm get-parameter --name "$PARAM_PREFIX/token" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+  
+  if [ -n "$SERVER" ] && [ -n "$TOKEN" ]; then
+    echo "✅ Retrieved kubeconfig data from Parameter Store"
+    
+    # Create kubeconfig
+    cat > /tmp/kubeconfig-$ENV_NAME << EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: $SERVER
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    namespace: gha-access
+    user: gha-deployer
+  name: gha-context
+current-context: gha-context
+users:
+- name: gha-deployer
+  user:
+    token: $TOKEN
+EOF
+    
+    # Test the kubeconfig
+    export KUBECONFIG=/tmp/kubeconfig-$ENV_NAME
+    if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+      echo "✅ Kubeconfig test successful"
+      
+      # Store in GitHub secrets
+      SECRET_NAME="KUBECONFIG_$(echo $ENV_NAME | tr '[:lower:]' '[:upper:]')"
+      base64 -w 0 /tmp/kubeconfig-$ENV_NAME | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+      echo "✅ GitHub secret $SECRET_NAME updated"
+      exit 0
+    else
+      echo "⚠️ Kubeconfig test failed, retrying..."
+    fi
+  else
+    echo "⚠️ Parameter Store data not ready, waiting..."
+  fi
+  
+  sleep 30
+done
+
+echo "❌ Failed to setup kubeconfig for $ENV_NAME"
+exit 1
