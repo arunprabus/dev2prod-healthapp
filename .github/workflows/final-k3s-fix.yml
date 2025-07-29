@@ -171,7 +171,8 @@ jobs:
             fi
             
             # Create and test kubeconfig
-            cat > /tmp/kubeconfig-$ENV << KUBE_EOF
+            echo "Creating kubeconfig for $ENV..."
+            cat > /tmp/kubeconfig-$ENV << EOF
 apiVersion: v1
 kind: Config
 clusters:
@@ -190,7 +191,7 @@ users:
 - name: gha-deployer
   user:
     token: $TOKEN
-KUBE_EOF
+EOF
             
             # Test kubeconfig
             export KUBECONFIG=/tmp/kubeconfig-$ENV
