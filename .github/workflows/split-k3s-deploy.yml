@@ -190,60 +190,33 @@ jobs:
             
             echo "🚀 Installing K3s on $ENV cluster ($IP)..."
             
-            # Create K3s installation script
-            cat > /tmp/install-k3s-$ENV.sh << 'SCRIPT_EOF'
-#!/bin/bash
-set -e
-
-echo "🔧 Starting K3s installation..."
-
-# Update system
-sudo apt-get update
-sudo apt-get install -y curl docker.io awscli
-
-# Get public IP with retry
-echo "Getting public IP..."
-for i in {1..5}; do
-  PUBLIC_IP=$(curl -s --connect-timeout 5 http://169.254.169.254/latest/meta-data/public-ipv4)
-  if [[ -n "$PUBLIC_IP" ]]; then
-    echo "✅ Public IP: $PUBLIC_IP"
-    break
-  fi
-  sleep 5
-done
-
-# Install K3s
-echo "Installing K3s..."
-curl -sfL https://get.k3s.io | sh -s - \
-  --write-kubeconfig-mode 644 \
-  --bind-address=0.0.0.0 \
-  --advertise-address=$PUBLIC_IP
-
-# Wait for K3s to be ready
-echo "Waiting for K3s to be ready..."
-for i in {1..30}; do
-  if sudo systemctl is-active k3s >/dev/null 2>&1; then
-    echo "✅ K3s service is active"
-    break
-  fi
-  echo "⏳ Waiting for K3s... ($i/30)"
-  sleep 10
-done
-
-# Test kubectl
-if sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml >/dev/null 2>&1; then
-  echo "✅ K3s installation successful"
-else
-  echo "❌ K3s installation failed"
-  exit 1
-fi
-
-echo "🎉 K3s installation complete!"
-SCRIPT_EOF
-
-            # Copy and execute the script
-            scp -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no /tmp/install-k3s-$ENV.sh ubuntu@$IP:/tmp/
-            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'chmod +x /tmp/install-k3s-'$ENV'.sh && /tmp/install-k3s-'$ENV'.sh'
+            # Install K3s via SSH commands
+            echo "Installing K3s on $ENV cluster..."
+            
+            # Update system
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo apt-get update && sudo apt-get install -y curl docker.io awscli'
+            
+            # Install K3s
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4) && curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --bind-address=0.0.0.0 --advertise-address=$PUBLIC_IP'
+            
+            # Wait for K3s to be ready
+            echo "Waiting for K3s to be ready on $ENV..."
+            for i in {1..30}; do
+              if ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo systemctl is-active k3s' 2>/dev/null | grep -q "active"; then
+                echo "✅ K3s service is active on $ENV"
+                break
+              fi
+              echo "⏳ Waiting for K3s on $ENV... ($i/30)"
+              sleep 10
+            done
+            
+            # Test kubectl
+            if ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml' >/dev/null 2>&1; then
+              echo "✅ K3s installation successful on $ENV"
+            else
+              echo "❌ K3s installation failed on $ENV"
+              return 1
+            fi
             
             echo "✅ K3s installed on $ENV cluster"
           }
