@@ -1,0 +1,232 @@
+name: Simple K3s Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - destroy
+          - redeploy
+      network:
+        description: 'Network Tier'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+          - lower
+          - higher
+          - monitoring
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    outputs:
+      dev_cluster_ip: ${{ steps.apply.outputs.dev_cluster_ip }}
+      test_cluster_ip: ${{ steps.apply.outputs.test_cluster_ip }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
+            -backend-config="region=$AWS_REGION"
+
+      - name: Deploy Infrastructure
+        id: apply
+        run: |
+          cd infra
+          
+          if [ "${{ github.event.inputs.action }}" == "redeploy" ]; then
+            echo "🧹 Destroying existing resources..."
+            terraform destroy \
+              -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+              -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+              -var="github_pat=${{ secrets.REPO_PAT }}" \
+              -auto-approve
+            sleep 30
+          fi
+          
+          if [ "${{ github.event.inputs.action }}" == "destroy" ]; then
+            terraform destroy \
+              -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+              -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+              -var="github_pat=${{ secrets.REPO_PAT }}" \
+              -auto-approve
+            exit 0
+          fi
+          
+          terraform apply \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -auto-approve
+          
+          # Output IPs
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
+            echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fix Security Groups
+        if: github.event.inputs.action != 'destroy'
+        run: |
+          echo "🔧 Opening SSH access..."
+          sleep 60  # Wait for instances
+          
+          # Get security groups and open SSH
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            for INSTANCE in "health-app-lower-dev-k3s-node-v2" "health-app-lower-test-k3s-node-v2"; do
+              SG=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=$INSTANCE" \
+                --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+                --output text 2>/dev/null)
+              
+              if [ "$SG" != "None" ] && [ -n "$SG" ]; then
+                aws ec2 authorize-security-group-ingress \
+                  --group-id "$SG" \
+                  --ip-permissions '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"SSH access"}]}]' 2>/dev/null || true
+                echo "✅ SSH opened for $SG"
+              fi
+            done
+          fi
+
+  setup-kubeconfig:
+    needs: deploy-infrastructure
+    if: github.event.inputs.action != 'destroy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+          chmod 600 ~/.ssh/k3s-key
+
+      - name: Wait and Setup Kubeconfig
+        env:
+          DEV_IP: ${{ needs.deploy-infrastructure.outputs.dev_cluster_ip }}
+          TEST_IP: ${{ needs.deploy-infrastructure.outputs.test_cluster_ip }}
+        run: |
+          echo "⏳ Waiting for K3s clusters to be ready..."
+          
+          # Function to setup kubeconfig via SSH
+          setup_kubeconfig() {
+            local IP=$1
+            local ENV=$2
+            
+            echo "🔧 Setting up $ENV kubeconfig for $IP..."
+            
+            # Wait for SSH to be ready
+            for i in {1..20}; do
+              if ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$IP 'echo "SSH ready"' 2>/dev/null; then
+                echo "✅ SSH ready for $ENV"
+                break
+              fi
+              echo "⏳ Waiting for SSH... ($i/20)"
+              sleep 30
+            done
+            
+            # Get kubeconfig directly from cluster
+            echo "📥 Getting kubeconfig from $ENV cluster..."
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP << 'EOF'
+              # Wait for K3s to be ready
+              for i in {1..30}; do
+                if sudo systemctl is-active k3s >/dev/null 2>&1; then
+                  echo "✅ K3s service is active"
+                  break
+                fi
+                echo "⏳ Waiting for K3s service... ($i/30)"
+                sleep 10
+              done
+              
+              # Check if kubeconfig exists
+              if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+                echo "✅ K3s kubeconfig found"
+                # Test kubectl
+                if sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml >/dev/null 2>&1; then
+                  echo "✅ kubectl working"
+                else
+                  echo "❌ kubectl not working"
+                fi
+              else
+                echo "❌ K3s kubeconfig not found"
+              fi
+EOF
+            
+            # Copy kubeconfig and modify for external access
+            echo "📋 Creating external kubeconfig for $ENV..."
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-$ENV 2>/dev/null || echo "Failed to get kubeconfig"
+            
+            if [ -f /tmp/kubeconfig-$ENV ]; then
+              # Replace localhost with actual IP
+              sed -i "s/127.0.0.1/$IP/g" /tmp/kubeconfig-$ENV
+              sed -i "s/localhost/$IP/g" /tmp/kubeconfig-$ENV
+              
+              # Test the kubeconfig
+              export KUBECONFIG=/tmp/kubeconfig-$ENV
+              if timeout 10 kubectl get nodes --insecure-skip-tls-verify 2>/dev/null; then
+                echo "✅ External kubeconfig working for $ENV"
+                
+                # Store in GitHub secrets
+                SECRET_NAME="KUBECONFIG_$(echo $ENV | tr '[:lower:]' '[:upper:]')"
+                base64 -w 0 /tmp/kubeconfig-$ENV | gh secret set $SECRET_NAME --repo ${{ github.repository }}
+                echo "✅ $SECRET_NAME updated in GitHub secrets"
+              else
+                echo "❌ External kubeconfig not working for $ENV"
+              fi
+            else
+              echo "❌ Failed to get kubeconfig for $ENV"
+            fi
+          }
+          
+          # Install GitHub CLI
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update && sudo apt install gh kubectl -y
+          
+          # Authenticate with GitHub
+          echo "${{ secrets.REPO_PAT }}" | gh auth login --with-token
+          
+          # Setup kubeconfigs
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            if [ -n "$DEV_IP" ]; then
+              setup_kubeconfig "$DEV_IP" "dev"
+            fi
+            
+            if [ -n "$TEST_IP" ]; then
+              setup_kubeconfig "$TEST_IP" "test"
+            fi
+          fi
+          
+          echo "🎉 Kubeconfig setup complete!"
