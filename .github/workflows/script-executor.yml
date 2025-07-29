@@ -46,6 +46,7 @@ on:
           - 'k8s-auto-scale.sh'
           - 'k8s-cluster-health-check.sh'
           - 'k8s-health-check.sh'
+          - 'quick-k3s-check.sh'
           
           # Secrets Management
           - 'update-github-secrets.sh'
