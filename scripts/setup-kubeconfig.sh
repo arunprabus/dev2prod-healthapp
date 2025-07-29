@@ -30,9 +30,17 @@ echo "📥 Retrieving kubeconfig from Parameter Store..."
 
 for attempt in {1..10}; do
   echo "Parameter Store attempt $attempt/10..."
+  echo "🔍 Checking path: $PARAM_PREFIX"
+  
+  # List available parameters for debugging
+  echo "📋 Available parameters:"
+  aws ssm get-parameters-by-path --path "/$ENV_NAME/health-app" --recursive --query 'Parameters[*].Name' --output text 2>/dev/null || echo "No parameters found"
   
   SERVER=$(aws ssm get-parameter --name "$PARAM_PREFIX/server" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
   TOKEN=$(aws ssm get-parameter --name "$PARAM_PREFIX/token" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+  
+  echo "🔍 SERVER: ${SERVER:0:50}..."
+  echo "🔍 TOKEN: ${TOKEN:0:20}..."
   
   if [ -n "$SERVER" ] && [ -n "$TOKEN" ]; then
     echo "✅ Retrieved kubeconfig data from Parameter Store"
@@ -59,9 +67,15 @@ users:
     token: $TOKEN
 EOF
     
+    # Debug: Show kubeconfig content
+    echo "📋 Generated kubeconfig:"
+    cat /tmp/kubeconfig-$ENV_NAME
+    
     # Test the kubeconfig
     export KUBECONFIG=/tmp/kubeconfig-$ENV_NAME
-    if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+    echo "🧪 Testing kubectl connection..."
+    
+    if timeout 30 kubectl get nodes --insecure-skip-tls-verify --request-timeout=10s 2>&1; then
       echo "✅ Kubeconfig test successful"
       
       # Store in GitHub secrets
@@ -70,7 +84,9 @@ EOF
       echo "✅ GitHub secret $SECRET_NAME updated"
       exit 0
     else
-      echo "⚠️ Kubeconfig test failed, retrying..."
+      echo "⚠️ Kubeconfig test failed, kubectl output above"
+      echo "🔍 Checking cluster connectivity directly..."
+      curl -k -v "https://$CLUSTER_IP:6443/api/v1/nodes" -H "Authorization: Bearer $TOKEN" || true
     fi
   else
     echo "⚠️ Parameter Store data not ready, waiting..."
