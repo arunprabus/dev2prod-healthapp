@@ -29,9 +29,6 @@ locals {
   # Map network tier to environment
   environment = var.network_tier == "lower" ? "dev" : var.network_tier == "higher" ? "prod" : "monitoring"
   
-  # Name prefix for resources
-  name_prefix = "health-app-${var.network_tier}"
-  
   # Define VPC identifiers for networks
   lower_env_vpc_name = "health-app-lower-vpc"
   higher_env_vpc_name = "health-app-higher-vpc"
@@ -269,23 +266,3 @@ output "k3s_security_group_id" {
   value       = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].security_group_id : null
 }
 
-output "vpc_cidr_block" {
-  description = "VPC CIDR block"
-  value       = module.vpc.vpc_cidr_block
-}
-
-# Cluster IP outputs for workflow
-output "dev_cluster_ip" {
-  description = "Dev cluster public IP"
-  value       = var.network_tier == "lower" && contains(keys(var.k8s_clusters), "dev") ? module.k3s_clusters["dev"].instance_public_ip : null
-}
-
-output "test_cluster_ip" {
-  description = "Test cluster public IP"
-  value       = var.network_tier == "lower" && contains(keys(var.k8s_clusters), "test") ? module.k3s_clusters["test"].instance_public_ip : null
-}
-
-output "k3s_instance_ip" {
-  description = "K3s instance public IP (single cluster environments)"
-  value       = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].instance_public_ip : null
-}
