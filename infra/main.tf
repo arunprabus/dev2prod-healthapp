@@ -101,8 +101,6 @@ module "k3s" {
   s3_bucket                = var.tf_state_bucket
   db_security_group_id     = var.database_config != null ? module.rds[0].db_security_group_id : null
   tags                     = local.tags
-  
-  depends_on = [module.rds]
 }
 
 # Multiple clusters for lower environment
@@ -121,8 +119,6 @@ module "k3s_clusters" {
   runner_security_group_id = module.github_runner.runner_security_group_id
   db_security_group_id     = var.database_config != null ? module.rds[0].db_security_group_id : null
   tags                     = merge(local.tags, { Environment = each.key })
-  
-  depends_on = [module.rds]
 }
 
 module "rds" {
@@ -146,8 +142,6 @@ module "rds" {
   # Pass app security group IDs for cross-SG references
   app_security_group_ids  = var.network_tier == "lower" ? [for k, v in module.k3s_clusters : v.security_group_id] : (var.network_tier != "lower" && length(module.k3s) > 0 ? [module.k3s[0].security_group_id] : [])
   tags                    = var.tags
-  
-  depends_on = [module.k3s, module.k3s_clusters]
 }
 
 # Deployment configuration for applications (disabled until K3s is ready)
