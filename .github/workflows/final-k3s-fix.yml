@@ -1,0 +1,278 @@
+name: Final K3s Fix
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - fix-and-deploy
+          - destroy
+      network:
+        description: 'Network Tier'
+        required: true
+        default: 'lower'
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  deploy-and-fix:
+    if: github.event.inputs.action == 'fix-and-deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Clean Parameter Store
+        run: |
+          echo "🧹 Cleaning old Parameter Store values..."
+          
+          # Delete old parameters
+          aws ssm delete-parameter --name "/dev/health-app/kubeconfig/server" --region $AWS_REGION 2>/dev/null || true
+          aws ssm delete-parameter --name "/dev/health-app/kubeconfig/token" --region $AWS_REGION 2>/dev/null || true
+          aws ssm delete-parameter --name "/dev/health-app/kubeconfig/cluster-name" --region $AWS_REGION 2>/dev/null || true
+          
+          aws ssm delete-parameter --name "/test/health-app/kubeconfig/server" --region $AWS_REGION 2>/dev/null || true
+          aws ssm delete-parameter --name "/test/health-app/kubeconfig/token" --region $AWS_REGION 2>/dev/null || true
+          aws ssm delete-parameter --name "/test/health-app/kubeconfig/cluster-name" --region $AWS_REGION 2>/dev/null || true
+          
+          echo "✅ Parameter Store cleaned"
+
+      - name: Deploy Infrastructure
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform apply \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve
+
+      - name: Get Cluster IPs
+        id: ips
+        run: |
+          cd infra
+          DEV_IP=$(terraform output -raw dev_cluster_ip 2>/dev/null || echo "")
+          TEST_IP=$(terraform output -raw test_cluster_ip 2>/dev/null || echo "")
+          
+          echo "dev_ip=$DEV_IP" >> $GITHUB_OUTPUT
+          echo "test_ip=$TEST_IP" >> $GITHUB_OUTPUT
+          echo "Dev IP: $DEV_IP"
+          echo "Test IP: $TEST_IP"
+
+      - name: Wait for K3s Installation
+        run: |
+          echo "⏳ Waiting 3 minutes for K3s installation to complete..."
+          sleep 180
+
+      - name: Setup SSH and Fix K3s
+        env:
+          DEV_IP: ${{ steps.ips.outputs.dev_ip }}
+          TEST_IP: ${{ steps.ips.outputs.test_ip }}
+        run: |
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+          chmod 600 ~/.ssh/k3s-key
+          
+          # Function to fix K3s on a cluster
+          fix_k3s() {
+            local IP=$1
+            local ENV=$2
+            
+            echo "🔧 Fixing K3s on $ENV cluster ($IP)..."
+            
+            # Wait for SSH
+            for i in {1..20}; do
+              if timeout 10 ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'echo "SSH ready"' 2>/dev/null; then
+                echo "✅ SSH ready for $ENV"
+                break
+              fi
+              echo "⏳ Waiting for SSH on $ENV... ($i/20)"
+              sleep 15
+            done
+            
+            # Check and fix K3s
+            echo "Checking K3s status on $ENV..."
+            if ! ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo systemctl is-active k3s' 2>/dev/null | grep -q "active"; then
+              echo "⚠️ K3s not active on $ENV, attempting restart..."
+              ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo systemctl restart k3s && sleep 30'
+            fi
+            
+            # Wait for K3s API
+            echo "Waiting for K3s API on $ENV..."
+            for i in {1..30}; do
+              if ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml' >/dev/null 2>&1; then
+                echo "✅ K3s API ready on $ENV"
+                break
+              fi
+              echo "⏳ Waiting for K3s API on $ENV... ($i/30)"
+              sleep 10
+            done
+            
+            # Create service account and get token
+            echo "Creating service account on $ENV..."
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP << 'SCRIPT'
+              sudo kubectl create namespace gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
+              sudo kubectl create serviceaccount gha-deployer -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
+              sudo kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
+              sudo kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
+SCRIPT
+            
+            # Get token and store in Parameter Store
+            echo "Getting token and storing in Parameter Store for $ENV..."
+            TOKEN=$(ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl create token gha-deployer -n gha-access --duration=24h --kubeconfig /etc/rancher/k3s/k3s.yaml' 2>/dev/null)
+            
+            if [ -n "$TOKEN" ]; then
+              # Store correct values in Parameter Store
+              aws ssm put-parameter \
+                --name "/$ENV/health-app/kubeconfig/server" \
+                --value "https://$IP:6443" \
+                --type "String" \
+                --overwrite \
+                --region $AWS_REGION
+              
+              aws ssm put-parameter \
+                --name "/$ENV/health-app/kubeconfig/token" \
+                --value "$TOKEN" \
+                --type "SecureString" \
+                --overwrite \
+                --region $AWS_REGION
+              
+              aws ssm put-parameter \
+                --name "/$ENV/health-app/kubeconfig/cluster-name" \
+                --value "k3s-cluster" \
+                --type "String" \
+                --overwrite \
+                --region $AWS_REGION
+              
+              echo "✅ Parameter Store updated for $ENV with IP: $IP"
+            else
+              echo "❌ Failed to get token for $ENV"
+              return 1
+            fi
+            
+            # Create and test kubeconfig
+            cat > /tmp/kubeconfig-$ENV << KUBE_EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: https://$IP:6443
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    namespace: gha-access
+    user: gha-deployer
+  name: gha-context
+current-context: gha-context
+users:
+- name: gha-deployer
+  user:
+    token: $TOKEN
+KUBE_EOF
+            
+            # Test kubeconfig
+            export KUBECONFIG=/tmp/kubeconfig-$ENV
+            if timeout 10 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+              echo "✅ Kubeconfig working for $ENV"
+              
+              # Store in GitHub secrets
+              SECRET_NAME="KUBECONFIG_$(echo $ENV | tr '[:lower:]' '[:upper:]')"
+              base64 -w 0 /tmp/kubeconfig-$ENV | gh secret set $SECRET_NAME --repo ${{ github.repository }}
+              echo "✅ $SECRET_NAME updated in GitHub secrets"
+            else
+              echo "❌ Kubeconfig test failed for $ENV"
+              return 1
+            fi
+          }
+          
+          # Install GitHub CLI
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update && sudo apt install gh kubectl -y
+          echo "${{ secrets.REPO_PAT }}" | gh auth login --with-token
+          
+          # Fix both clusters
+          success=true
+          
+          if [ -n "$DEV_IP" ] && [ "$DEV_IP" != "None" ]; then
+            fix_k3s "$DEV_IP" "dev" || success=false
+          fi
+          
+          if [ -n "$TEST_IP" ] && [ "$TEST_IP" != "None" ]; then
+            fix_k3s "$TEST_IP" "test" || success=false
+          fi
+          
+          if [ "$success" = true ]; then
+            echo "🎉 All K3s clusters fixed successfully!"
+          else
+            echo "❌ Some clusters failed to fix"
+            exit 1
+          fi
+
+      - name: Verify Fix
+        run: |
+          echo "🔍 Verifying Parameter Store values..."
+          
+          echo "Dev cluster server:"
+          aws ssm get-parameter --name "/dev/health-app/kubeconfig/server" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "Not found"
+          
+          echo "Test cluster server:"
+          aws ssm get-parameter --name "/test/health-app/kubeconfig/server" --query 'Parameter.Value' --output text --region $AWS_REGION 2>/dev/null || echo "Not found"
+          
+          echo "✅ Verification complete!"
+
+  destroy:
+    if: github.event.inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      
+      - name: Destroy Infrastructure
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform destroy \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve
