@@ -3,12 +3,13 @@ resource "aws_security_group" "k3s" {
   name_prefix = "${var.name_prefix}-k3s-"
   vpc_id      = var.vpc_id
 
-  # SSH access
+  # SSH access - restricted to VPC
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
+    description = "SSH access from VPC only"
   }
 
   # K3s API server - Allow GitHub Actions access
@@ -64,6 +65,10 @@ resource "aws_security_group" "k3s" {
   tags = merge(var.tags, {
     Name = "${var.name_prefix}-k3s-sg"
   })
+  
+  lifecycle {
+    ignore_changes = [ingress]
+  }
 }
 
 # Security group rules for runner access (conditional)
@@ -192,9 +197,25 @@ resource "aws_iam_instance_profile" "k3s_profile" {
   }
 }
 
+# Data source for latest Ubuntu AMI
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+  
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+  
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # K3s master node
 resource "aws_instance" "k3s" {
-  ami                    = "ami-0f58b397bc5c1f2e8" # Ubuntu 22.04 LTS
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.k3s_instance_type
   key_name              = aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]

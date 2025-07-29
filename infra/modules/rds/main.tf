@@ -34,6 +34,10 @@ resource "aws_security_group" "db" {
   tags = merge(var.tags, {
     Name = "${var.identifier}-db-sg"
   })
+  
+  lifecycle {
+    ignore_changes = [ingress]
+  }
 }
 
 resource "aws_db_parameter_group" "health_db" {
