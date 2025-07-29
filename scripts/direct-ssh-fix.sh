@@ -26,10 +26,7 @@ for SG in "$DEV_SG" "$TEST_SG"; do
   
   aws ec2 authorize-security-group-ingress \
     --group-id "$SG" \
-    --protocol tcp \
-    --port 22 \
-    --cidr "0.0.0.0/0" \
-    --description "SSH open access for debugging"
+    --ip-permissions '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"SSH open access for debugging"}]}]'
   
   if [ $? -eq 0 ]; then
     echo "✅ SSH rule added to $SG"
