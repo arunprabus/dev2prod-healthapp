@@ -159,30 +159,7 @@ jobs:
             
             # Get kubeconfig directly from cluster
             echo "📥 Getting kubeconfig from $ENV cluster..."
-            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP << 'EOF'
-              # Wait for K3s to be ready
-              for i in {1..30}; do
-                if sudo systemctl is-active k3s >/dev/null 2>&1; then
-                  echo "✅ K3s service is active"
-                  break
-                fi
-                echo "⏳ Waiting for K3s service... ($i/30)"
-                sleep 10
-              done
-              
-              # Check if kubeconfig exists
-              if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-                echo "✅ K3s kubeconfig found"
-                # Test kubectl
-                if sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml >/dev/null 2>&1; then
-                  echo "✅ kubectl working"
-                else
-                  echo "❌ kubectl not working"
-                fi
-              else
-                echo "❌ K3s kubeconfig not found"
-              fi
-EOF
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'for i in {1..30}; do if sudo systemctl is-active k3s >/dev/null 2>&1; then echo "✅ K3s service is active"; break; fi; echo "⏳ Waiting for K3s service... ($i/30)"; sleep 10; done; if [ -f /etc/rancher/k3s/k3s.yaml ]; then echo "✅ K3s kubeconfig found"; if sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml >/dev/null 2>&1; then echo "✅ kubectl working"; else echo "❌ kubectl not working"; fi; else echo "❌ K3s kubeconfig not found"; fi'
             
             # Copy kubeconfig and modify for external access
             echo "📋 Creating external kubeconfig for $ENV..."
