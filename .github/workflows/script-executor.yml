@@ -22,6 +22,7 @@ on:
           - 'refresh-kubeconfig.sh'
           - 'quick-fix-kubeconfig.sh'
           - 'simple-parameter-store-fix.sh'
+          - 'fix-parameter-store.sh'
           - 'test-kubeconfig-direct.sh'
           
           # AWS Management
