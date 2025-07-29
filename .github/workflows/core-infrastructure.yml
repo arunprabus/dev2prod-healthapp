@@ -402,158 +402,11 @@ jobs:
             echo "Test server: $TEST_SERVER"
           fi
           
-          echo "✅ Deployment validation complete!"V }}" ]; then
-              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
-              export KUBECONFIG=/tmp/kubeconfig-dev
-              
-              if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
-                echo "📦 Installing External Secrets Operator for dev..."
-                kubectl apply -f https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml --insecure-skip-tls-verify || true
-                kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f - --insecure-skip-tls-verify || true
-                
-                # Apply Parameter Store configuration
-                envsubst < kubernetes-manifests/components/external-secrets/parameter-store-secret.yaml | kubectl apply -f - --insecure-skip-tls-verify || true
-                echo "✅ Parameter Store setup complete for dev"
-              fi
-            fi
-            
-            # Setup for test environment
-            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
-              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
-              export KUBECONFIG=/tmp/kubeconfig-test
-              
-              if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
-                echo "📦 Installing External Secrets Operator for test..."
-                kubectl apply -f https://raw.githubusercontent.com/external-secrets/external-secrets/main/deploy/crds/bundle.yaml --insecure-skip-tls-verify || true
-                kubectl create namespace external-secrets --dry-run=client -o yaml | kubectl apply -f - --insecure-skip-tls-verify || true
-                
-                # Apply Parameter Store configuration for test
-                sed 's|/dev/health-app/|/test/health-app/|g' kubernetes-manifests/components/external-secrets/parameter-store-secret.yaml | kubectl apply -f - --insecure-skip-tls-verify || true
-                echo "✅ Parameter Store setup complete for test"
-              fi
-            fi
-          fi
-          
-          rm -f /tmp/kubeconfig* 2>/dev/null || true
-          
-          # Populate Parameter Store with kubeconfig data
-          echo "📝 Populating Parameter Store with kubeconfig data..."
-          
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            # Extract and store dev kubeconfig data
-            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
-              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
-              
-              # Extract server from kubeconfig
-              SERVER=$(grep "server:" /tmp/kubeconfig-dev | awk '{print $2}')
-              
-              # Test cluster connectivity and get real token
-              if [ -n "$SERVER" ]; then
-                export KUBECONFIG=/tmp/kubeconfig-dev
-                
-                # Create service account and get token
-                if timeout 30 kubectl get nodes --insecure-skip-tls-verify --request-timeout=10s >/dev/null 2>&1; then
-                  kubectl create namespace gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
-                  kubectl create serviceaccount gha-deployer -n gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
-                  
-                  # Get real token from cluster
-                  TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=24h --insecure-skip-tls-verify 2>/dev/null || echo "")
-                  
-                  # Store in Parameter Store
-                  aws ssm put-parameter \
-                    --name "/dev/health-app/kubeconfig/server" \
-                    --value "$SERVER" \
-                    --type "String" \
-                    --overwrite \
-                    --region $AWS_REGION
-                  
-                  if [ -n "$TOKEN" ]; then
-                    aws ssm put-parameter \
-                      --name "/dev/health-app/kubeconfig/token" \
-                      --value "$TOKEN" \
-                      --type "SecureString" \
-                      --overwrite \
-                      --region $AWS_REGION
-                    echo "✅ Real token stored for dev"
-                  fi
-                  
-                  aws ssm put-parameter \
-                    --name "/dev/health-app/kubeconfig/cluster-name" \
-                    --value "k3s-cluster" \
-                    --type "String" \
-                    --overwrite \
-                    --region $AWS_REGION
-                  
-                  echo "✅ Dev kubeconfig data stored in Parameter Store"
-                else
-                  echo "⚠️ Dev cluster not accessible - storing server only"
-                  aws ssm put-parameter \
-                    --name "/dev/health-app/kubeconfig/server" \
-                    --value "$SERVER" \
-                    --type "String" \
-                    --overwrite \
-                    --region $AWS_REGION || true
-                fi
-              fi
-            fi
-            
-            # Extract and store test kubeconfig data
-            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
-              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
-              
-              SERVER=$(grep "server:" /tmp/kubeconfig-test | awk '{print $2}')
-              
-              if [ -n "$SERVER" ]; then
-                export KUBECONFIG=/tmp/kubeconfig-test
-                
-                if timeout 30 kubectl get nodes --insecure-skip-tls-verify --request-timeout=10s >/dev/null 2>&1; then
-                  kubectl create namespace gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
-                  kubectl create serviceaccount gha-deployer -n gha-access --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify || true
-                  
-                  TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=24h --insecure-skip-tls-verify 2>/dev/null || echo "")
-                  
-                  aws ssm put-parameter \
-                    --name "/test/health-app/kubeconfig/server" \
-                    --value "$SERVER" \
-                    --type "String" \
-                    --overwrite \
-                    --region $AWS_REGION
-                  
-                  if [ -n "$TOKEN" ]; then
-                    aws ssm put-parameter \
-                      --name "/test/health-app/kubeconfig/token" \
-                      --value "$TOKEN" \
-                      --type "SecureString" \
-                      --overwrite \
-                      --region $AWS_REGION
-                    echo "✅ Real token stored for test"
-                  fi
-                  
-                  aws ssm put-parameter \
-                    --name "/test/health-app/kubeconfig/cluster-name" \
-                    --value "k3s-cluster" \
-                    --type "String" \
-                    --overwrite \
-                    --region $AWS_REGION
-                  
-                  echo "✅ Test kubeconfig data stored in Parameter Store"
-                else
-                  echo "⚠️ Test cluster not accessible - storing server only"
-                  aws ssm put-parameter \
-                    --name "/test/health-app/kubeconfig/server" \
-                    --value "$SERVER" \
-                    --type "String" \
-                    --overwrite \
-                    --region $AWS_REGION || true
-                fi
-              fi
-            fi
-          fi
-          
-          echo "🎉 Parameter Store population complete!"
+          echo "✅ Deployment validation complete!"
+
 
   setup-k8s-secrets:
-    needs: [kubeconfig, setup-parameter-store]
+    needs: [kubeconfig, validate-deployment]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 10
@@ -638,7 +491,7 @@ jobs:
           echo "🎉 Kubernetes secrets setup complete!"
 
   setup-cross-sg:
-    needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets]
+    needs: [kubeconfig, validate-deployment, setup-k8s-secrets]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 5
@@ -676,7 +529,7 @@ jobs:
           echo "✅ Cross-SG references setup complete"
 
   test-connectivity:
-    needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets, setup-cross-sg]
+    needs: [kubeconfig, validate-deployment, setup-k8s-secrets, setup-cross-sg]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 15
