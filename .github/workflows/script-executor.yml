@@ -8,50 +8,12 @@ on:
         required: true
         type: choice
         options:
-          # Kubernetes Management
-          - 'k8s-cluster-health-check.sh'
-          - 'k8s-health-check.sh'
-          - 'k8s-auto-scale.sh'
-          - 'k3s-health-check.sh'
-          - 'k3s-connect.sh'
-          - 'check-k3s-from-runner.sh'
-          
-          # Kubeconfig Management
-          - 'kubeconfig-fix-and-test.sh'
-          - 'fix-kubeconfig.sh'
-          - 'setup-kubeconfig.sh'
-          - 'refresh-kubeconfig.sh'
-          - 'quick-fix-kubeconfig.sh'
-          - 'simple-parameter-store-fix.sh'
-          - 'fix-parameter-store.sh'
-          - 'test-kubeconfig-direct.sh'
-          
           # AWS Management
+          - 'aws-budget-setup.sh'
           - 'aws-resource-audit.sh'
           - 'aws-resource-cleanup.sh'
           - 'cost-breakdown.sh'
           - 'cost-cleanup-auto.sh'
-          - 'aws-budget-setup.sh'
-          
-          # GitHub Runner Management
-          - 'runner-health-check.sh'
-          - 'runner-setup.sh'
-          - 'cleanup-duplicates.sh'
-          
-          # System Management
-          - 'check-instance-status.sh'
-          - 'fix-security-groups.sh'
-          - 'fix-ssh-service.sh'
-          - 'fix-ssh-access.sh'
-          - 'force-ssh-access.sh'
-          - 'test-ssh-connection.sh'
-          - 'restart-k3s.sh'
-          - 'install-ssm-agent.sh'
-          - 'fix-ssm-agent.sh'
-          
-          # Secrets Management
-          - 'update-github-secrets.sh'
-          - 'update-k8s-secret.sh'
           
           # Diagnostics
           - 'diagnose-deployment.sh'
@@ -62,12 +24,50 @@ on:
           - 'emergency-cleanup.sh'
           - 'verify-cleanup.sh'
           
+          # GitHub Runner Management
+          - 'cleanup-duplicates.sh'
+          - 'runner-health-check.sh'
+          - 'runner-setup.sh'
+          
+          # Kubeconfig Management
+          - 'fix-kubeconfig.sh'
+          - 'kubeconfig-fix-and-test.sh'
+          - 'quick-fix-kubeconfig.sh'
+          - 'refresh-kubeconfig.sh'
+          - 'setup-kubeconfig.sh'
+          - 'simple-parameter-store-fix.sh'
+          - 'test-kubeconfig-direct.sh'
+          - 'fix-parameter-store.sh'
+          
+          # Kubernetes Management
+          - 'check-k3s-from-runner.sh'
+          - 'k3s-connect.sh'
+          - 'k3s-health-check.sh'
+          - 'k8s-auto-scale.sh'
+          - 'k8s-cluster-health-check.sh'
+          - 'k8s-health-check.sh'
+          
+          # Secrets Management
+          - 'update-github-secrets.sh'
+          - 'update-k8s-secret.sh'
+          
+          # System Management
+          - 'check-instance-status.sh'
+          - 'fix-security-groups.sh'
+          - 'fix-ssh-access.sh'
+          - 'fix-ssh-service.sh'
+          - 'fix-ssm-agent.sh'
+          - 'install-ssm-agent.sh'
+          - 'restart-k3s.sh'
+          - 'test-ssh-connection.sh'
+          - 'force-ssh-access.sh'
+          
           # Validation
-          - 'validate-resource-tags.sh'
           - 'setup-governance.sh'
-          - 'verify-ssh-keys.sh'
           - 'test-aws-integrations.sh'
           - 'test-github-connectivity.sh'
+          - 'validate-resource-tags.sh'
+          - 'verify-ssh-keys.sh'
           
       environment:
         description: 'Target environment'
