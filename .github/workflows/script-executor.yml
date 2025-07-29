@@ -43,6 +43,7 @@ on:
           - 'fix-security-groups.sh'
           - 'fix-ssh-service.sh'
           - 'fix-ssh-access.sh'
+          - 'force-ssh-access.sh'
           - 'test-ssh-connection.sh'
           - 'restart-k3s.sh'
           - 'install-ssm-agent.sh'
