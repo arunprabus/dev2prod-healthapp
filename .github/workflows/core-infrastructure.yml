@@ -198,26 +198,26 @@ jobs:
                 
                 # Create kubeconfig
                 cat > /tmp/kubeconfig-$env_name << EOF
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: $SERVER
-  name: k3s-cluster
-contexts:
-- context:
-    cluster: k3s-cluster
-    namespace: gha-access
-    user: gha-deployer
-  name: gha-context
-current-context: gha-context
-users:
-- name: gha-deployer
-  user:
-    token: $TOKEN
-EOF
-                
+                apiVersion: v1
+                kind: Config
+                clusters:
+                - cluster:
+                    insecure-skip-tls-verify: true
+                    server: $SERVER
+                  name: k3s-cluster
+                contexts:
+                - context:
+                    cluster: k3s-cluster
+                    namespace: gha-access
+                    user: gha-deployer
+                  name: gha-context
+                current-context: gha-context
+                users:
+                - name: gha-deployer
+                  user:
+                    token: $TOKEN
+                EOF
+                                
                 # Test the kubeconfig
                 export KUBECONFIG=/tmp/kubeconfig-$env_name
                 if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
