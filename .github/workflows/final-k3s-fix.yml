@@ -172,26 +172,24 @@ jobs:
             
             # Create and test kubeconfig
             echo "Creating kubeconfig for $ENV..."
-            cat > /tmp/kubeconfig-$ENV << EOF
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://$IP:6443
-  name: k3s-cluster
-contexts:
-- context:
-    cluster: k3s-cluster
-    namespace: gha-access
-    user: gha-deployer
-  name: gha-context
-current-context: gha-context
-users:
-- name: gha-deployer
-  user:
-    token: $TOKEN
-EOF
+            echo "apiVersion: v1" > /tmp/kubeconfig-$ENV
+            echo "kind: Config" >> /tmp/kubeconfig-$ENV
+            echo "clusters:" >> /tmp/kubeconfig-$ENV
+            echo "- cluster:" >> /tmp/kubeconfig-$ENV
+            echo "    insecure-skip-tls-verify: true" >> /tmp/kubeconfig-$ENV
+            echo "    server: https://$IP:6443" >> /tmp/kubeconfig-$ENV
+            echo "  name: k3s-cluster" >> /tmp/kubeconfig-$ENV
+            echo "contexts:" >> /tmp/kubeconfig-$ENV
+            echo "- context:" >> /tmp/kubeconfig-$ENV
+            echo "    cluster: k3s-cluster" >> /tmp/kubeconfig-$ENV
+            echo "    namespace: gha-access" >> /tmp/kubeconfig-$ENV
+            echo "    user: gha-deployer" >> /tmp/kubeconfig-$ENV
+            echo "  name: gha-context" >> /tmp/kubeconfig-$ENV
+            echo "current-context: gha-context" >> /tmp/kubeconfig-$ENV
+            echo "users:" >> /tmp/kubeconfig-$ENV
+            echo "- name: gha-deployer" >> /tmp/kubeconfig-$ENV
+            echo "  user:" >> /tmp/kubeconfig-$ENV
+            echo "    token: $TOKEN" >> /tmp/kubeconfig-$ENV
             
             # Test kubeconfig
             export KUBECONFIG=/tmp/kubeconfig-$ENV
