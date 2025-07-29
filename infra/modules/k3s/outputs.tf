@@ -18,3 +18,8 @@ output "cluster_endpoint" {
   value       = "https://${aws_instance.k3s.public_ip}:6443"
 }
 
+output "security_group_id" {
+  description = "Security group ID of K3s instance"
+  value       = aws_security_group.k3s.id
+}
+

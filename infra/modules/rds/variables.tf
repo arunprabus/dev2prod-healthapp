@@ -62,10 +62,10 @@ variable "multi_az" {
   default     = false
 }
 
-variable "allowed_cidr_blocks" {
-  description = "CIDR blocks allowed to access the database"
+variable "app_security_group_ids" {
+  description = "Security group IDs of applications that need database access"
   type        = list(string)
-  default     = ["10.0.0.0/8"]
+  default     = []
 }
 
 variable "snapshot_identifier" {

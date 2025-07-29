@@ -91,15 +91,18 @@ module "k3s" {
   source = "./modules/k3s"
   count  = var.network_tier != "lower" ? 1 : 0
 
-  name_prefix       = local.name_prefix
-  vpc_id            = module.vpc.vpc_id
-  vpc_cidr          = module.vpc.vpc_cidr_block
-  subnet_id         = module.vpc.public_subnet_ids[0]
-  k3s_instance_type = var.k3s_instance_type
-  environment       = local.environment
-  ssh_public_key    = var.ssh_public_key
-  s3_bucket         = var.tf_state_bucket
-  tags              = local.tags
+  name_prefix              = local.name_prefix
+  vpc_id                   = module.vpc.vpc_id
+  vpc_cidr                 = module.vpc.vpc_cidr_block
+  subnet_id                = module.vpc.public_subnet_ids[0]
+  k3s_instance_type        = var.k3s_instance_type
+  environment              = local.environment
+  ssh_public_key           = var.ssh_public_key
+  s3_bucket                = var.tf_state_bucket
+  db_security_group_id     = var.database_config != null ? module.rds[0].db_security_group_id : null
+  tags                     = local.tags
+  
+  depends_on = [module.rds]
 }
 
 # Multiple clusters for lower environment
@@ -116,7 +119,10 @@ module "k3s_clusters" {
   ssh_public_key           = var.ssh_public_key
   s3_bucket                = var.tf_state_bucket
   runner_security_group_id = module.github_runner.runner_security_group_id
+  db_security_group_id     = var.database_config != null ? module.rds[0].db_security_group_id : null
   tags                     = merge(local.tags, { Environment = each.key })
+  
+  depends_on = [module.rds]
 }
 
 module "rds" {
@@ -137,7 +143,13 @@ module "rds" {
   snapshot_identifier     = var.database_config.snapshot_identifier
   restore_from_snapshot   = var.restore_from_snapshot
   environment             = local.environment
+  # Pass app security group IDs for cross-SG references
+  app_security_group_ids  = var.network_tier == "lower" ? 
+    [for k, v in module.k3s_clusters : v.security_group_id] : 
+    var.network_tier != "lower" && length(module.k3s) > 0 ? [module.k3s[0].security_group_id] : []
   tags                    = var.tags
+  
+  depends_on = [module.k3s, module.k3s_clusters]
 }
 
 # Deployment configuration for applications (disabled until K3s is ready)
@@ -238,4 +250,36 @@ output "github_runner_private_ip" {
 output "github_runner_public_ip" {
   description = "Public IP of GitHub runner"
   value       = module.github_runner.runner_public_ip
+}
+
+# Database outputs
+output "db_instance_address" {
+  description = "Database instance address"
+  value       = var.database_config != null ? module.rds[0].db_instance_address : null
+}
+
+output "db_instance_port" {
+  description = "Database instance port"
+  value       = var.database_config != null ? module.rds[0].db_instance_port : null
+}
+
+output "db_security_group_id" {
+  description = "Database security group ID"
+  value       = var.database_config != null ? module.rds[0].db_security_group_id : null
+}
+
+# K3s security group outputs
+output "dev_security_group_id" {
+  description = "Dev cluster security group ID"
+  value       = var.network_tier == "lower" && contains(keys(var.k8s_clusters), "dev") ? module.k3s_clusters["dev"].security_group_id : null
+}
+
+output "test_security_group_id" {
+  description = "Test cluster security group ID"
+  value       = var.network_tier == "lower" && contains(keys(var.k8s_clusters), "test") ? module.k3s_clusters["test"].security_group_id : null
+}
+
+output "k3s_security_group_id" {
+  description = "K3s cluster security group ID (single cluster environments)"
+  value       = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].security_group_id : null
 }

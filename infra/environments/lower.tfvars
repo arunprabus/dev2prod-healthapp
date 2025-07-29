@@ -32,10 +32,11 @@ database_config = {
   username = "postgres"
   multi_az = false
   backup_retention_period = 7
-  subnet_group_name = "health-app-lower-db-subnet-group"
   # Restore from existing snapshot (DISABLED - prevents destroy/recreate)
   # snapshot_identifier = "healthapidb-snapshot"
 }
+
+db_port = 5432  # PostgreSQL port
 
 # GitHub Runner Configuration
 github_repo = "arunprabus/dev2prod-healthapp"

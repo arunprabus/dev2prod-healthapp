@@ -27,10 +27,11 @@ database_config = {
   username = "postgres"
   multi_az = false  # FREE TIER (no multi-AZ)
   backup_retention_period = 7  # FREE TIER (max 7 days)
-  subnet_group_name = "health-app-higher-db-subnet-group"
   # Restore from existing snapshot (DISABLED - prevents destroy/recreate)
   # snapshot_identifier = "healthapidb-snapshot"
 }
+
+db_port = 5432  # PostgreSQL port
 
 # Tags
 tags = {

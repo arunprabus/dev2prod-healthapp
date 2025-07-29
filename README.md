@@ -21,6 +21,8 @@ This repository contains the complete infrastructure and deployment pipeline for
 - ✅ **Service Mesh Integration** - Istio for advanced traffic management
 - ✅ **Kubernetes Secrets** - Secure credential management
 - ✅ **Parameter Store Integration** - AWS SSM for kubeconfig management
+- ✅ **Network Security** - Cross-SG references, no open CIDR blocks
+- ✅ **Connectivity Testing** - Automated database access verification
 
 ## 📁 Clean Repository Structure
 
@@ -91,6 +93,8 @@ The infrastructure code manages the following resources:
 - **Auto-scaling** (HPA + resource scheduling)
 - **Monitoring stack** (Prometheus + Grafana)
 - **Cost optimization** (automated cleanup + scheduling)
+- **Security groups** with cross-SG references (no open CIDR blocks)
+- **Network ACLs** and subnet routing for secure connectivity
 
 ## Deployment Strategy
 
@@ -165,9 +169,38 @@ The infrastructure uses AWS Systems Manager Parameter Store for kubeconfig manag
 
 For detailed information, see [Parameter Store Kubeconfig Guide](docs/PARAMETER-STORE-KUBECONFIG.md).
 
+## Network Security
+
+The infrastructure implements secure network configuration with:
+
+- **Cross-SG References**: Database security groups only allow access from application security groups
+- **No Open CIDR Blocks**: Eliminates broad network access (0.0.0.0/0) to databases
+- **Environment Isolation**: Separate VPCs for dev/test/prod environments
+- **Automated Testing**: Connectivity verification scripts ensure proper database access
+
+### Testing Network Connectivity
+
+```bash
+# Test database connectivity for specific environment
+./scripts/test-network-connectivity.sh dev
+./scripts/test-network-connectivity.sh prod
+
+# Verify security group configuration
+./scripts/verify-security-groups.sh dev
+```
+
+For complete network security details, see [Network Security Configuration](docs/NETWORK-SECURITY-CONFIGURATION.md).
+
 ## Network Architecture
 
 For details on the three-tier network architecture, see [Architecture Changes](docs/architecture/ARCHITECTURE-CHANGES.md).
+
+### Security Group Architecture
+
+- **Database SG**: Ingress from app security groups only (cross-SG references)
+- **Application SG**: Egress rules for database access (MySQL 3306, PostgreSQL 5432)
+- **Environment Isolation**: Separate security groups per environment
+- **Automated Verification**: Security group configuration validated in CI/CD pipeline
 
 ## Cost Optimization
 

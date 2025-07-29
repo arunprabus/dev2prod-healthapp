@@ -74,6 +74,12 @@ variable "db_allocated_storage" {
   default     = 20
 }
 
+variable "db_port" {
+  description = "Database port number"
+  type        = number
+  default     = 3306
+}
+
 # Application Configuration
 variable "health_api_image" {
   description = "Docker image for Health API"
@@ -129,7 +135,6 @@ variable "database_config" {
     username                = string
     multi_az                = bool
     backup_retention_period = number
-    subnet_group_name       = string
     snapshot_identifier     = optional(string)
   })
   default = null

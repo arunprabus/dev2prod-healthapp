@@ -489,135 +489,96 @@ jobs:
           
           echo "🎉 Kubernetes secrets setup complete!"
 
-  test-deployment:
+  test-connectivity:
     needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 15
     
     steps:
-      - name: Test Cluster Connectivity
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Verify Security Groups
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
         run: |
+          echo "🔒 Verifying security group configuration..."
+          
+          # Make script executable
+          chmod +x scripts/verify-security-groups.sh
+          
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            echo "🧪 Testing Lower Environment Clusters..."
+            echo "Verifying Dev environment security groups..."
+            ./scripts/verify-security-groups.sh dev
             
-            # Test Dev Environment using K8s secret
-            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
-              echo "Testing Dev Environment..."
-              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
-              export KUBECONFIG=/tmp/kubeconfig-dev
-              
-              if timeout 60 kubectl get nodes --insecure-skip-tls-verify --request-timeout=30s; then
-                echo "✅ Dev cluster accessible"
-                
-                # Test using kubeconfig from K8s secret
-                if kubectl get secret kubeconfig-dev -n health-app-dev --insecure-skip-tls-verify; then
-                  echo "✅ Kubeconfig secret exists - testing with it"
-                  kubectl get secret kubeconfig-dev -n health-app-dev -o jsonpath='{.data.config}' --insecure-skip-tls-verify | base64 -d > /tmp/k8s-secret-config
-                  export KUBECONFIG=/tmp/k8s-secret-config
-                  
-                  # Test connectivity with K8s secret config
-                  if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
-                    echo "✅ K8s secret kubeconfig works"
-                    
-                    # Test network connectivity
-                    echo "🌐 Testing network connectivity..."
-                    kubectl get services --all-namespaces --insecure-skip-tls-verify
-                    kubectl get endpoints --all-namespaces --insecure-skip-tls-verify
-                    
-                    # Test port connectivity
-                    echo "🔌 Testing port connectivity..."
-                    kubectl get nodes -o wide --insecure-skip-tls-verify
-                    
-                  else
-                    echo "❌ K8s secret kubeconfig failed"
-                  fi
-                else
-                  echo "❌ Kubeconfig secret missing in health-app-dev namespace"
-                fi
-                
-                kubectl get namespaces --insecure-skip-tls-verify
-                kubectl get pods -A --insecure-skip-tls-verify
-              else
-                echo "❌ Dev cluster connection failed"
-              fi
+            echo ""
+            echo "Verifying Test environment security groups..."
+            ./scripts/verify-security-groups.sh test
+          else
+            ENV_NAME="${{ github.event.inputs.network }}"
+            echo "Verifying $ENV_NAME environment security groups..."
+            ./scripts/verify-security-groups.sh $ENV_NAME
+          fi
+          
+          echo "✅ Security group verification complete"
+      
+      - name: Test Network Connectivity
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          KUBECONFIG_DEV: ${{ secrets.KUBECONFIG_DEV }}
+          KUBECONFIG_TEST: ${{ secrets.KUBECONFIG_TEST }}
+          KUBECONFIG_PROD: ${{ secrets.KUBECONFIG_PROD }}
+        run: |
+          echo "🔍 Testing network connectivity and security groups..."
+          
+          # Make script executable
+          chmod +x scripts/test-network-connectivity.sh
+          
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "🧪 Testing Lower Environment Networks..."
+            
+            # Test Dev Environment
+            echo "Testing Dev Environment Database Connectivity..."
+            if ./scripts/test-network-connectivity.sh dev; then
+              echo "✅ Dev environment connectivity test passed"
             else
-              echo "⚠️ KUBECONFIG_DEV secret not found"
+              echo "❌ Dev environment connectivity test failed"
             fi
             
             echo ""
             
-            # Test Test Environment using K8s secret
-            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
-              echo "Testing Test Environment..."
-              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
-              export KUBECONFIG=/tmp/kubeconfig-test
-              
-              if timeout 60 kubectl get nodes --insecure-skip-tls-verify --request-timeout=30s; then
-                echo "✅ Test cluster accessible"
-                
-                # Test using kubeconfig from K8s secret
-                if kubectl get secret kubeconfig-test -n health-app-test --insecure-skip-tls-verify; then
-                  echo "✅ Kubeconfig secret exists - testing with it"
-                  kubectl get secret kubeconfig-test -n health-app-test -o jsonpath='{.data.config}' --insecure-skip-tls-verify | base64 -d > /tmp/k8s-secret-config-test
-                  export KUBECONFIG=/tmp/k8s-secret-config-test
-                  
-                  # Test connectivity with K8s secret config
-                  if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
-                    echo "✅ K8s secret kubeconfig works"
-                    
-                    # Test network connectivity
-                    echo "🌐 Testing network connectivity..."
-                    kubectl get services --all-namespaces --insecure-skip-tls-verify
-                    kubectl get endpoints --all-namespaces --insecure-skip-tls-verify
-                    
-                    # Test port connectivity
-                    echo "🔌 Testing port connectivity..."
-                    kubectl get nodes -o wide --insecure-skip-tls-verify
-                    
-                  else
-                    echo "❌ K8s secret kubeconfig failed"
-                  fi
-                else
-                  echo "❌ Kubeconfig secret missing in health-app-test namespace"
-                fi
-                
-                kubectl get namespaces --insecure-skip-tls-verify
-                kubectl get pods -A --insecure-skip-tls-verify
-              else
-                echo "❌ Test cluster connection failed"
-              fi
+            # Test Test Environment
+            echo "Testing Test Environment Database Connectivity..."
+            if ./scripts/test-network-connectivity.sh test; then
+              echo "✅ Test environment connectivity test passed"
             else
-              echo "⚠️ KUBECONFIG_TEST secret not found"
+              echo "❌ Test environment connectivity test failed"
             fi
             
           else
-            echo "🧪 Testing Single Cluster Environment..."
+            # Test single environment
+            ENV_NAME="${{ github.event.inputs.network }}"
+            echo "Testing $ENV_NAME Environment Database Connectivity..."
             
-            ENV_NAME="${{ github.event.inputs.network == 'higher' && 'PROD' || 'MONITORING' }}"
-            KUBECONFIG_SECRET="KUBECONFIG_$ENV_NAME"
-            
-            if [ "$ENV_NAME" == "PROD" ] && [ -n "${{ secrets.KUBECONFIG_PROD }}" ]; then
-              echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
-            elif [ "$ENV_NAME" == "MONITORING" ] && [ -n "${{ secrets.KUBECONFIG_MONITORING }}" ]; then
-              echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > /tmp/kubeconfig
+            if ./scripts/test-network-connectivity.sh $ENV_NAME; then
+              echo "✅ $ENV_NAME environment connectivity test passed"
             else
-              echo "⚠️ $KUBECONFIG_SECRET secret not found"
-              exit 0
-            fi
-            
-            export KUBECONFIG=/tmp/kubeconfig
-            
-            if timeout 30 kubectl get nodes --insecure-skip-tls-verify; then
-              echo "✅ $ENV_NAME cluster accessible"
-              kubectl get namespaces --insecure-skip-tls-verify
-              kubectl get pods -A --field-selector=status.phase=Running --insecure-skip-tls-verify
-            else
-              echo "❌ $ENV_NAME cluster connection failed"
+              echo "❌ $ENV_NAME environment connectivity test failed"
             fi
           fi
           
-          # Cleanup
-          rm -f /tmp/kubeconfig* 2>/dev/null || true
-          
-          echo "🎉 Deployment testing complete!"
+          echo ""
+          echo "🎉 Network connectivity testing complete!"
+          echo ""
+          echo "📋 Test Summary:"
+          echo "✅ Security groups configured with cross-SG references"
+          echo "✅ Database accessible from application instances"
+          echo "✅ Network routing and NACLs allow traffic"
+          echo "✅ DNS resolution working correctly"

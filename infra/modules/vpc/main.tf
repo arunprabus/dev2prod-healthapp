@@ -81,3 +81,47 @@ resource "aws_route_table_association" "private" {
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
 }
+
+# Network ACLs - Allow all traffic (security groups provide the actual security)
+resource "aws_network_acl" "main" {
+  vpc_id = aws_vpc.main.id
+
+  # Allow all inbound traffic
+  ingress {
+    protocol   = "-1"
+    rule_no    = 100
+    action     = "allow"
+    cidr_block = "0.0.0.0/0"
+    from_port  = 0
+    to_port    = 0
+  }
+
+  # Allow all outbound traffic
+  egress {
+    protocol   = "-1"
+    rule_no    = 100
+    action     = "allow"
+    cidr_block = "0.0.0.0/0"
+    from_port  = 0
+    to_port    = 0
+  }
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-nacl"
+  })
+}
+
+# Associate NACL with all subnets
+resource "aws_network_acl_association" "public" {
+  count = length(var.public_subnet_cidrs)
+
+  network_acl_id = aws_network_acl.main.id
+  subnet_id      = aws_subnet.public[count.index].id
+}
+
+resource "aws_network_acl_association" "private" {
+  count = length(var.private_subnet_cidrs)
+
+  network_acl_id = aws_network_acl.main.id
+  subnet_id      = aws_subnet.private[count.index].id
+}

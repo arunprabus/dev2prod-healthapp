@@ -12,5 +12,17 @@ k3s_instance_type = "t3.medium"
 # ssh_public_key will be passed from GitHub secret
 
 # Database Configuration (Production)
-db_instance_class = "db.t3.medium"
-db_allocated_storage = 100
+database_config = {
+  identifier              = "health-app-prod-db"
+  instance_class         = "db.t3.medium"
+  allocated_storage      = 100
+  engine                 = "mysql"
+  engine_version         = "8.0"
+  db_name               = "healthapp"
+  username              = "admin"
+  backup_retention_period = 7
+  multi_az              = true
+  snapshot_identifier   = null
+}
+
+db_port = 3306

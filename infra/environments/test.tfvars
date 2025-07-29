@@ -12,5 +12,17 @@ k3s_instance_type = "t3.small"
 # ssh_public_key will be passed from GitHub secret
 
 # Database Configuration (Test)
-db_instance_class = "db.t3.small"
-db_allocated_storage = 20
+database_config = {
+  identifier              = "health-app-test-db"
+  instance_class         = "db.t3.small"
+  allocated_storage      = 20
+  engine                 = "mysql"
+  engine_version         = "8.0"
+  db_name               = "healthapp"
+  username              = "admin"
+  backup_retention_period = 1
+  multi_az              = false
+  snapshot_identifier   = null
+}
+
+db_port = 3306
