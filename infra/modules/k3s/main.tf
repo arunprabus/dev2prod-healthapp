@@ -356,7 +356,9 @@ for i in {1..5}; do
 done
 
 if [[ -n "$$TOKEN" ]]; then
+  # Get public IP again to ensure it's available
   PUBLIC_IP=$$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+  echo "Using public IP: $$PUBLIC_IP"
   
   # Store kubeconfig data in Parameter Store
   echo "Storing kubeconfig data in Parameter Store..."
