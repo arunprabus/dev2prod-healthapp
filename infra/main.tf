@@ -144,9 +144,7 @@ module "rds" {
   restore_from_snapshot   = var.restore_from_snapshot
   environment             = local.environment
   # Pass app security group IDs for cross-SG references
-  app_security_group_ids  = var.network_tier == "lower" ? 
-    [for k, v in module.k3s_clusters : v.security_group_id] : 
-    var.network_tier != "lower" && length(module.k3s) > 0 ? [module.k3s[0].security_group_id] : []
+  app_security_group_ids  = var.network_tier == "lower" ? [for k, v in module.k3s_clusters : v.security_group_id] : (var.network_tier != "lower" && length(module.k3s) > 0 ? [module.k3s[0].security_group_id] : [])
   tags                    = var.tags
   
   depends_on = [module.k3s, module.k3s_clusters]
