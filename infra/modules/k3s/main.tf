@@ -75,7 +75,7 @@ resource "aws_security_group_rule" "k3s_db_egress_mysql" {
   to_port                  = 3306
   protocol                 = "tcp"
   security_group_id        = aws_security_group.k3s.id
-  destination_security_group_id = var.db_security_group_id
+  source_security_group_id = var.db_security_group_id
   description              = "MySQL database access"
 }
 
@@ -87,7 +87,7 @@ resource "aws_security_group_rule" "k3s_db_egress_postgres" {
   to_port                  = 5432
   protocol                 = "tcp"
   security_group_id        = aws_security_group.k3s.id
-  destination_security_group_id = var.db_security_group_id
+  source_security_group_id = var.db_security_group_id
   description              = "PostgreSQL database access"
 }
 
