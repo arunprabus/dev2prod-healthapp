@@ -26,6 +26,22 @@ for i in {1..30}; do
 done
 
 # Get kubeconfig data from Parameter Store
+# Check if kubeconfig already exists and works
+if [ -f "/tmp/kubeconfig-$ENV_NAME" ]; then
+  echo "🔍 Found existing kubeconfig, testing..."
+  export KUBECONFIG=/tmp/kubeconfig-$ENV_NAME
+  if timeout 10 kubectl get nodes --insecure-skip-tls-verify --request-timeout=5s >/dev/null 2>&1; then
+    echo "✅ Cached kubeconfig works, using it"
+    SECRET_NAME="KUBECONFIG_$(echo $ENV_NAME | tr '[:lower:]' '[:upper:]')"
+    base64 -w 0 /tmp/kubeconfig-$ENV_NAME | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+    echo "✅ GitHub secret $SECRET_NAME updated from cache"
+    exit 0
+  else
+    echo "⚠️ Cached kubeconfig failed, regenerating..."
+    rm -f /tmp/kubeconfig-$ENV_NAME
+  fi
+fi
+
 echo "📥 Retrieving kubeconfig from Parameter Store..."
 
 for attempt in {1..10}; do

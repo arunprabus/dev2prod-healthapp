@@ -144,6 +144,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - name: Cache Kubeconfig
+        uses: actions/cache@v3
+        with:
+          path: /tmp/kubeconfig-*
+          key: kubeconfig-${{ github.event.inputs.network }}-${{ needs.infrastructure.outputs.dev_cluster_ip }}-${{ needs.infrastructure.outputs.test_cluster_ip }}-${{ needs.infrastructure.outputs.cluster_ip }}
+          restore-keys: |
+            kubeconfig-${{ github.event.inputs.network }}-
+      
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
