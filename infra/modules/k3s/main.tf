@@ -374,19 +374,21 @@ if [[ -n "$$TOKEN" ]]; then
   
   # Store kubeconfig data in Parameter Store
   echo "Storing kubeconfig data in Parameter Store..."
+  AWS_REGION="${var.aws_region}"
+  
   aws ssm put-parameter \
     --name "/$$ENVIRONMENT/health-app/kubeconfig/server" \
     --value "https://$$PUBLIC_IP:6443" \
     --type "String" \
     --overwrite \
-    --region ap-south-1
+    --region $$AWS_REGION
   
   aws ssm put-parameter \
     --name "/$$ENVIRONMENT/health-app/kubeconfig/token" \
     --value "$$TOKEN" \
     --type "SecureString" \
     --overwrite \
-    --region ap-south-1
+    --region $$AWS_REGION
   
   # Store cluster name for reference
   aws ssm put-parameter \
@@ -394,7 +396,7 @@ if [[ -n "$$TOKEN" ]]; then
     --value "k3s-cluster" \
     --type "String" \
     --overwrite \
-    --region ap-south-1
+    --region $$AWS_REGION
   
   echo "SUCCESS: Kubeconfig data stored in Parameter Store"
   
