@@ -132,12 +132,10 @@ jobs:
             
             # Create service account and get token
             echo "Creating service account on $ENV..."
-            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP << 'SCRIPT'
-              sudo kubectl create namespace gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
-              sudo kubectl create serviceaccount gha-deployer -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
-              sudo kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
-              sudo kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml
-SCRIPT
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl create namespace gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml'
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl create serviceaccount gha-deployer -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml'
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml'
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access --kubeconfig /etc/rancher/k3s/k3s.yaml --dry-run=client -o yaml | sudo kubectl apply -f - --kubeconfig /etc/rancher/k3s/k3s.yaml'
             
             # Get token and store in Parameter Store
             echo "Getting token and storing in Parameter Store for $ENV..."
