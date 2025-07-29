@@ -60,6 +60,7 @@ on:
           - 'fix-ssm-agent.sh'
           - 'install-ssm-agent.sh'
           - 'restart-k3s.sh'
+          - 'simple-connectivity-test.sh'
           - 'test-ssh-connection.sh'
           - 'force-ssh-access.sh'
           - 'direct-ssh-fix.sh'
