@@ -39,4 +39,58 @@ aws ec2 describe-instances \
   --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],State.Name,StatusChecks.SystemStatus.Status,StatusChecks.InstanceStatus.Status]' \
   --output table 2>/dev/null || echo "Failed to get instance status"
 
-echo "🎯 Connectivity test complete!"
+# Check GitHub Runner Resources
+echo "🖥️ GitHub Runner Resource Usage:"
+echo "CPU Usage:"
+top -bn1 | grep "Cpu(s)" || echo "Failed to get CPU info"
+
+echo "Memory Usage:"
+free -h || echo "Failed to get memory info"
+
+echo "Disk Usage:"
+df -h / || echo "Failed to get disk info"
+
+echo "Load Average:"
+uptime || echo "Failed to get uptime"
+
+echo "Active Processes:"
+ps aux --sort=-%cpu | head -10 || echo "Failed to get process info"
+
+echo "Network Connections:"
+netstat -tuln | grep -E ':(22|6443|443|80)' || echo "Failed to get network info"
+
+# Check CloudWatch metrics if available
+echo "📈 Instance Metrics (if available):"
+for IP in "13.232.75.155" "13.127.158.59"; do
+  INSTANCE_ID=$(aws ec2 describe-instances \
+    --filters "Name=private-ip-address,Values=$IP" \
+    --query 'Reservations[0].Instances[0].InstanceId' \
+    --output text 2>/dev/null)
+  
+  if [ "$INSTANCE_ID" != "None" ] && [ -n "$INSTANCE_ID" ]; then
+    echo "Metrics for $IP ($INSTANCE_ID):"
+    aws cloudwatch get-metric-statistics \
+      --namespace AWS/EC2 \
+      --metric-name CPUUtilization \
+      --dimensions Name=InstanceId,Value=$INSTANCE_ID \
+      --start-time $(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%S) \
+      --end-time $(date -u +%Y-%m-%dT%H:%M:%S) \
+      --period 300 \
+      --statistics Average \
+      --query 'Datapoints[0].Average' \
+      --output text 2>/dev/null || echo "No CPU metrics available"
+  fi
+done
+
+# Test runner's ability to make external connections
+echo "🌐 Runner External Connectivity:"
+echo "GitHub API test:"
+timeout 10 curl -s https://api.github.com/zen || echo "GitHub API failed"
+
+echo "AWS API test:"
+timeout 10 aws sts get-caller-identity --query 'Account' --output text || echo "AWS API failed"
+
+echo "DNS test:"
+nslookup github.com || echo "DNS resolution failed"
+
+echo "🎯 Complete resource and connectivity test finished!"
