@@ -86,12 +86,11 @@ jobs:
             -backend-config="key=health-app-${{ github.event.inputs.network }}-instances.tfstate" \
             -backend-config="region=$AWS_REGION"
           
-          # Create plan for instances without K3s installation
+          # Create plan for instances
           terraform plan \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
-            -var="install_k3s=false" \
             -out=instances.tfplan
 
       - name: Apply Instance Creation
