@@ -12,17 +12,17 @@ PARAM_PREFIX="/$ENV_NAME/health-app/kubeconfig"
 echo "⏳ Waiting for K3s API at $CLUSTER_IP:6443..."
 
 # Wait for K3s API to be accessible
-for i in {1..30}; do
-  echo "Attempt $i/30: Testing K3s API..."
-  if timeout 10 curl -k -s "https://$CLUSTER_IP:6443/version" >/dev/null 2>&1; then
+for i in {1..15}; do
+  echo "Attempt $i/15: Testing K3s API..."
+  if timeout 15 curl -k -s "https://$CLUSTER_IP:6443/version" >/dev/null 2>&1; then
     echo "✅ K3s API is accessible"
     break
   fi
-  if [ $i -eq 30 ]; then
-    echo "❌ K3s API not accessible after 10 minutes"
+  if [ $i -eq 15 ]; then
+    echo "❌ K3s API not accessible after 15 minutes"
     exit 1
   fi
-  sleep 20
+  sleep 60
 done
 
 # Get kubeconfig data from Parameter Store

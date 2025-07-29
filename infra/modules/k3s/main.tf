@@ -252,7 +252,31 @@ fi
 # Install K3s with write permissions and bind to all interfaces
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 echo "Installing K3s with public IP: $PUBLIC_IP"
-curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --bind-address=0.0.0.0 --advertise-address=$PUBLIC_IP
+
+# Install K3s with error handling
+echo "Downloading and installing K3s..."
+if curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --bind-address=0.0.0.0 --advertise-address=$PUBLIC_IP; then
+  echo "✅ K3s installation completed"
+else
+  echo "❌ K3s installation failed"
+  exit 1
+fi
+
+# Wait for K3s service to be active
+echo "Waiting for K3s service to start..."
+for i in {1..30}; do
+  if systemctl is-active --quiet k3s; then
+    echo "✅ K3s service is active"
+    break
+  fi
+  echo "⏳ Waiting for K3s service... ($i/30)"
+  sleep 10
+  if [ $i -eq 30 ]; then
+    echo "❌ K3s service failed to start"
+    systemctl status k3s --no-pager
+    exit 1
+  fi
+done
 
 # Setup Docker
 systemctl enable docker
@@ -264,23 +288,72 @@ curl -LO "https://dl.k8s.io/release/$$(curl -L -s https://dl.k8s.io/release/stab
 chmod +x kubectl
 mv kubectl /usr/local/bin/
 
-# Wait for K3s to be ready
-sleep 60
+# Set kubeconfig and wait for API server
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+echo "Waiting for K3s API server to be ready..."
+for i in {1..60}; do
+  if kubectl get nodes --request-timeout=5s >/dev/null 2>&1; then
+    echo "✅ K3s API server is ready"
+    break
+  fi
+  echo "⏳ Waiting for API server... ($i/60)"
+  sleep 5
+  if [ $i -eq 60 ]; then
+    echo "❌ K3s API server not ready"
+    kubectl get nodes --request-timeout=5s || true
+    exit 1
+  fi
+done
 
-# Create namespace and service account
+# Create namespace and service account with error handling
 echo "Creating namespace and service account..."
-kubectl create namespace gha-access || true
-kubectl create serviceaccount gha-deployer -n gha-access
+if kubectl create namespace gha-access 2>/dev/null; then
+  echo "✅ Namespace created"
+else
+  echo "⚠️ Namespace already exists or creation failed"
+fi
+
+if kubectl create serviceaccount gha-deployer -n gha-access 2>/dev/null; then
+  echo "✅ Service account created"
+else
+  echo "❌ Service account creation failed"
+  kubectl get serviceaccount -n gha-access
+  exit 1
+fi
 
 # Create role with deployment permissions
 echo "Creating role with deployment permissions..."
-kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access
-kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access
+if kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access 2>/dev/null; then
+  echo "✅ Role created"
+else
+  echo "⚠️ Role already exists or creation failed"
+fi
 
-# Generate dynamic token
+if kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access 2>/dev/null; then
+  echo "✅ Role binding created"
+else
+  echo "⚠️ Role binding already exists or creation failed"
+fi
+
+# Wait a moment for service account to be ready
+sleep 5
+
+# Generate dynamic token with retry
 echo "Generating dynamic token..."
-TOKEN=$$(kubectl create token gha-deployer -n gha-access --duration=24h)
+for i in {1..5}; do
+  TOKEN=$$(kubectl create token gha-deployer -n gha-access --duration=24h 2>/dev/null)
+  if [[ -n "$$TOKEN" ]]; then
+    echo "✅ Token generated successfully"
+    break
+  fi
+  echo "⏳ Token generation attempt $i/5 failed, retrying..."
+  sleep 10
+  if [ $i -eq 5 ]; then
+    echo "❌ Failed to generate token after 5 attempts"
+    kubectl get serviceaccount gha-deployer -n gha-access
+    exit 1
+  fi
+done
 
 if [[ -n "$$TOKEN" ]]; then
   PUBLIC_IP=$$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
