@@ -42,6 +42,7 @@ on:
           - 'check-instance-status.sh'
           - 'fix-security-groups.sh'
           - 'fix-ssh-service.sh'
+          - 'fix-ssh-access.sh'
           - 'restart-k3s.sh'
           - 'install-ssm-agent.sh'
           - 'fix-ssm-agent.sh'
