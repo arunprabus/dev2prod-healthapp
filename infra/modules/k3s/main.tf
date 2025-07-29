@@ -250,8 +250,21 @@ else
 fi
 
 # Install K3s with write permissions and bind to all interfaces
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-echo "Installing K3s with public IP: $PUBLIC_IP"
+# Get public IP with retry logic for reliability
+echo "Getting public IP address..."
+for i in {1..10}; do
+  PUBLIC_IP=$(curl -s --connect-timeout 5 http://169.254.169.254/latest/meta-data/public-ipv4)
+  if [[ -n "$PUBLIC_IP" ]] && [[ "$PUBLIC_IP" != "" ]]; then
+    echo "✅ Got public IP: $PUBLIC_IP (attempt $i)"
+    break
+  fi
+  echo "⏳ Waiting for public IP... (attempt $i/10)"
+  sleep 5
+  if [ $i -eq 10 ]; then
+    echo "❌ Failed to get public IP after 10 attempts"
+    exit 1
+  fi
+done
 
 # Install K3s with error handling
 echo "Downloading and installing K3s..."
@@ -356,9 +369,8 @@ for i in {1..5}; do
 done
 
 if [[ -n "$$TOKEN" ]]; then
-  # Get public IP again to ensure it's available
-  PUBLIC_IP=$$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-  echo "Using public IP: $$PUBLIC_IP"
+  # Use the reliable public IP we already have
+  echo "Using public IP for Parameter Store: $$PUBLIC_IP"
   
   # Store kubeconfig data in Parameter Store
   echo "Storing kubeconfig data in Parameter Store..."

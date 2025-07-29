@@ -1,0 +1,338 @@
+name: Split K3s Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - create-instances
+          - install-k3s
+          - full-deploy
+          - destroy
+      network:
+        description: 'Network Tier'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+          - lower
+          - higher
+          - monitoring
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  # Job 1: Create EC2 instances only (no K3s installation)
+  create-instances:
+    if: github.event.inputs.action == 'create-instances' || github.event.inputs.action == 'full-deploy'
+    runs-on: ubuntu-latest
+    outputs:
+      dev_cluster_ip: ${{ steps.apply.outputs.dev_cluster_ip }}
+      test_cluster_ip: ${{ steps.apply.outputs.test_cluster_ip }}
+      cluster_ip: ${{ steps.apply.outputs.cluster_ip }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Check for Hardcoded Values
+        run: |
+          echo "🔍 Scanning for hardcoded values in infrastructure..."
+          
+          # Check for hardcoded IPs
+          echo "Checking for hardcoded IP addresses:"
+          grep -r "10\.0\." infra/ || echo "✅ No hardcoded VPC IPs found"
+          grep -r "192\.168\." infra/ || echo "✅ No hardcoded private IPs found"
+          grep -r "172\.16\." infra/ || echo "✅ No hardcoded private IPs found"
+          
+          # Check for hardcoded regions
+          echo "Checking for hardcoded regions:"
+          grep -r "us-east-1\|us-west-2\|eu-west-1" infra/ || echo "✅ No hardcoded regions found"
+          
+          # Check for hardcoded ports (except standard ones)
+          echo "Checking for unusual hardcoded ports:"
+          grep -r ":8080\|:3000\|:5000\|:9000" infra/ || echo "✅ No unusual hardcoded ports found"
+          
+          # Check for hardcoded AMI IDs
+          echo "Checking for hardcoded AMI IDs:"
+          grep -r "ami-[0-9a-f]" infra/ || echo "✅ No hardcoded AMI IDs found"
+          
+          # Check for hardcoded instance types
+          echo "Checking for hardcoded instance types:"
+          grep -r "t2\.micro\|t3\.small\|m5\.large" infra/ | grep -v "var\." || echo "✅ Instance types are parameterized"
+          
+          echo "✅ Hardcoded value scan complete"
+
+      - name: Create Terraform Plan for Instances Only
+        working-directory: infra
+        run: |
+          # Initialize Terraform
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}-instances.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          # Create plan for instances without K3s installation
+          terraform plan \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="install_k3s=false" \
+            -out=instances.tfplan
+
+      - name: Apply Instance Creation
+        id: apply
+        working-directory: infra
+        run: |
+          # Apply the plan to create instances
+          terraform apply instances.tfplan
+          
+          # Output instance IPs
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
+            echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
+          else
+            echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for Instances to be Ready
+        run: |
+          echo "⏳ Waiting for instances to be fully ready..."
+          sleep 60
+          
+          # Test SSH connectivity
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            for IP in "${{ steps.apply.outputs.dev_cluster_ip }}" "${{ steps.apply.outputs.test_cluster_ip }}"; do
+              if [ -n "$IP" ]; then
+                echo "Testing SSH to $IP..."
+                for i in {1..10}; do
+                  if timeout 10 bash -c "</dev/tcp/$IP/22" 2>/dev/null; then
+                    echo "✅ SSH ready on $IP"
+                    break
+                  fi
+                  echo "⏳ Waiting for SSH on $IP... ($i/10)"
+                  sleep 30
+                done
+              fi
+            done
+          fi
+
+  # Job 2: Install K3s on existing instances
+  install-k3s:
+    if: github.event.inputs.action == 'install-k3s' || github.event.inputs.action == 'full-deploy'
+    needs: create-instances
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+          chmod 600 ~/.ssh/k3s-key
+
+      - name: Get Instance IPs
+        id: get-ips
+        run: |
+          # Get IPs from previous job or discover from AWS
+          if [ "${{ github.event.inputs.action }}" == "full-deploy" ]; then
+            DEV_IP="${{ needs.create-instances.outputs.dev_cluster_ip }}"
+            TEST_IP="${{ needs.create-instances.outputs.test_cluster_ip }}"
+          else
+            # Discover existing instances
+            DEV_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-lower-dev-k3s-node-v2" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null)
+            
+            TEST_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-lower-test-k3s-node-v2" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null)
+          fi
+          
+          echo "dev_ip=$DEV_IP" >> $GITHUB_OUTPUT
+          echo "test_ip=$TEST_IP" >> $GITHUB_OUTPUT
+          echo "Dev IP: $DEV_IP"
+          echo "Test IP: $TEST_IP"
+
+      - name: Install K3s on Clusters
+        env:
+          DEV_IP: ${{ steps.get-ips.outputs.dev_ip }}
+          TEST_IP: ${{ steps.get-ips.outputs.test_ip }}
+        run: |
+          # Function to install K3s on a single instance
+          install_k3s() {
+            local IP=$1
+            local ENV=$2
+            
+            echo "🚀 Installing K3s on $ENV cluster ($IP)..."
+            
+            # Create K3s installation script
+            cat > /tmp/install-k3s-$ENV.sh << 'SCRIPT_EOF'
+#!/bin/bash
+set -e
+
+echo "🔧 Starting K3s installation..."
+
+# Update system
+sudo apt-get update
+sudo apt-get install -y curl docker.io awscli
+
+# Get public IP with retry
+echo "Getting public IP..."
+for i in {1..5}; do
+  PUBLIC_IP=$(curl -s --connect-timeout 5 http://169.254.169.254/latest/meta-data/public-ipv4)
+  if [[ -n "$PUBLIC_IP" ]]; then
+    echo "✅ Public IP: $PUBLIC_IP"
+    break
+  fi
+  sleep 5
+done
+
+# Install K3s
+echo "Installing K3s..."
+curl -sfL https://get.k3s.io | sh -s - \
+  --write-kubeconfig-mode 644 \
+  --bind-address=0.0.0.0 \
+  --advertise-address=$PUBLIC_IP
+
+# Wait for K3s to be ready
+echo "Waiting for K3s to be ready..."
+for i in {1..30}; do
+  if sudo systemctl is-active k3s >/dev/null 2>&1; then
+    echo "✅ K3s service is active"
+    break
+  fi
+  echo "⏳ Waiting for K3s... ($i/30)"
+  sleep 10
+done
+
+# Test kubectl
+if sudo kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml >/dev/null 2>&1; then
+  echo "✅ K3s installation successful"
+else
+  echo "❌ K3s installation failed"
+  exit 1
+fi
+
+echo "🎉 K3s installation complete!"
+SCRIPT_EOF
+
+            # Copy and execute the script
+            scp -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no /tmp/install-k3s-$ENV.sh ubuntu@$IP:/tmp/
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'chmod +x /tmp/install-k3s-'$ENV'.sh && /tmp/install-k3s-'$ENV'.sh'
+            
+            echo "✅ K3s installed on $ENV cluster"
+          }
+          
+          # Install K3s on both clusters
+          if [ -n "$DEV_IP" ] && [ "$DEV_IP" != "None" ]; then
+            install_k3s "$DEV_IP" "dev"
+          fi
+          
+          if [ -n "$TEST_IP" ] && [ "$TEST_IP" != "None" ]; then
+            install_k3s "$TEST_IP" "test"
+          fi
+
+      - name: Extract Kubeconfigs
+        env:
+          DEV_IP: ${{ steps.get-ips.outputs.dev_ip }}
+          TEST_IP: ${{ steps.get-ips.outputs.test_ip }}
+        run: |
+          # Function to extract kubeconfig
+          extract_kubeconfig() {
+            local IP=$1
+            local ENV=$2
+            
+            echo "📥 Extracting kubeconfig from $ENV cluster..."
+            
+            # Get kubeconfig
+            ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP 'sudo cat /etc/rancher/k3s/k3s.yaml' > /tmp/kubeconfig-$ENV
+            
+            # Replace localhost with actual IP
+            sed -i "s/127.0.0.1/$IP/g" /tmp/kubeconfig-$ENV
+            sed -i "s/localhost/$IP/g" /tmp/kubeconfig-$ENV
+            
+            # Test kubeconfig
+            export KUBECONFIG=/tmp/kubeconfig-$ENV
+            if timeout 10 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+              echo "✅ Kubeconfig working for $ENV"
+              
+              # Store in GitHub secrets
+              SECRET_NAME="KUBECONFIG_$(echo $ENV | tr '[:lower:]' '[:upper:]')"
+              base64 -w 0 /tmp/kubeconfig-$ENV | gh secret set $SECRET_NAME --repo ${{ github.repository }}
+              echo "✅ $SECRET_NAME updated"
+            else
+              echo "❌ Kubeconfig not working for $ENV"
+            fi
+          }
+          
+          # Install GitHub CLI
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update && sudo apt install gh kubectl -y
+          echo "${{ secrets.REPO_PAT }}" | gh auth login --with-token
+          
+          # Extract kubeconfigs
+          if [ -n "$DEV_IP" ] && [ "$DEV_IP" != "None" ]; then
+            extract_kubeconfig "$DEV_IP" "dev"
+          fi
+          
+          if [ -n "$TEST_IP" ] && [ "$TEST_IP" != "None" ]; then
+            extract_kubeconfig "$TEST_IP" "test"
+          fi
+
+  # Job 3: Cleanup/Destroy
+  destroy:
+    if: github.event.inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+      
+      - name: Destroy Infrastructure
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}-instances.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform destroy \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -auto-approve
