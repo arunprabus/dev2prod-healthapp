@@ -139,98 +139,143 @@ jobs:
     needs: infrastructure
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     
     steps:
-      - name: Setup Kubeconfig
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Kubeconfig via Parameter Store
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
           DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
           TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
           CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
         run: |
-          echo "$SSH_PRIVATE_KEY" > /tmp/ssh_key
-          chmod 600 /tmp/ssh_key
-          
+          # Install GitHub CLI
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          sudo apt update && sudo apt install gh -y
+          sudo apt update && sudo apt install gh kubectl -y
           
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            # Handle lower environment with dev and test clusters
-            if [ -n "$DEV_CLUSTER_IP" ]; then
-              echo "⏳ Setting up Dev kubeconfig at $DEV_CLUSTER_IP..."
-              echo "⏳ Waiting for K3s installation to complete..."
-              sleep 60
-              for i in {1..30}; do
-                echo "Attempt $i/30 for Dev cluster..."
-                if timeout 20 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
-                  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$DEV_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-dev
-                  # Use public IP with insecure connection for external access
-                  sed "s/127.0.0.1/$DEV_CLUSTER_IP/g" /tmp/kubeconfig-dev > /tmp/kubeconfig-dev-temp
-                  sed '/server:/a\    insecure-skip-tls-verify: true' /tmp/kubeconfig-dev-temp > /tmp/kubeconfig-dev-fixed
-                  base64 -w 0 /tmp/kubeconfig-dev-fixed | gh secret set KUBECONFIG_DEV --repo $GITHUB_REPOSITORY
-                  echo "✅ KUBECONFIG_DEV updated"
-                  break
+          # Function to wait for K3s API and get kubeconfig from Parameter Store
+          wait_for_k3s_and_setup() {
+            local env_name=$1
+            local cluster_ip=$2
+            local param_prefix="/$env_name/health-app/kubeconfig"
+            
+            echo "⏳ Waiting for K3s API at $cluster_ip:6443..."
+            
+            # Wait for K3s API to be accessible
+            for i in {1..30}; do
+              echo "Attempt $i/30: Testing K3s API..."
+              if timeout 10 curl -k -s "https://$cluster_ip:6443/version" >/dev/null 2>&1; then
+                echo "✅ K3s API is accessible"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "❌ K3s API not accessible after 10 minutes"
+                return 1
+              fi
+              sleep 20
+            done
+            
+            # Get kubeconfig data from Parameter Store (set by K3s user-data)
+            echo "📥 Retrieving kubeconfig from Parameter Store..."
+            
+            for attempt in {1..10}; do
+              echo "Parameter Store attempt $attempt/10..."
+              
+              SERVER=$(aws ssm get-parameter --name "$param_prefix/server" --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+              TOKEN=$(aws ssm get-parameter --name "$param_prefix/token" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null || echo "")
+              
+              if [ -n "$SERVER" ] && [ -n "$TOKEN" ]; then
+                echo "✅ Retrieved kubeconfig data from Parameter Store"
+                
+                # Create kubeconfig
+                cat > /tmp/kubeconfig-$env_name << EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    insecure-skip-tls-verify: true
+    server: $SERVER
+  name: k3s-cluster
+contexts:
+- context:
+    cluster: k3s-cluster
+    namespace: gha-access
+    user: gha-deployer
+  name: gha-context
+current-context: gha-context
+users:
+- name: gha-deployer
+  user:
+    token: $TOKEN
+EOF
+                
+                # Test the kubeconfig
+                export KUBECONFIG=/tmp/kubeconfig-$env_name
+                if timeout 30 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+                  echo "✅ Kubeconfig test successful"
+                  
+                  # Store in GitHub secrets
+                  SECRET_NAME="KUBECONFIG_$(echo $env_name | tr '[:lower:]' '[:upper:]')"
+                  base64 -w 0 /tmp/kubeconfig-$env_name | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
+                  echo "✅ GitHub secret $SECRET_NAME updated"
+                  return 0
+                else
+                  echo "⚠️ Kubeconfig test failed, retrying..."
                 fi
-                sleep 10
-              done
+              else
+                echo "⚠️ Parameter Store data not ready, waiting..."
+              fi
+              
+              sleep 30
+            done
+            
+            echo "❌ Failed to setup kubeconfig for $env_name"
+            return 1
+          }
+          
+          # Setup kubeconfigs based on network tier
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            success=true
+            
+            if [ -n "$DEV_CLUSTER_IP" ]; then
+              echo "🔧 Setting up Dev kubeconfig..."
+              wait_for_k3s_and_setup "dev" "$DEV_CLUSTER_IP" || success=false
             fi
             
             if [ -n "$TEST_CLUSTER_IP" ]; then
-              echo "⏳ Setting up Test kubeconfig at $TEST_CLUSTER_IP..."
-              echo "⏳ Waiting for K3s installation to complete..."
-              sleep 60
-              for i in {1..15}; do
-                echo "Attempt $i/15 for Test cluster..."
-                if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
-                  ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$TEST_CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-test
-                  # Use public IP with insecure connection for external access
-                  sed "s/127.0.0.1/$TEST_CLUSTER_IP/g" /tmp/kubeconfig-test > /tmp/kubeconfig-test-temp
-                  sed '/server:/a\    insecure-skip-tls-verify: true' /tmp/kubeconfig-test-temp > /tmp/kubeconfig-test-fixed
-                  base64 -w 0 /tmp/kubeconfig-test-fixed | gh secret set KUBECONFIG_TEST --repo $GITHUB_REPOSITORY
-                  echo "✅ KUBECONFIG_TEST updated"
-                  break
-                fi
-                sleep 10
-              done
-              
-              # If test cluster failed, continue anyway
-              if [ $i -eq 15 ]; then
-                echo "⚠️ Test cluster setup failed after 15 attempts - continuing with dev only"
-              fi
+              echo "🔧 Setting up Test kubeconfig..."
+              wait_for_k3s_and_setup "test" "$TEST_CLUSTER_IP" || success=false
+            fi
+            
+            if [ "$success" = false ]; then
+              echo "❌ Some kubeconfig setups failed"
+              exit 1
             fi
           else
-            # Handle single cluster environments (higher, monitoring)
+            # Single cluster environments
             if [ -z "$CLUSTER_IP" ]; then
               echo "❌ Cluster IP not available"
               exit 1
             fi
             
-            echo "⏳ Waiting for K3s cluster at $CLUSTER_IP..."
-            echo "⏳ Waiting for K3s installation to complete..."
-            sleep 60
-            for i in {1..60}; do
-              if timeout 15 ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo test -f /etc/rancher/k3s/k3s.yaml && sudo systemctl is-active k3s" 2>/dev/null; then
-                ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no ubuntu@$CLUSTER_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig
-                sed "s/127.0.0.1/$CLUSTER_IP/g" /tmp/kubeconfig > /tmp/kubeconfig-fixed
-                
-                ENV_NAME="${{ github.event.inputs.network == 'higher' && 'PROD' || 'MONITORING' }}"
-                SECRET_NAME="KUBECONFIG_$ENV_NAME"
-                base64 -w 0 /tmp/kubeconfig-fixed | gh secret set $SECRET_NAME --repo $GITHUB_REPOSITORY
-                echo "✅ GitHub secret $SECRET_NAME updated"
-                break
-              fi
-              if [ $i -eq 30 ]; then
-                echo "❌ K3s not ready after 5 minutes"
-                exit 1
-              fi
-              sleep 10
-            done
+            ENV_NAME="${{ github.event.inputs.network }}"
+            echo "🔧 Setting up $ENV_NAME kubeconfig..."
+            wait_for_k3s_and_setup "$ENV_NAME" "$CLUSTER_IP"
           fi
           
-          rm -f /tmp/ssh_key /tmp/kubeconfig* 2>/dev/null || true
+          # Cleanup
+          rm -f /tmp/kubeconfig-* 2>/dev/null || true
+          
+          echo "🎉 Kubeconfig setup complete!"
 
   setup-parameter-store:
     needs: kubeconfig
@@ -489,8 +534,46 @@ jobs:
           
           echo "🎉 Kubernetes secrets setup complete!"
 
-  test-connectivity:
+  setup-cross-sg:
     needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets]
+    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    runs-on: self-hosted
+    timeout-minutes: 5
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Setup Cross-SG References
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+        run: |
+          echo "🔧 Setting up cross-SG references..."
+          
+          # Make script executable
+          chmod +x scripts/setup-cross-sg-references.sh
+          
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "Setting up cross-SG for dev environment..."
+            ./scripts/setup-cross-sg-references.sh dev
+            
+            echo "Setting up cross-SG for test environment..."
+            ./scripts/setup-cross-sg-references.sh test
+          else
+            ENV_NAME="${{ github.event.inputs.network }}"
+            echo "Setting up cross-SG for $ENV_NAME environment..."
+            ./scripts/setup-cross-sg-references.sh $ENV_NAME
+          fi
+          
+          echo "✅ Cross-SG references setup complete"
+
+  test-connectivity:
+    needs: [kubeconfig, setup-parameter-store, setup-k8s-secrets, setup-cross-sg]
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: self-hosted
     timeout-minutes: 15

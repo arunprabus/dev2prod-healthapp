@@ -52,8 +52,3 @@ variable "s3_bucket" {
   default     = ""
 }
 
-variable "db_security_group_id" {
-  description = "Database security group ID for cross-SG references"
-  type        = string
-  default     = null
-}

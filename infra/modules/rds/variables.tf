@@ -62,10 +62,9 @@ variable "multi_az" {
   default     = false
 }
 
-variable "app_security_group_ids" {
-  description = "Security group IDs of applications that need database access"
-  type        = list(string)
-  default     = []
+variable "vpc_cidr" {
+  description = "VPC CIDR block for database access"
+  type        = string
 }
 
 variable "snapshot_identifier" {

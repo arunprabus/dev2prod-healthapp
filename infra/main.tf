@@ -29,6 +29,9 @@ locals {
   # Map network tier to environment
   environment = var.network_tier == "lower" ? "dev" : var.network_tier == "higher" ? "prod" : "monitoring"
   
+  # Name prefix for resources
+  name_prefix = "health-app-${var.network_tier}"
+  
   # Define VPC identifiers for networks
   lower_env_vpc_name = "health-app-lower-vpc"
   higher_env_vpc_name = "health-app-higher-vpc"
@@ -99,7 +102,6 @@ module "k3s" {
   environment              = local.environment
   ssh_public_key           = var.ssh_public_key
   s3_bucket                = var.tf_state_bucket
-  db_security_group_id     = var.database_config != null ? module.rds[0].db_security_group_id : null
   tags                     = local.tags
 }
 
@@ -116,8 +118,7 @@ module "k3s_clusters" {
   environment              = each.key
   ssh_public_key           = var.ssh_public_key
   s3_bucket                = var.tf_state_bucket
-  runner_security_group_id = module.github_runner.runner_security_group_id
-  db_security_group_id     = var.database_config != null ? module.rds[0].db_security_group_id : null
+  runner_security_group_id = ""
   tags                     = merge(local.tags, { Environment = each.key })
 }
 
@@ -139,8 +140,8 @@ module "rds" {
   snapshot_identifier     = var.database_config.snapshot_identifier
   restore_from_snapshot   = var.restore_from_snapshot
   environment             = local.environment
-  # Pass app security group IDs for cross-SG references
-  app_security_group_ids  = var.network_tier == "lower" ? [for k, v in module.k3s_clusters : v.security_group_id] : (var.network_tier != "lower" && length(module.k3s) > 0 ? [module.k3s[0].security_group_id] : [])
+  # Pass VPC CIDR for database access
+  vpc_cidr                = module.vpc.vpc_cidr_block
   tags                    = var.tags
 }
 
@@ -167,14 +168,12 @@ module "github_runner" {
 
   network_tier     = var.network_tier
   vpc_id           = module.vpc.vpc_id
-  subnet_id        = module.vpc.public_subnet_ids[0]  # Use public subnet for internet access
+  subnet_id        = module.vpc.public_subnet_ids[0]
   ssh_public_key   = var.ssh_public_key
   repo_pat         = var.github_pat
   repo_name        = var.github_repo
   s3_bucket        = var.tf_state_bucket
   aws_region       = var.aws_region
-
-  depends_on = [module.vpc]
 }
 
 # Deploy Parameter Store for configuration management
@@ -195,10 +194,8 @@ module "monitoring" {
   environment     = local.environment
   vpc_id          = module.vpc.vpc_id
   subnet_ids      = module.vpc.public_subnet_ids
-  k3s_instance_ip = var.environment != "lower" ? module.k3s[0].instance_public_ip : ""
+  k3s_instance_ip = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].instance_public_ip : ""
   tags            = local.tags
-
-  depends_on = [module.k3s]
 }
 
 # Create VPC peering connections for monitoring environment
@@ -214,8 +211,6 @@ module "monitoring_to_lower_peering" {
   requestor_cidr          = module.vpc.vpc_cidr
   acceptor_cidr           = data.aws_vpc.lower_env[0].cidr_block
   tags                    = local.tags
-
-  depends_on = [module.vpc]
 }
 
 module "monitoring_to_higher_peering" {
@@ -229,8 +224,6 @@ module "monitoring_to_higher_peering" {
   requestor_cidr          = module.vpc.vpc_cidr
   acceptor_cidr           = data.aws_vpc.higher_env[0].cidr_block
   tags                    = local.tags
-
-  depends_on = [module.vpc]
 }
 
 # Output GitHub runner information
@@ -274,4 +267,25 @@ output "test_security_group_id" {
 output "k3s_security_group_id" {
   description = "K3s cluster security group ID (single cluster environments)"
   value       = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].security_group_id : null
+}
+
+output "vpc_cidr_block" {
+  description = "VPC CIDR block"
+  value       = module.vpc.vpc_cidr_block
+}
+
+# Cluster IP outputs for workflow
+output "dev_cluster_ip" {
+  description = "Dev cluster public IP"
+  value       = var.network_tier == "lower" && contains(keys(var.k8s_clusters), "dev") ? module.k3s_clusters["dev"].instance_public_ip : null
+}
+
+output "test_cluster_ip" {
+  description = "Test cluster public IP"
+  value       = var.network_tier == "lower" && contains(keys(var.k8s_clusters), "test") ? module.k3s_clusters["test"].instance_public_ip : null
+}
+
+output "k3s_instance_ip" {
+  description = "K3s instance public IP (single cluster environments)"
+  value       = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].instance_public_ip : null
 }

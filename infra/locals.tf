@@ -7,7 +7,7 @@ locals {
   common_tags = {
     # Required tags (Mandatory)
     Project         = local.project_name
-    Environment     = var.environment
+    Environment     = var.network_tier
     ManagedBy      = "terraform"
     Owner          = var.team_name
     CostCenter     = var.cost_center
@@ -26,14 +26,14 @@ locals {
     TerraformVersion  = "1.6.0"
     
     # Operational tags
-    Schedule          = var.environment == "prod" ? "24x7" : "business-hours"
-    AutoShutdown      = var.environment == "prod" ? "disabled" : "enabled"
-    MonitoringLevel   = var.environment == "prod" ? "high" : "medium"
-    AlertingLevel     = var.environment == "prod" ? "critical" : "medium"
+    Schedule          = var.network_tier == "higher" ? "24x7" : "business-hours"
+    AutoShutdown      = var.network_tier == "higher" ? "disabled" : "enabled"
+    MonitoringLevel   = var.network_tier == "higher" ? "high" : "medium"
+    AlertingLevel     = var.network_tier == "higher" ? "critical" : "medium"
   }
   
   # Naming conventions
-  name_prefix = "${local.project_name}-${var.environment}"
+  name_prefix = "${local.project_name}-${var.network_tier}"
   
   # Resource names
   vpc_name              = "${local.name_prefix}-vpc"
@@ -49,11 +49,11 @@ locals {
   # Kubernetes labels
   k8s_labels = {
     "app.kubernetes.io/name"       = "health-api"
-    "app.kubernetes.io/instance"   = "${local.project_name}-${var.environment}"
+    "app.kubernetes.io/instance"   = "${local.project_name}-${var.network_tier}"
     "app.kubernetes.io/component"  = "backend"
     "app.kubernetes.io/part-of"    = local.project_name
     "app.kubernetes.io/managed-by" = "terraform"
-    "environment"                  = var.environment
+    "environment"                  = var.network_tier
     "project"                      = local.project_name
     "team"                         = var.team_name
     "cost-center"                  = var.cost_center

@@ -66,8 +66,10 @@ resource "aws_security_group" "k3s" {
   })
 }
 
-# Security group rules for runner access (always created)
+# Security group rules for runner access (conditional)
 resource "aws_security_group_rule" "k3s_ssh_from_runner" {
+  count = var.runner_security_group_id != "" ? 1 : 0
+  
   type                     = "ingress"
   from_port                = 22
   to_port                  = 22
@@ -78,6 +80,8 @@ resource "aws_security_group_rule" "k3s_ssh_from_runner" {
 }
 
 resource "aws_security_group_rule" "k3s_api_from_runner" {
+  count = var.runner_security_group_id != "" ? 1 : 0
+  
   type                     = "ingress"
   from_port                = 6443
   to_port                  = 6443

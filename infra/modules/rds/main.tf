@@ -16,8 +16,13 @@ resource "aws_security_group" "db" {
   name_prefix = "${var.identifier}-db-"
   vpc_id      = var.vpc_id
 
-  # No ingress rules defined here - will be added via separate rules
-  # to support cross-SG references
+  ingress {
+    from_port   = var.engine == "postgres" ? 5432 : 3306
+    to_port     = var.engine == "postgres" ? 5432 : 3306
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Database access from VPC"
+  }
 
   egress {
     from_port   = 0
@@ -29,19 +34,6 @@ resource "aws_security_group" "db" {
   tags = merge(var.tags, {
     Name = "${var.identifier}-db-sg"
   })
-}
-
-# Ingress rule allowing access from app security groups
-resource "aws_security_group_rule" "db_ingress_from_app" {
-  count = length(var.app_security_group_ids)
-  
-  type                     = "ingress"
-  from_port                = var.engine == "postgres" ? 5432 : 3306
-  to_port                  = var.engine == "postgres" ? 5432 : 3306
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.db.id
-  source_security_group_id = var.app_security_group_ids[count.index]
-  description              = "Database access from app SG ${count.index}"
 }
 
 resource "aws_db_parameter_group" "health_db" {
