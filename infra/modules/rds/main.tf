@@ -5,6 +5,7 @@ resource "aws_db_subnet_group" "health_db" {
 
   lifecycle {
     ignore_changes = [name, subnet_ids]
+    prevent_destroy = true
   }
 
   tags = merge(var.tags, {
@@ -46,6 +47,7 @@ resource "aws_db_parameter_group" "health_db" {
 
   lifecycle {
     ignore_changes = [name]
+    prevent_destroy = true
   }
 
   tags = var.tags
