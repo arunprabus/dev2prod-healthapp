@@ -111,6 +111,14 @@ jobs:
             sleep 30
             
             echo "🧹 Manual cleanup of persistent resources..."
+            # Force delete RDS instances first
+            aws rds delete-db-instance --db-instance-identifier health-app-shared-db --skip-final-snapshot --delete-automated-backups || true
+            
+            # Wait for RDS deletion
+            echo "⏳ Waiting for RDS deletion..."
+            sleep 60
+            
+            # Then delete parameter group and subnet group
             aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
             aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group || true
             aws kms delete-alias --alias-name alias/health-app-rds-export || true
