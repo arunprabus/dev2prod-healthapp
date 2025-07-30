@@ -147,6 +147,19 @@ jobs:
             echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
           fi
       
+      - name: Import Existing Resources
+        if: github.event.inputs.action == 'deploy'
+        working-directory: infra
+        run: |
+          echo "🔄 Importing existing RDS resources if they exist..."
+          
+          # Import existing RDS resources
+          terraform import 'module.rds[0].aws_db_subnet_group.health_db' health-app-shared-db-subnet-group 2>/dev/null || echo "Subnet group doesn't exist, will create"
+          terraform import 'module.rds[0].aws_db_parameter_group.health_db' health-app-shared-db-params 2>/dev/null || echo "Parameter group doesn't exist, will create"
+          terraform import 'module.rds[0].aws_db_instance.health_db' health-app-shared-db 2>/dev/null || echo "RDS instance doesn't exist, will create"
+          
+          echo "✅ Import step completed"
+      
       - name: Incremental Deploy
         id: deploy
         if: github.event.inputs.action == 'deploy'
