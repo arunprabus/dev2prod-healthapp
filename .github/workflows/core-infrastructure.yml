@@ -223,7 +223,7 @@ jobs:
           
           echo "✅ Post-deployment fixes complete!"
 
-      - name: Terraform Destroy
+      - name: Pre-Destroy RDS Cleanup
         if: github.event.inputs.action == 'destroy'
         working-directory: infra
         run: |
@@ -231,6 +231,31 @@ jobs:
             echo "❌ Type 'DESTROY' to confirm"
             exit 1
           fi
+          
+          echo "🧹 Pre-destroy RDS cleanup to handle ENI issues..."
+          
+          # Target destroy RDS instances first to allow ENI cleanup
+          terraform destroy -target="module.rds" \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve || echo "RDS destroy may have failed, continuing..."
+          
+          # Wait for RDS ENI cleanup
+          echo "⏳ Waiting 60 seconds for RDS ENI cleanup..."
+          sleep 60
+          
+          # Remove RDS from state if it fails
+          terraform state rm module.rds.aws_db_instance.main || true
+          terraform state rm module.rds.aws_db_subnet_group.main || true
+          terraform state rm module.rds.aws_db_parameter_group.main || true
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        working-directory: infra
+        run: |
+          echo "🔥 Destroying remaining infrastructure..."
           
           terraform destroy \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
