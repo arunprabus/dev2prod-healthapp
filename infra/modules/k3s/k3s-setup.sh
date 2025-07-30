@@ -9,8 +9,10 @@ AWS_REGION="${aws_region}"
 
 echo "☸️ Setting up K3s Kubernetes cluster..."
 
-# Update system
-apt-get update
+# Update system (cached)
+if [ ! -f "/var/cache/apt/pkgcache.bin" ] || [ $(find /var/cache/apt/pkgcache.bin -mtime +1) ]; then
+  apt-get update
+fi
 apt-get install -y curl docker.io mysql-client awscli
 
 # Install SSM Agent (single installation with proper error handling)
@@ -87,11 +89,15 @@ systemctl enable docker
 systemctl start docker
 usermod -aG docker ubuntu
 
-# Install kubectl
+# Install kubectl (cached)
 echo "☸️ Installing kubectl..."
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv kubectl /usr/local/bin/
+if ! command -v kubectl >/dev/null; then
+  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+  chmod +x kubectl
+  mv kubectl /usr/local/bin/
+else
+  echo "✅ kubectl already installed"
+fi
 
 # Set kubeconfig and wait for API server
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -263,9 +269,13 @@ elif [[ "$ENVIRONMENT" == "higher" ]]; then
     -n health-app-prod || true
 fi
 
-# Install Helm
+# Install Helm (cached)
 echo "⚓ Installing Helm..."
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+if ! command -v helm >/dev/null; then
+  curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+else
+  echo "✅ Helm already installed"
+fi
 
 # Create a simple deployment for testing
 echo "🧪 Creating test deployment..."

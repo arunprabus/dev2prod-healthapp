@@ -7,27 +7,42 @@ S3_BUCKET="${s3_bucket}"
 
 echo "🚀 Setting up GitHub Runner..."
 
-# Update system
-apt-get update
+# Update system (cached)
+if [ ! -f "/var/cache/apt/pkgcache.bin" ] || [ $(find /var/cache/apt/pkgcache.bin -mtime +1) ]; then
+  apt-get update
+fi
 apt-get install -y curl wget unzip docker.io git jq
 
-# Install Terraform
+# Install Terraform (cached)
 echo "📦 Installing Terraform..."
-wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
-apt-get update && apt-get install -y terraform
+if ! command -v terraform >/dev/null; then
+  wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
+  echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
+  apt-get update && apt-get install -y terraform
+else
+  echo "✅ Terraform already installed"
+fi
 
-# Install kubectl
+# Install kubectl (cached)
 echo "☸️ Installing kubectl..."
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv kubectl /usr/local/bin/
+if ! command -v kubectl >/dev/null; then
+  curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+  chmod +x kubectl
+  mv kubectl /usr/local/bin/
+else
+  echo "✅ kubectl already installed"
+fi
 
-# Install AWS CLI v2
+# Install AWS CLI v2 (cached)
 echo "☁️ Installing AWS CLI..."
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip
-./aws/install
+if ! command -v aws >/dev/null; then
+  curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  unzip awscliv2.zip
+  ./aws/install
+  rm -rf aws awscliv2.zip
+else
+  echo "✅ AWS CLI already installed"
+fi
 
 # Install SSM Agent (single installation with proper error handling)
 echo "🔧 Installing SSM Agent..."
@@ -52,10 +67,14 @@ else
     echo "✅ SSM Agent already running"
 fi
 
-# Install Docker Compose
+# Install Docker Compose (cached)
 echo "🐳 Installing Docker Compose..."
-curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
+if ! command -v docker-compose >/dev/null; then
+  curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+  chmod +x /usr/local/bin/docker-compose
+else
+  echo "✅ Docker Compose already installed"
+fi
 
 # Install Node.js
 echo "📦 Installing Node.js..."
@@ -72,8 +91,12 @@ echo "🏃 Installing GitHub Actions runner..."
 cd /home/ubuntu
 mkdir -p actions-runner && cd actions-runner
 
-# Download latest runner
-curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
+# Download latest runner (cached)
+if [ ! -f "actions-runner-linux-x64-2.311.0.tar.gz" ]; then
+  curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
+else
+  echo "✅ Runner package already downloaded"
+fi
 tar xzf ./actions-runner-linux-x64-2.311.0.tar.gz
 
 # Fix ownership
