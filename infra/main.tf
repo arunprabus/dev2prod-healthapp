@@ -100,6 +100,7 @@ module "k3s" {
   ssh_public_key           = var.ssh_public_key
   s3_bucket                = var.tf_state_bucket
   aws_region               = var.aws_region
+  runner_security_group_id = module.github_runner.runner_security_group_id
   tags                     = local.tags
 }
 
@@ -117,7 +118,7 @@ module "k3s_clusters" {
   ssh_public_key           = var.ssh_public_key
   s3_bucket                = var.tf_state_bucket
   aws_region               = var.aws_region
-  runner_security_group_id = ""
+  runner_security_group_id = module.github_runner.runner_security_group_id
   tags                     = merge(local.tags, { Environment = each.key })
 }
 

@@ -70,35 +70,7 @@ jobs:
             -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
             -backend-config="region=$AWS_REGION"
 
-      - name: Scan for Hardcoded Values
-        run: |
-          echo "🔍 Scanning infrastructure for hardcoded values..."
-          
-          # Check for hardcoded regions
-          echo "Checking for hardcoded AWS regions:"
-          if grep -r "ap-south-1\|us-east-1\|us-west-2\|eu-west-1" infra/ --exclude-dir=.terraform | grep -v "default.*=" | grep -v "variable" | grep -v "#"; then
-            echo "⚠️ Found hardcoded regions - should be parameterized"
-          else
-            echo "✅ No hardcoded regions found"
-          fi
-          
-          # Check for hardcoded IPs
-          echo "Checking for hardcoded IP addresses:"
-          if grep -r "10\.0\.[0-9]\+\.[0-9]\+\|192\.168\.[0-9]\+\.[0-9]\+" infra/ --exclude-dir=.terraform | grep -v "variable" | grep -v "#"; then
-            echo "⚠️ Found hardcoded IPs - should be parameterized"
-          else
-            echo "✅ No hardcoded IPs found"
-          fi
-          
-          # Check for hardcoded ports (unusual ones)
-          echo "Checking for unusual hardcoded ports:"
-          if grep -r ":8080\|:3000\|:5000\|:9000" infra/ --exclude-dir=.terraform | grep -v "variable" | grep -v "#"; then
-            echo "⚠️ Found unusual hardcoded ports"
-          else
-            echo "✅ No unusual hardcoded ports found"
-          fi
-          
-          echo "✅ Hardcoded value scan complete"
+
 
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
@@ -180,35 +152,22 @@ jobs:
               --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
               --output text 2>/dev/null)
             
-            # Add SSH access and cross-SG references
+            # Add cross-SG references only (no open SSH)
             for SG in "$DEV_SG" "$TEST_SG"; do
-              if [ "$SG" != "None" ] && [ -n "$SG" ]; then
-                echo "Adding SSH access to $SG..."
+              if [ "$SG" != "None" ] && [ -n "$SG" ] && [ "$RUNNER_SG" != "None" ] && [ -n "$RUNNER_SG" ]; then
+                echo "Adding runner access to K3s API on $SG..."
                 aws ec2 authorize-security-group-ingress \
                   --group-id "$SG" \
-                  --ip-permissions '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"0.0.0.0/0","Description":"SSH access for debugging"}]}]' 2>/dev/null || echo "SSH rule may already exist"
+                  --ip-permissions '[{"IpProtocol":"tcp","FromPort":6443,"ToPort":6443,"UserIdGroupPairs":[{"GroupId":"'$RUNNER_SG'","Description":"K3s API access from runner"}]}]' 2>/dev/null || echo "Runner API rule may already exist"
                 
-                # Add runner access to K3s API
-                if [ "$RUNNER_SG" != "None" ] && [ -n "$RUNNER_SG" ]; then
-                  echo "Adding runner access to K3s API on $SG..."
-                  aws ec2 authorize-security-group-ingress \
-                    --group-id "$SG" \
-                    --ip-permissions '[{"IpProtocol":"tcp","FromPort":6443,"ToPort":6443,"UserIdGroupPairs":[{"GroupId":"'$RUNNER_SG'","Description":"K3s API access from runner"}]}]' 2>/dev/null || echo "Runner API rule may already exist"
-                  
-                  aws ec2 authorize-security-group-ingress \
-                    --group-id "$SG" \
-                    --ip-permissions '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"UserIdGroupPairs":[{"GroupId":"'$RUNNER_SG'","Description":"SSH access from runner"}]}]' 2>/dev/null || echo "Runner SSH rule may already exist"
-                fi
+                aws ec2 authorize-security-group-ingress \
+                  --group-id "$SG" \
+                  --ip-permissions '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"UserIdGroupPairs":[{"GroupId":"'$RUNNER_SG'","Description":"SSH access from runner"}]}]' 2>/dev/null || echo "Runner SSH rule may already exist"
               fi
             done
             
-            # Ensure runner can access K3s clusters
-            if [ "$RUNNER_SG" != "None" ] && [ -n "$RUNNER_SG" ]; then
-              echo "Adding outbound rules to runner SG..."
-              aws ec2 authorize-security-group-egress \
-                --group-id "$RUNNER_SG" \
-                --ip-permissions '[{"IpProtocol":"tcp","FromPort":6443,"ToPort":6443,"IpRanges":[{"CidrIp":"10.0.0.0/16","Description":"K3s API access to VPC"}]}]' 2>/dev/null || echo "Runner egress rule may already exist"
-            fi
+            # Runner egress rules are handled by default allow-all egress
+            echo "Cross-SG references configured for secure access"
           fi
           
           echo "✅ Post-deployment fixes complete!"

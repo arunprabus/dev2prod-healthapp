@@ -12,23 +12,7 @@ resource "aws_security_group" "k3s" {
     description = "SSH access from VPC only"
   }
 
-  # K3s API server - Allow GitHub Actions access
-  ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "K3s API server access"
-  }
-  
-  # K3s API server - Allow VPC internal access (GitHub runners)
-  ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"]
-    description = "K3s API server access from VPC (GitHub runners)"
-  }
+  # K3s API server access handled by separate rule below
   
 
 
@@ -47,12 +31,13 @@ resource "aws_security_group" "k3s" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # NodePort range
+  # NodePort range - Restricted to VPC
   ingress {
     from_port   = 30000
     to_port     = 32767
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = [var.vpc_cidr]
+    description = "NodePort access from VPC only"
   }
 
   egress {
@@ -71,10 +56,19 @@ resource "aws_security_group" "k3s" {
   }
 }
 
-# Security group rules for runner access (conditional)
+# K3s API access from runner (required)
+resource "aws_security_group_rule" "k3s_api_from_runner" {
+  type                     = "ingress"
+  from_port                = 6443
+  to_port                  = 6443
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.k3s.id
+  source_security_group_id = var.runner_security_group_id
+  description              = "K3s API from GitHub runner only"
+}
+
+# SSH access from runner
 resource "aws_security_group_rule" "k3s_ssh_from_runner" {
-  count = var.runner_security_group_id != "" ? 1 : 0
-  
   type                     = "ingress"
   from_port                = 22
   to_port                  = 22
@@ -82,18 +76,6 @@ resource "aws_security_group_rule" "k3s_ssh_from_runner" {
   security_group_id        = aws_security_group.k3s.id
   source_security_group_id = var.runner_security_group_id
   description              = "SSH from GitHub runner"
-}
-
-resource "aws_security_group_rule" "k3s_api_from_runner" {
-  count = var.runner_security_group_id != "" ? 1 : 0
-  
-  type                     = "ingress"
-  from_port                = 6443
-  to_port                  = 6443
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.k3s.id
-  source_security_group_id = var.runner_security_group_id
-  description              = "K3s API from GitHub runner"
 }
 
 # Key pair for SSH access
@@ -222,223 +204,14 @@ resource "aws_instance" "k3s" {
   subnet_id             = var.subnet_id
   iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
 
-  user_data = <<-EOF
-#!/bin/bash
-
-# Set variables from Terraform
-ENVIRONMENT="${var.environment}"
-S3_BUCKET="${var.s3_bucket}"
-
-apt-get update
-apt-get install -y curl docker.io mysql-client awscli
-
-# Install AWS Systems Manager Agent with error handling
-echo "Installing SSM Agent..."
-cd /tmp
-wget -q https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
-if [ $? -eq 0 ]; then
-  dpkg -i amazon-ssm-agent.deb
-  systemctl enable amazon-ssm-agent
-  systemctl start amazon-ssm-agent
-  systemctl status amazon-ssm-agent --no-pager
-  echo "SSM Agent installation completed"
-else
-  echo "SSM Agent download failed, trying snap installation..."
-  snap install amazon-ssm-agent --classic
-  systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-  systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
-fi
-
-# Install K3s with write permissions and bind to all interfaces
-# Get public IP with retry logic for reliability
-echo "Getting public IP address..."
-for i in {1..10}; do
-  PUBLIC_IP=$(curl -s --connect-timeout 5 http://169.254.169.254/latest/meta-data/public-ipv4)
-  if [[ -n "$PUBLIC_IP" ]] && [[ "$PUBLIC_IP" != "" ]]; then
-    echo "✅ Got public IP: $PUBLIC_IP (attempt $i)"
-    break
-  fi
-  echo "⏳ Waiting for public IP... (attempt $i/10)"
-  sleep 5
-  if [ $i -eq 10 ]; then
-    echo "❌ Failed to get public IP after 10 attempts"
-    exit 1
-  fi
-done
-
-# Install K3s with error handling
-echo "Downloading and installing K3s..."
-if curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644 --bind-address=0.0.0.0 --advertise-address=$PUBLIC_IP; then
-  echo "✅ K3s installation completed"
-else
-  echo "❌ K3s installation failed"
-  exit 1
-fi
-
-# Wait for K3s service to be active
-echo "Waiting for K3s service to start..."
-for i in {1..30}; do
-  if systemctl is-active --quiet k3s; then
-    echo "✅ K3s service is active"
-    break
-  fi
-  echo "⏳ Waiting for K3s service... ($i/30)"
-  sleep 10
-  if [ $i -eq 30 ]; then
-    echo "❌ K3s service failed to start"
-    systemctl status k3s --no-pager
-    exit 1
-  fi
-done
-
-# Setup Docker
-systemctl enable docker
-systemctl start docker
-usermod -aG docker ubuntu
-
-# Install kubectl
-curl -LO "https://dl.k8s.io/release/$$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv kubectl /usr/local/bin/
-
-# Set kubeconfig and wait for API server
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-echo "Waiting for K3s API server to be ready..."
-for i in {1..60}; do
-  if kubectl get nodes --request-timeout=5s >/dev/null 2>&1; then
-    echo "✅ K3s API server is ready"
-    break
-  fi
-  echo "⏳ Waiting for API server... ($i/60)"
-  sleep 5
-  if [ $i -eq 60 ]; then
-    echo "❌ K3s API server not ready"
-    kubectl get nodes --request-timeout=5s || true
-    exit 1
-  fi
-done
-
-# Create namespace and service account with error handling
-echo "Creating namespace and service account..."
-if kubectl create namespace gha-access 2>/dev/null; then
-  echo "✅ Namespace created"
-else
-  echo "⚠️ Namespace already exists or creation failed"
-fi
-
-if kubectl create serviceaccount gha-deployer -n gha-access 2>/dev/null; then
-  echo "✅ Service account created"
-else
-  echo "❌ Service account creation failed"
-  kubectl get serviceaccount -n gha-access
-  exit 1
-fi
-
-# Create role with deployment permissions
-echo "Creating role with deployment permissions..."
-if kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access 2>/dev/null; then
-  echo "✅ Role created"
-else
-  echo "⚠️ Role already exists or creation failed"
-fi
-
-if kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access 2>/dev/null; then
-  echo "✅ Role binding created"
-else
-  echo "⚠️ Role binding already exists or creation failed"
-fi
-
-# Wait a moment for service account to be ready
-sleep 5
-
-# Generate dynamic token with retry
-echo "Generating dynamic token..."
-for i in {1..5}; do
-  TOKEN=$$(kubectl create token gha-deployer -n gha-access --duration=24h 2>/dev/null)
-  if [[ -n "$$TOKEN" ]]; then
-    echo "✅ Token generated successfully"
-    break
-  fi
-  echo "⏳ Token generation attempt $i/5 failed, retrying..."
-  sleep 10
-  if [ $i -eq 5 ]; then
-    echo "❌ Failed to generate token after 5 attempts"
-    kubectl get serviceaccount gha-deployer -n gha-access
-    exit 1
-  fi
-done
-
-if [[ -n "$$TOKEN" ]]; then
-  # Use the reliable public IP we already have
-  echo "Using public IP for Parameter Store: $$PUBLIC_IP"
-  
-  # Store kubeconfig data in Parameter Store
-  echo "Storing kubeconfig data in Parameter Store..."
-  AWS_REGION="${var.aws_region}"
-  
-  aws ssm put-parameter \
-    --name "/$$ENVIRONMENT/health-app/kubeconfig/server" \
-    --value "https://$$PUBLIC_IP:6443" \
-    --type "String" \
-    --overwrite \
-    --region $$AWS_REGION
-  
-  aws ssm put-parameter \
-    --name "/$$ENVIRONMENT/health-app/kubeconfig/token" \
-    --value "$$TOKEN" \
-    --type "SecureString" \
-    --overwrite \
-    --region $$AWS_REGION
-  
-  # Store cluster name for reference
-  aws ssm put-parameter \
-    --name "/$$ENVIRONMENT/health-app/kubeconfig/cluster-name" \
-    --value "k3s-cluster" \
-    --type "String" \
-    --overwrite \
-    --region $$AWS_REGION
-  
-  echo "SUCCESS: Kubeconfig data stored in Parameter Store"
-  
-  # Create kubeconfig with dynamic token
-  cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://$$PUBLIC_IP:6443
-  name: k3s-cluster
-contexts:
-- context:
-    cluster: k3s-cluster
-    namespace: gha-access
-    user: gha-deployer
-  name: gha-context
-current-context: gha-context
-users:
-- name: gha-deployer
-  user:
-    token: $$TOKEN
-KUBE_EOF
-  
-  # Upload to S3 (backup)
-  if [[ -n "$$S3_BUCKET" ]]; then
-    echo "Uploading kubeconfig to S3..."
-    aws s3 cp /tmp/gha-kubeconfig.yaml s3://$$S3_BUCKET/kubeconfig/$$ENVIRONMENT-gha.yaml
-    echo "SUCCESS: Service account kubeconfig uploaded to S3"
-  fi
-else
-  echo "ERROR: Failed to generate token"
-fi
-
-# Local access
-mkdir -p /home/ubuntu/.kube
-cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-chown ubuntu:ubuntu /home/ubuntu/.kube/config
-
-echo "K3s cluster ready for $$ENVIRONMENT environment!"
-EOF
+  user_data = base64encode(templatefile("${path.module}/k3s-setup.sh", {
+    environment    = var.environment
+    cluster_name   = "${var.name_prefix}-cluster"
+    db_endpoint    = "placeholder-db-endpoint"
+    metadata_ip    = var.metadata_ip
+    s3_bucket      = var.s3_bucket
+    aws_region     = var.aws_region
+  }))
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-k3s-node-v2" })
 }

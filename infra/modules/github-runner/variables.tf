@@ -42,3 +42,9 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
+variable "metadata_ip" {
+  description = "AWS metadata service IP"
+  type        = string
+  default     = "169.254.169.254"
+}
+

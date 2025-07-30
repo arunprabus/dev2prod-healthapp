@@ -41,9 +41,8 @@ variable "tags" {
 }
 
 variable "runner_security_group_id" {
-  description = "Security group ID of the GitHub runner"
+  description = "Security group ID of the GitHub runner (required for K3s API access)"
   type        = string
-  default     = ""
 }
 
 variable "s3_bucket" {
@@ -56,5 +55,11 @@ variable "aws_region" {
   description = "AWS region"
   type        = string
   default     = "ap-south-1"
+}
+
+variable "metadata_ip" {
+  description = "AWS metadata service IP"
+  type        = string
+  default     = "169.254.169.254"
 }
 

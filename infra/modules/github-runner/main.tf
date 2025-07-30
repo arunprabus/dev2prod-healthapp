@@ -37,11 +37,13 @@ resource "aws_instance" "github_runner" {
   iam_instance_profile       = aws_iam_instance_profile.runner_profile.name
   
   user_data_replace_on_change = true
-  user_data = base64encode(templatefile("${path.module}/user_data_minimal.sh", {
+  user_data = base64encode(templatefile("${path.module}/runner-setup.sh", {
     github_token = var.repo_pat
     github_repo  = var.repo_name
     network_tier = var.network_tier
     aws_region   = var.aws_region
+    metadata_ip  = var.metadata_ip
+    s3_bucket    = var.s3_bucket
   }))
   
   tags = {
