@@ -227,8 +227,8 @@ jobs:
         if: github.event.inputs.action == 'destroy'
         working-directory: infra
         run: |
-          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
-            echo "❌ Type 'DESTROY' to confirm"
+          if [ "${{ github.event.inputs.action }}" == "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "❌ Type 'DESTROY' to confirm explicit destroy action"
             exit 1
           fi
           
