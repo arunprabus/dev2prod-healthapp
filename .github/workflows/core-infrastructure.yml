@@ -263,9 +263,29 @@ jobs:
           terraform state rm 'module.vpc.aws_subnet.public[0]' || true
           terraform state rm 'module.vpc.aws_subnet.public[1]' || true
           
-          # Additional cleanup
-          aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
-          aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group || true
+          # Thorough cleanup of DB resources
+          echo "🧹 Cleaning up DB parameter and subnet groups..."
+          
+          # Wait longer for RDS cleanup
+          sleep 30
+          
+          # Delete parameter groups
+          aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || echo "Parameter group may not exist"
+          
+          # Delete subnet groups (wait for RDS to fully release)
+          for i in {1..10}; do
+            if aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group 2>/dev/null; then
+              echo "✅ DB subnet group deleted"
+              break
+            fi
+            echo "Waiting for DB subnet group deletion... ($i/10)"
+            sleep 10
+          done
+          
+          # Import existing resources if they exist
+          echo "🔄 Importing any existing resources..."
+          terraform import 'module.rds[0].aws_db_subnet_group.health_db' health-app-shared-db-subnet-group || echo "No existing subnet group to import"
+          terraform import 'module.rds[0].aws_db_parameter_group.health_db' health-app-shared-db-params || echo "No existing parameter group to import"
           
           echo "⏳ Final wait for ENI cleanup..."
           sleep 30
