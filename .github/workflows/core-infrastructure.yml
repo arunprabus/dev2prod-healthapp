@@ -256,6 +256,13 @@ jobs:
           terraform state rm 'module.rds[0].aws_db_parameter_group.main' || true
           terraform state rm 'module.rds[0].aws_security_group.db' || true
           
+          # Remove problematic subnets from state
+          echo "🗑️ Removing problematic subnets from Terraform state..."
+          terraform state rm 'module.vpc.aws_subnet.private[0]' || true
+          terraform state rm 'module.vpc.aws_subnet.private[1]' || true
+          terraform state rm 'module.vpc.aws_subnet.public[0]' || true
+          terraform state rm 'module.vpc.aws_subnet.public[1]' || true
+          
           # Additional cleanup
           aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
           aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group || true
