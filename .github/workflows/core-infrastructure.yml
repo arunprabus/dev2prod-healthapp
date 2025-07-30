@@ -114,9 +114,16 @@ jobs:
             # Force delete RDS instances first
             aws rds delete-db-instance --db-instance-identifier health-app-shared-db --skip-final-snapshot --delete-automated-backups || true
             
-            # Wait for RDS deletion
+            # Wait for RDS deletion with status check
             echo "⏳ Waiting for RDS deletion..."
-            sleep 60
+            for i in {1..20}; do
+              if ! aws rds describe-db-instances --db-instance-identifier health-app-shared-db >/dev/null 2>&1; then
+                echo "✅ RDS instance deleted"
+                break
+              fi
+              echo "Waiting for RDS deletion... ($i/20)"
+              sleep 30
+            done
             
             # Then delete parameter group and subnet group
             aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
