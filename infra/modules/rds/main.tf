@@ -5,7 +5,7 @@ resource "aws_db_subnet_group" "health_db" {
 
   lifecycle {
     ignore_changes = [name, subnet_ids]
-    prevent_destroy = true
+    create_before_destroy = true
   }
 
   tags = merge(var.tags, {
@@ -47,7 +47,7 @@ resource "aws_db_parameter_group" "health_db" {
 
   lifecycle {
     ignore_changes = [name]
-    prevent_destroy = true
+    create_before_destroy = true
   }
 
   tags = var.tags
@@ -81,6 +81,8 @@ resource "aws_db_instance" "health_db" {
   
   skip_final_snapshot = true
   deletion_protection = false
+  
+  depends_on = [aws_db_parameter_group.health_db, aws_db_subnet_group.health_db]
   
   tags = merge(var.tags, {
     Name = var.identifier
