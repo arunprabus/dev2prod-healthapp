@@ -249,19 +249,28 @@ jobs:
             sleep 15
           done
           
-          # Force remove from Terraform state
-          echo "🗑️ Removing RDS resources from Terraform state..."
-          terraform state rm 'module.rds[0].aws_db_instance.main' || true
-          terraform state rm 'module.rds[0].aws_db_subnet_group.main' || true
-          terraform state rm 'module.rds[0].aws_db_parameter_group.main' || true
-          terraform state rm 'module.rds[0].aws_security_group.db' || true
+          # Check and remove from Terraform state
+          echo "🗑️ Checking and removing resources from Terraform state..."
           
-          # Remove problematic subnets from state
-          echo "🗑️ Removing problematic subnets from Terraform state..."
-          terraform state rm 'module.vpc.aws_subnet.private[0]' || true
-          terraform state rm 'module.vpc.aws_subnet.private[1]' || true
-          terraform state rm 'module.vpc.aws_subnet.public[0]' || true
-          terraform state rm 'module.vpc.aws_subnet.public[1]' || true
+          # List current state
+          echo "Current Terraform state:"
+          terraform state list || echo "No state found"
+          
+          # Remove RDS resources if they exist
+          for resource in 'module.rds[0].aws_db_instance.main' 'module.rds[0].aws_db_subnet_group.main' 'module.rds[0].aws_db_parameter_group.main' 'module.rds[0].aws_security_group.db'; do
+            if terraform state show "$resource" >/dev/null 2>&1; then
+              echo "Removing $resource from state"
+              terraform state rm "$resource"
+            fi
+          done
+          
+          # Remove subnet resources if they exist
+          for resource in 'module.vpc.aws_subnet.private[0]' 'module.vpc.aws_subnet.private[1]' 'module.vpc.aws_subnet.public[0]' 'module.vpc.aws_subnet.public[1]'; do
+            if terraform state show "$resource" >/dev/null 2>&1; then
+              echo "Removing $resource from state"
+              terraform state rm "$resource"
+            fi
+          done
           
           # Thorough cleanup of DB resources
           echo "🧹 Cleaning up DB parameter and subnet groups..."
