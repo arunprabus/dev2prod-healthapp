@@ -291,8 +291,10 @@ jobs:
             sleep 10
           done
           
-          # Skip import for destroy operation
-          echo "ℹ️ Skipping resource import for destroy operation"
+          # Import existing RDS resources if they exist
+          echo "🔄 Importing existing RDS resources..."
+          terraform import 'module.rds[0].aws_db_subnet_group.health_db' health-app-shared-db-subnet-group || echo "No existing subnet group to import"
+          terraform import 'module.rds[0].aws_db_parameter_group.health_db' health-app-shared-db-params || echo "No existing parameter group to import"
           
           echo "⏳ Final wait for ENI cleanup..."
           sleep 30
