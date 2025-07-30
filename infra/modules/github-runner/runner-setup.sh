@@ -2,8 +2,8 @@
 set -e
 
 # Variables
-METADATA_IP="${metadata_ip:-169.254.169.254}"
-S3_BUCKET="${s3_bucket:-health-app-terraform-state}"
+METADATA_IP="${metadata_ip}"
+S3_BUCKET="${s3_bucket}"
 
 echo "🚀 Setting up GitHub Runner..."
 

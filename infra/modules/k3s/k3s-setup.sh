@@ -2,7 +2,7 @@
 set -e
 
 # Variables
-METADATA_IP="${metadata_ip:-169.254.169.254}"
+METADATA_IP="${metadata_ip}"
 ENVIRONMENT="${environment}"
 S3_BUCKET="${s3_bucket}"
 AWS_REGION="${aws_region}"
