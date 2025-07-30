@@ -232,24 +232,36 @@ jobs:
             exit 1
           fi
           
-          echo "🧹 Pre-destroy RDS cleanup to handle ENI issues..."
+          echo "🧹 Aggressive RDS cleanup to handle ENI issues..."
           
-          # Target destroy RDS instances first to allow ENI cleanup
-          terraform destroy -target="module.rds" \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.REPO_PAT }}" \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -auto-approve || echo "RDS destroy may have failed, continuing..."
+          # Manual RDS deletion first
+          echo "🗑️ Manual RDS instance deletion..."
+          aws rds delete-db-instance --db-instance-identifier health-app-shared-db --skip-final-snapshot --delete-automated-backups || echo "RDS instance may not exist"
           
-          # Wait for RDS ENI cleanup
-          echo "⏳ Waiting 60 seconds for RDS ENI cleanup..."
-          sleep 60
+          # Wait for RDS deletion
+          echo "⏳ Waiting for RDS deletion..."
+          for i in {1..20}; do
+            if ! aws rds describe-db-instances --db-instance-identifier health-app-shared-db >/dev/null 2>&1; then
+              echo "✅ RDS instance deleted"
+              break
+            fi
+            echo "Waiting for RDS deletion... ($i/20)"
+            sleep 15
+          done
           
-          # Remove RDS from state if it fails
-          terraform state rm module.rds.aws_db_instance.main || true
-          terraform state rm module.rds.aws_db_subnet_group.main || true
-          terraform state rm module.rds.aws_db_parameter_group.main || true
+          # Force remove from Terraform state
+          echo "🗑️ Removing RDS resources from Terraform state..."
+          terraform state rm 'module.rds[0].aws_db_instance.main' || true
+          terraform state rm 'module.rds[0].aws_db_subnet_group.main' || true
+          terraform state rm 'module.rds[0].aws_db_parameter_group.main' || true
+          terraform state rm 'module.rds[0].aws_security_group.db' || true
+          
+          # Additional cleanup
+          aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
+          aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group || true
+          
+          echo "⏳ Final wait for ENI cleanup..."
+          sleep 30
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
