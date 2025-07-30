@@ -51,8 +51,6 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
-      
-
 
       - name: Cache Terraform
         uses: actions/cache@v3
@@ -79,8 +77,6 @@ jobs:
             -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
             -backend-config="region=$AWS_REGION"
 
-
-
       - name: Terraform Plan
         if: github.event.inputs.action == 'plan'
         working-directory: infra
@@ -90,8 +86,6 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}"
-
-
 
       - name: Complete Redeploy
         id: redeploy
@@ -175,17 +169,17 @@ jobs:
             echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
           fi
 
-      - name: Post-Deployment Fixes
+      - name: Configure Security Groups
         if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
         run: |
-          echo "🔧 Applying post-deployment fixes..."
+          echo "🔧 Configuring security groups for cluster access..."
           
           # Wait for instances to be ready
           echo "⏳ Waiting 60 seconds for instances to initialize..."
           sleep 60
           
-          # Fix SSH access for debugging
-          echo "🔓 Opening SSH access for debugging..."
+          # Configure cross-SG references for runner access
+          echo "🔐 Setting up cross-SG references for secure access..."
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
             # Get security group IDs
             DEV_SG=$(aws ec2 describe-instances \
@@ -203,7 +197,7 @@ jobs:
               --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
               --output text 2>/dev/null)
             
-            # Add cross-SG references only (no open SSH)
+            # Add cross-SG references for secure access
             for SG in "$DEV_SG" "$TEST_SG"; do
               if [ "$SG" != "None" ] && [ -n "$SG" ] && [ "$RUNNER_SG" != "None" ] && [ -n "$RUNNER_SG" ]; then
                 echo "Adding runner access to K3s API on $SG..."
@@ -217,13 +211,82 @@ jobs:
               fi
             done
             
-            # Runner egress rules are handled by default allow-all egress
-            echo "Cross-SG references configured for secure access"
+            echo "✅ Cross-SG references configured for secure access"
           fi
           
-          echo "✅ Post-deployment fixes complete!"
+          echo "✅ Security group configuration complete!"
 
-      - name: Pre-Destroy RDS Cleanup
+      - name: Install and Configure K3s
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
+          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
+          CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
+        run: |
+          echo "☸️ Installing and configuring K3s on cluster nodes..."
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Function to install k3s on a node using script
+          install_k3s() {
+            local IP=$1
+            local ENV=$2
+            
+            echo "Installing K3s on $ENV cluster ($IP)..."
+            
+            # Test SSH connectivity first
+            if ! timeout 10 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$IP "echo 'SSH connection successful'" 2>/dev/null; then
+              echo "❌ Cannot connect to $IP via SSH"
+              return 1
+            fi
+            
+            # Copy and execute K3s installation script
+            scp -o StrictHostKeyChecking=no scripts/install-k3s.sh ubuntu@$IP:/tmp/
+            ssh -o StrictHostKeyChecking=no ubuntu@$IP "chmod +x /tmp/install-k3s.sh && sudo /tmp/install-k3s.sh"
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ K3s installation completed on $ENV cluster"
+            else
+              echo "❌ K3s installation failed on $ENV cluster"
+              return 1
+            fi
+          }
+          
+          # Install k3s based on network tier
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            success=true
+            
+            if [ -n "$DEV_CLUSTER_IP" ]; then
+              install_k3s "$DEV_CLUSTER_IP" "dev" || success=false
+            fi
+            
+            if [ -n "$TEST_CLUSTER_IP" ]; then
+              install_k3s "$TEST_CLUSTER_IP" "test" || success=false
+            fi
+            
+            if [ "$success" = false ]; then
+              echo "❌ Some K3s installations failed"
+              exit 1
+            fi
+          else
+            if [ -n "$CLUSTER_IP" ]; then
+              install_k3s "$CLUSTER_IP" "${{ github.event.inputs.network }}"
+            else
+              echo "❌ Cluster IP not available"
+              exit 1
+            fi
+          fi
+          
+          # Cleanup SSH key
+          rm -f ~/.ssh/id_rsa
+          
+          echo "🎉 K3s installation and configuration complete!"
+
+      - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
         working-directory: infra
         run: |
@@ -232,108 +295,7 @@ jobs:
             exit 1
           fi
           
-          echo "🧹 Aggressive RDS cleanup to handle ENI issues..."
-          
-          # Manual RDS deletion first
-          echo "🗑️ Manual RDS instance deletion..."
-          aws rds delete-db-instance --db-instance-identifier health-app-shared-db --skip-final-snapshot --delete-automated-backups || echo "RDS instance may not exist"
-          
-          # Wait for RDS deletion
-          echo "⏳ Waiting for RDS deletion..."
-          for i in {1..20}; do
-            if ! aws rds describe-db-instances --db-instance-identifier health-app-shared-db >/dev/null 2>&1; then
-              echo "✅ RDS instance deleted"
-              break
-            fi
-            echo "Waiting for RDS deletion... ($i/20)"
-            sleep 15
-          done
-          
-          # Check and remove from Terraform state
-          echo "🗑️ Checking and removing resources from Terraform state..."
-          
-          # List current state
-          echo "Current Terraform state:"
-          terraform state list || echo "No state found"
-          
-          # Remove RDS resources if they exist
-          for resource in 'module.rds[0].aws_db_instance.main' 'module.rds[0].aws_db_subnet_group.main' 'module.rds[0].aws_db_parameter_group.main' 'module.rds[0].aws_security_group.db'; do
-            if terraform state show "$resource" >/dev/null 2>&1; then
-              echo "Removing $resource from state"
-              terraform state rm "$resource"
-            fi
-          done
-          
-          # Remove subnet resources if they exist
-          for resource in 'module.vpc.aws_subnet.private[0]' 'module.vpc.aws_subnet.private[1]' 'module.vpc.aws_subnet.public[0]' 'module.vpc.aws_subnet.public[1]'; do
-            if terraform state show "$resource" >/dev/null 2>&1; then
-              echo "Removing $resource from state"
-              terraform state rm "$resource"
-            fi
-          done
-          
-          # Thorough cleanup of DB resources
-          echo "🧹 Cleaning up DB parameter and subnet groups..."
-          
-          # Wait longer for RDS cleanup
-          sleep 30
-          
-          # Delete parameter groups
-          aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || echo "Parameter group may not exist"
-          
-          # Delete subnet groups (wait for RDS to fully release)
-          for i in {1..10}; do
-            if aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group 2>/dev/null; then
-              echo "✅ DB subnet group deleted"
-              break
-            fi
-            echo "Waiting for DB subnet group deletion... ($i/10)"
-            sleep 10
-          done
-          
-          # Import existing RDS resources if they exist
-          echo "🔄 Importing existing RDS resources..."
-          terraform import 'module.rds[0].aws_db_subnet_group.health_db' health-app-shared-db-subnet-group || echo "No existing subnet group to import"
-          terraform import 'module.rds[0].aws_db_parameter_group.health_db' health-app-shared-db-params || echo "No existing parameter group to import"
-          
-          echo "⏳ Final wait for ENI cleanup..."
-          sleep 30
-          
-          # Manual VPC dependency cleanup
-          echo "🧹 Cleaning up VPC dependencies..."
-          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=health-app-lower-vpc" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-          
-          if [ "$VPC_ID" != "" ] && [ "$VPC_ID" != "None" ]; then
-            echo "Found VPC: $VPC_ID"
-            
-            # Delete remaining ENIs
-            echo "Deleting remaining ENIs..."
-            aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | while read ENI_ID; do
-              if [ "$ENI_ID" != "" ]; then
-                echo "Detaching and deleting ENI: $ENI_ID"
-                aws ec2 detach-network-interface --network-interface-id "$ENI_ID" --force || true
-                sleep 5
-                aws ec2 delete-network-interface --network-interface-id "$ENI_ID" || true
-              fi
-            done
-            
-            # Delete security groups (except default)
-            echo "Deleting security groups..."
-            aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | tr '\t' '\n' | while read SG_ID; do
-              if [ "$SG_ID" != "" ]; then
-                echo "Deleting security group: $SG_ID"
-                aws ec2 delete-security-group --group-id "$SG_ID" || true
-              fi
-            done
-            
-            sleep 10
-          fi
-
-      - name: Terraform Destroy
-        if: github.event.inputs.action == 'destroy'
-        working-directory: infra
-        run: |
-          echo "🔥 Destroying remaining infrastructure..."
+          echo "🔥 Destroying infrastructure..."
           
           terraform destroy \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
@@ -342,7 +304,7 @@ jobs:
             -var="aws_region=${{ env.AWS_REGION }}" \
             -auto-approve
 
-  kubeconfig:
+  verify-k3s-clusters:
     needs: infrastructure
     if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
     runs-on: ubuntu-latest
@@ -351,21 +313,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Cache Kubeconfig
-        uses: actions/cache@v3
-        with:
-          path: /tmp/kubeconfig-*
-          key: kubeconfig-${{ github.event.inputs.network }}-${{ needs.infrastructure.outputs.dev_cluster_ip }}-${{ needs.infrastructure.outputs.test_cluster_ip }}-${{ needs.infrastructure.outputs.cluster_ip }}
-          restore-keys: |
-            kubeconfig-${{ github.event.inputs.network }}-
-      
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       
-      - name: Wait for K3s Clusters
+      - name: Verify K3s API Availability
         env:
           DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
           TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
@@ -404,370 +358,10 @@ jobs:
             fi
             
             if [ "$success" = false ]; then
-              echo "⚠️ Some clusters not ready, but continuing with kubeconfig setup..."
+              echo "⚠️ Some clusters not ready, but continuing..."
             fi
           else
             if [ -n "$CLUSTER_IP" ]; then
               test_k3s_api "$CLUSTER_IP" "${{ github.event.inputs.network }}"
             fi
           fi
-
-      - name: Setup Kubeconfig via Parameter Store
-        env:
-          GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
-          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
-          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
-          CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
-        run: |
-          # Install GitHub CLI and kubectl (cached)
-          if ! command -v gh >/dev/null; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-            sudo apt update && sudo apt install gh kubectl -y
-          else
-            echo "✅ GitHub CLI and kubectl already available"
-          fi
-          
-          # Make script executable
-          chmod +x scripts/setup-kubeconfig.sh
-          
-          # Setup kubeconfigs based on network tier
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            success=true
-            
-            if [ -n "$DEV_CLUSTER_IP" ]; then
-              echo "🔧 Setting up Dev kubeconfig..."
-              ./scripts/setup-kubeconfig.sh "dev" "$DEV_CLUSTER_IP" || success=false
-            fi
-            
-            if [ -n "$TEST_CLUSTER_IP" ]; then
-              echo "🔧 Setting up Test kubeconfig..."
-              ./scripts/setup-kubeconfig.sh "test" "$TEST_CLUSTER_IP" || success=false
-            fi
-            
-            if [ "$success" = false ]; then
-              echo "❌ Some kubeconfig setups failed"
-              exit 1
-            fi
-          else
-            # Single cluster environments
-            if [ -z "$CLUSTER_IP" ]; then
-              echo "❌ Cluster IP not available"
-              exit 1
-            fi
-            
-            ENV_NAME="${{ github.event.inputs.network }}"
-            echo "🔧 Setting up $ENV_NAME kubeconfig..."
-            ./scripts/setup-kubeconfig.sh "$ENV_NAME" "$CLUSTER_IP"
-          fi
-          
-          # Cleanup
-          rm -f /tmp/kubeconfig-* 2>/dev/null || true
-          
-          echo "🎉 Kubeconfig setup complete!"
-
-      - name: Fix Parameter Store Values
-        if: github.event.inputs.network == 'lower'
-        env:
-          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
-          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
-        run: |
-          echo "🔧 Fixing Parameter Store values with correct IPs..."
-          
-          if [ -n "$DEV_CLUSTER_IP" ]; then
-            echo "📝 Updating dev cluster Parameter Store..."
-            aws ssm put-parameter \
-              --name "/dev/health-app/kubeconfig/server" \
-              --value "https://$DEV_CLUSTER_IP:6443" \
-              --type "String" \
-              --overwrite \
-              --region ap-south-1 || echo "Failed to update dev parameter"
-          fi
-          
-          if [ -n "$TEST_CLUSTER_IP" ]; then
-            echo "📝 Updating test cluster Parameter Store..."
-            aws ssm put-parameter \
-              --name "/test/health-app/kubeconfig/server" \
-              --value "https://$TEST_CLUSTER_IP:6443" \
-              --type "String" \
-              --overwrite \
-              --region ap-south-1 || echo "Failed to update test parameter"
-          fi
-          
-          echo "✅ Parameter Store values updated"
-
-  validate-deployment:
-    needs: kubeconfig
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Validate Deployment
-        env:
-          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
-          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
-          CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
-        run: |
-          echo "🔍 Validating deployment..."
-          
-          # Test API connectivity
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            for IP in "$DEV_CLUSTER_IP" "$TEST_CLUSTER_IP"; do
-              if [ -n "$IP" ]; then
-                echo "Testing $IP:6443..."
-                if timeout 10 curl -k -s "https://$IP:6443/version" >/dev/null 2>&1; then
-                  echo "✅ $IP API responding"
-                else
-                  echo "⚠️ $IP API not responding"
-                fi
-              fi
-            done
-          else
-            if [ -n "$CLUSTER_IP" ]; then
-              echo "Testing $CLUSTER_IP:6443..."
-              if timeout 10 curl -k -s "https://$CLUSTER_IP:6443/version" >/dev/null 2>&1; then
-                echo "✅ $CLUSTER_IP API responding"
-              else
-                echo "⚠️ $CLUSTER_IP API not responding"
-              fi
-            fi
-          fi
-          
-          # Verify Parameter Store
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            echo "Verifying Parameter Store values..."
-            DEV_SERVER=$(aws ssm get-parameter --name "/dev/health-app/kubeconfig/server" --query 'Parameter.Value' --output text 2>/dev/null || echo "Not found")
-            TEST_SERVER=$(aws ssm get-parameter --name "/test/health-app/kubeconfig/server" --query 'Parameter.Value' --output text 2>/dev/null || echo "Not found")
-            
-            echo "Dev server: $DEV_SERVER"
-            echo "Test server: $TEST_SERVER"
-          fi
-          
-          echo "✅ Deployment validation complete!"
-
-
-  setup-k8s-secrets:
-    needs: [kubeconfig, validate-deployment]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: self-hosted
-    timeout-minutes: 10
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Kubernetes Secrets
-        run: |
-          echo "🔐 Setting up Kubernetes secrets for kubeconfig..."
-          
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            # Setup secrets for dev environment
-            if [ -n "${{ secrets.KUBECONFIG_DEV }}" ]; then
-              echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig-dev
-              export KUBECONFIG=/tmp/kubeconfig-dev
-              
-              # Test cluster connectivity first
-              if timeout 10 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
-                kubectl create namespace health-app-dev --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
-                kubectl create secret generic kubeconfig-dev \
-                  --from-file=config=/tmp/kubeconfig-dev \
-                  --namespace=health-app-dev \
-                  --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
-              else
-                echo "⚠️ Dev cluster not reachable - skipping secret creation"
-              fi
-              echo "✅ Dev kubeconfig secret created"
-            fi
-            
-            # Setup secrets for test environment  
-            if [ -n "${{ secrets.KUBECONFIG_TEST }}" ]; then
-              echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig-test
-              export KUBECONFIG=/tmp/kubeconfig-test
-              
-              # Test cluster connectivity first
-              if timeout 10 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
-                kubectl create namespace health-app-test --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
-                kubectl create secret generic kubeconfig-test \
-                  --from-file=config=/tmp/kubeconfig-test \
-                  --namespace=health-app-test \
-                  --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
-              else
-                echo "⚠️ Test cluster not reachable - skipping secret creation"
-              fi
-              echo "✅ Test kubeconfig secret created"
-            fi
-            
-          else
-            # Setup secrets for single cluster environments
-            ENV_NAME="${{ github.event.inputs.network == 'higher' && 'prod' || 'monitoring' }}"
-            NAMESPACE="health-app-$ENV_NAME"
-            
-            if [ "$ENV_NAME" == "prod" ] && [ -n "${{ secrets.KUBECONFIG_PROD }}" ]; then
-              echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
-            elif [ "$ENV_NAME" == "monitoring" ] && [ -n "${{ secrets.KUBECONFIG_MONITORING }}" ]; then
-              echo "${{ secrets.KUBECONFIG_MONITORING }}" | base64 -d > /tmp/kubeconfig
-            else
-              echo "⚠️ Kubeconfig secret not found for $ENV_NAME"
-              exit 0
-            fi
-            
-            export KUBECONFIG=/tmp/kubeconfig
-            
-            # Test cluster connectivity first
-            if timeout 10 kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
-              kubectl create namespace $NAMESPACE --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
-              kubectl create secret generic kubeconfig-$ENV_NAME \
-                --from-file=config=/tmp/kubeconfig \
-                --namespace=$NAMESPACE \
-                --dry-run=client -o yaml --insecure-skip-tls-verify | kubectl apply -f - --insecure-skip-tls-verify
-            else
-              echo "⚠️ $ENV_NAME cluster not reachable - skipping secret creation"
-              exit 0
-            fi
-            echo "✅ $ENV_NAME kubeconfig secret created"
-          fi
-          
-          # Cleanup
-          rm -f /tmp/kubeconfig* 2>/dev/null || true
-          
-          echo "🎉 Kubernetes secrets setup complete!"
-
-  setup-cross-sg:
-    needs: [kubeconfig, validate-deployment, setup-k8s-secrets]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: self-hosted
-    timeout-minutes: 5
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Setup Cross-SG References
-        env:
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-        run: |
-          echo "🔧 Setting up cross-SG references..."
-          
-          # Make script executable
-          chmod +x scripts/setup-cross-sg-references.sh
-          
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            echo "Setting up cross-SG for dev environment..."
-            ./scripts/setup-cross-sg-references.sh dev
-            
-            echo "Setting up cross-SG for test environment..."
-            ./scripts/setup-cross-sg-references.sh test
-          else
-            ENV_NAME="${{ github.event.inputs.network }}"
-            echo "Setting up cross-SG for $ENV_NAME environment..."
-            ./scripts/setup-cross-sg-references.sh $ENV_NAME
-          fi
-          
-          echo "✅ Cross-SG references setup complete"
-
-  test-connectivity:
-    needs: [kubeconfig, validate-deployment, setup-k8s-secrets, setup-cross-sg]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-    runs-on: self-hosted
-    timeout-minutes: 15
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Verify Security Groups
-        env:
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-        run: |
-          echo "🔒 Verifying security group configuration..."
-          
-          # Make script executable
-          chmod +x scripts/verify-security-groups.sh
-          
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            echo "Verifying Dev environment security groups..."
-            ./scripts/verify-security-groups.sh dev
-            
-            echo ""
-            echo "Verifying Test environment security groups..."
-            ./scripts/verify-security-groups.sh test
-          else
-            ENV_NAME="${{ github.event.inputs.network }}"
-            echo "Verifying $ENV_NAME environment security groups..."
-            ./scripts/verify-security-groups.sh $ENV_NAME
-          fi
-          
-          echo "✅ Security group verification complete"
-      
-      - name: Test Network Connectivity
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          KUBECONFIG_DEV: ${{ secrets.KUBECONFIG_DEV }}
-          KUBECONFIG_TEST: ${{ secrets.KUBECONFIG_TEST }}
-          KUBECONFIG_PROD: ${{ secrets.KUBECONFIG_PROD }}
-        run: |
-          echo "🔍 Testing network connectivity and security groups..."
-          
-          # Make script executable
-          chmod +x scripts/test-network-connectivity.sh
-          
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            echo "🧪 Testing Lower Environment Networks..."
-            
-            # Test Dev Environment
-            echo "Testing Dev Environment Database Connectivity..."
-            if ./scripts/test-network-connectivity.sh dev; then
-              echo "✅ Dev environment connectivity test passed"
-            else
-              echo "❌ Dev environment connectivity test failed"
-            fi
-            
-            echo ""
-            
-            # Test Test Environment
-            echo "Testing Test Environment Database Connectivity..."
-            if ./scripts/test-network-connectivity.sh test; then
-              echo "✅ Test environment connectivity test passed"
-            else
-              echo "❌ Test environment connectivity test failed"
-            fi
-            
-          else
-            # Test single environment
-            ENV_NAME="${{ github.event.inputs.network }}"
-            echo "Testing $ENV_NAME Environment Database Connectivity..."
-            
-            if ./scripts/test-network-connectivity.sh $ENV_NAME; then
-              echo "✅ $ENV_NAME environment connectivity test passed"
-            else
-              echo "❌ $ENV_NAME environment connectivity test failed"
-            fi
-          fi
-          
-          echo ""
-          echo "🎉 Network connectivity testing complete!"
-          echo ""
-          echo "📋 Test Summary:"
-          echo "✅ Security groups configured with cross-SG references"
-          echo "✅ Database accessible from application instances"
-          echo "✅ Network routing and NACLs allow traffic"
-          echo "✅ DNS resolution working correctly"
