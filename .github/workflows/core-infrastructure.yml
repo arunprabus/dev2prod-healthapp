@@ -223,6 +223,107 @@ jobs:
           
           echo "✅ Post-deployment fixes complete!"
 
+      - name: Install and Configure K3s
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
+          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
+          CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
+        run: |
+          echo "🚀 Installing and configuring K3s on cluster nodes..."
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Function to install k3s on a node
+          install_k3s() {
+            local IP=$1
+            local ENV=$2
+            
+            echo "Installing K3s on $ENV cluster ($IP)..."
+            
+            # Test SSH connectivity first
+            if ! timeout 10 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$IP "echo 'SSH connection successful'" 2>/dev/null; then
+              echo "❌ Cannot connect to $IP via SSH"
+              return 1
+            fi
+            
+            # Install k3s with proper configuration
+            ssh -o StrictHostKeyChecking=no ubuntu@$IP << 'EOF'
+              # Check if k3s is already running
+              if systemctl is-active --quiet k3s; then
+                echo "✅ K3s already running"
+                exit 0
+              fi
+              
+              echo "📦 Installing K3s..."
+              
+              # Install k3s
+              curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --disable=traefik --write-kubeconfig-mode=644" sh -
+              
+              # Wait for k3s to be ready
+              echo "⏳ Waiting for K3s to be ready..."
+              for i in {1..30}; do
+                if systemctl is-active --quiet k3s && kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+                  echo "✅ K3s is ready"
+                  break
+                fi
+                echo "Waiting for K3s... ($i/30)"
+                sleep 10
+              done
+              
+              # Verify installation
+              if systemctl is-active --quiet k3s; then
+                echo "✅ K3s service is running"
+                kubectl get nodes --insecure-skip-tls-verify
+              else
+                echo "❌ K3s service failed to start"
+                systemctl status k3s
+                exit 1
+              fi
+EOF
+            
+            if [ $? -eq 0 ]; then
+              echo "✅ K3s installation completed on $ENV cluster"
+            else
+              echo "❌ K3s installation failed on $ENV cluster"
+              return 1
+            fi
+          }
+          
+          # Install k3s based on network tier
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            success=true
+            
+            if [ -n "$DEV_CLUSTER_IP" ]; then
+              install_k3s "$DEV_CLUSTER_IP" "dev" || success=false
+            fi
+            
+            if [ -n "$TEST_CLUSTER_IP" ]; then
+              install_k3s "$TEST_CLUSTER_IP" "test" || success=false
+            fi
+            
+            if [ "$success" = false ]; then
+              echo "❌ Some K3s installations failed"
+              exit 1
+            fi
+          else
+            if [ -n "$CLUSTER_IP" ]; then
+              install_k3s "$CLUSTER_IP" "${{ github.event.inputs.network }}"
+            else
+              echo "❌ Cluster IP not available"
+              exit 1
+            fi
+          fi
+          
+          # Cleanup SSH key
+          rm -f ~/.ssh/id_rsa
+          
+          echo "🎉 K3s installation and configuration complete!"
+
       - name: Pre-Destroy RDS Cleanup
         if: github.event.inputs.action == 'destroy'
         working-directory: infra
