@@ -291,13 +291,41 @@ jobs:
             sleep 10
           done
           
-          # Import existing resources if they exist
-          echo "🔄 Importing any existing resources..."
-          terraform import 'module.rds[0].aws_db_subnet_group.health_db' health-app-shared-db-subnet-group || echo "No existing subnet group to import"
-          terraform import 'module.rds[0].aws_db_parameter_group.health_db' health-app-shared-db-params || echo "No existing parameter group to import"
+          # Skip import for destroy operation
+          echo "ℹ️ Skipping resource import for destroy operation"
           
           echo "⏳ Final wait for ENI cleanup..."
           sleep 30
+          
+          # Manual VPC dependency cleanup
+          echo "🧹 Cleaning up VPC dependencies..."
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=health-app-lower-vpc" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+          
+          if [ "$VPC_ID" != "" ] && [ "$VPC_ID" != "None" ]; then
+            echo "Found VPC: $VPC_ID"
+            
+            # Delete remaining ENIs
+            echo "Deleting remaining ENIs..."
+            aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | while read ENI_ID; do
+              if [ "$ENI_ID" != "" ]; then
+                echo "Detaching and deleting ENI: $ENI_ID"
+                aws ec2 detach-network-interface --network-interface-id "$ENI_ID" --force || true
+                sleep 5
+                aws ec2 delete-network-interface --network-interface-id "$ENI_ID" || true
+              fi
+            done
+            
+            # Delete security groups (except default)
+            echo "Deleting security groups..."
+            aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | tr '\t' '\n' | while read SG_ID; do
+              if [ "$SG_ID" != "" ]; then
+                echo "Deleting security group: $SG_ID"
+                aws ec2 delete-security-group --group-id "$SG_ID" || true
+              fi
+            done
+            
+            sleep 10
+          fi
 
       - name: Terraform Destroy
         if: github.event.inputs.action == 'destroy'
