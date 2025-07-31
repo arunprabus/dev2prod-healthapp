@@ -51,45 +51,21 @@ output "cluster_ips" {
   value       = var.network_tier == "lower" ? { for k, v in module.k3s_clusters : k => v.instance_public_ip } : {}
 }
 
+# GitHub Runner Outputs
+output "github_runner_private_ip" {
+  description = "Private IP of GitHub runner"
+  value       = module.github_runner.runner_ip
+}
 
-
-# RDS Outputs - commented out since RDS module is disabled
-# output "db_instance_endpoint" {
-#   description = "Connection endpoint for the RDS database"
-#   value       = var.database_config != null ? module.rds[0].db_instance_endpoint : null
-# }
-#
-# output "db_instance_name" {
-#   description = "Name of the RDS instance"
-#   value       = var.database_config != null ? module.rds[0].db_instance_name : null
-# }
-
-# Deployment Outputs
-# output "kubernetes_namespace" {
-#   description = "The Kubernetes namespace for the Health app deployment"
-#   value       = module.deployment.namespace
-# }
-
-# output "config_map_name" {
-#   description = "Name of the application config map"
-#   value       = module.deployment.config_map_name
-# }
-
-# Monitoring Outputs - commented out since monitoring module is disabled
-# output "prometheus_endpoint" {
-#   description = "Endpoint for Prometheus service"
-#   value       = var.environment == "monitoring" ? module.monitoring[0].prometheus_service_endpoint : null
-# }
-#
-# output "grafana_endpoint" {
-#   description = "Endpoint for Grafana service"
-#   value       = var.environment == "monitoring" ? module.monitoring[0].grafana_service_endpoint : null
-# }
+output "github_runner_public_ip" {
+  description = "Public IP of GitHub runner"
+  value       = module.github_runner.runner_public_ip
+}
 
 # Environment Information
 output "environment" {
   description = "Current deployment environment"
-  value       = var.environment
+  value       = local.environment
 }
 
 output "aws_region" {
@@ -97,18 +73,8 @@ output "aws_region" {
   value       = var.aws_region
 }
 
-# Networking Architecture
-output "network_architecture" {
-  description = "Description of the network architecture"
-  value       = "This deployment uses a ${var.environment == "prod" ? "higher" : "lower"} network in CIDR range ${var.vpc_cidr}."
-}
-
 # Deployment Status
 output "deployment_status" {
   description = "Current deployment status"
-  value       = "Deployed to ${var.environment} environment"
+  value       = "Deployed to ${local.environment} environment"
 }
-
-
-
-
