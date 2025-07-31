@@ -68,10 +68,30 @@ jobs:
             -backend-config="key=health-app-$NETWORK_TIER-runner.tfstate" \
             -backend-config="region=$AWS_REGION"
           
-          # Clean up existing key pair if it exists
-          echo "🧹 Cleaning up existing key pairs..."
+          # Clean up existing resources
+          echo "🧹 Cleaning up existing resources..."
+          
+          # Clean up IAM resources
+          aws iam detach-role-policy --role-name health-app-runner-role-$NETWORK_TIER --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore 2>/dev/null || true
+          aws iam delete-instance-profile health-app-runner-profile-$NETWORK_TIER 2>/dev/null || true
+          aws iam delete-role health-app-runner-role-$NETWORK_TIER 2>/dev/null || true
+          
+          # Clean up Parameter Store IAM resources
+          aws iam detach-role-policy --role-name health-app-dev-parameter-access --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/health-app-dev-parameter-read 2>/dev/null || true
+          aws iam delete-role health-app-dev-parameter-access 2>/dev/null || true
+          aws iam delete-policy --policy-arn arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/health-app-dev-parameter-read 2>/dev/null || true
+          
+          # Clean up key pairs
           aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-key 2>/dev/null || echo "Key pair doesn't exist"
-          sleep 10
+          
+          # Clean up default VPC if at limit
+          DEFAULT_VPC=$(aws ec2 describe-vpcs --filters "Name=is-default,Values=true" --query "Vpcs[0].VpcId" --output text 2>/dev/null)
+          if [ "$DEFAULT_VPC" != "None" ] && [ "$DEFAULT_VPC" != "null" ]; then
+            echo "Deleting default VPC to free up space: $DEFAULT_VPC"
+            aws ec2 delete-vpc --vpc-id $DEFAULT_VPC 2>/dev/null || true
+          fi
+          
+          sleep 15
           
           # Use network-specific runner config
           cp environments/runner.tfvars environments/runner-$NETWORK_TIER.tfvars
@@ -158,6 +178,13 @@ jobs:
             aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-k3s-key 2>/dev/null || echo "Key doesn't exist"
             terraform state rm 'module.k3s[0].aws_key_pair.main' 2>/dev/null || echo "Key not in state"
           fi
+          
+          # Clean up terraform state for existing resources
+          terraform state rm 'module.github_runner.aws_iam_role.runner_role' 2>/dev/null || true
+          terraform state rm 'module.parameter_store.aws_iam_role.parameter_access' 2>/dev/null || true
+          terraform state rm 'module.parameter_store.aws_iam_policy.parameter_read' 2>/dev/null || true
+          terraform state rm 'module.vpc.aws_vpc.main' 2>/dev/null || true
+          
           sleep 10
           
           terraform apply \
