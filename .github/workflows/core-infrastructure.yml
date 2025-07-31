@@ -286,37 +286,34 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Create GitHub Runner
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           echo "🏃 Step 3: Starting GitHub self-hosted runner..."
           
-          # Get runner IP
-          RUNNER_IP=$(aws ec2 describe-instances \
+          # Get runner instance ID
+          RUNNER_INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --query 'Reservations[0].Instances[0].InstanceId' \
             --output text 2>/dev/null)
           
-          if [ "$RUNNER_IP" == "None" ] || [ -z "$RUNNER_IP" ]; then
+          if [ "$RUNNER_INSTANCE_ID" == "None" ] || [ -z "$RUNNER_INSTANCE_ID" ]; then
             echo "❌ Runner instance not found"
             exit 1
           fi
           
-          echo "✅ Runner instance found at $RUNNER_IP"
+          echo "✅ Runner instance found: $RUNNER_INSTANCE_ID"
           
-          # Setup SSH key
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          # Start the runner service using SSM
+          echo "Starting GitHub Actions runner service via SSM..."
+          aws ssm send-command \
+            --instance-ids "$RUNNER_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cd /home/ubuntu/actions-runner","sudo ./svc.sh start || echo Service already running"]' \
+            --output text
           
-          # Start the runner service
-          echo "Starting GitHub Actions runner service..."
-          ssh -o StrictHostKeyChecking=no ubuntu@$RUNNER_IP "cd /home/ubuntu/actions-runner && sudo ./svc.sh start"
+          # Wait a moment for the service to start
+          sleep 30
           
-          # Cleanup SSH key
-          rm -f ~/.ssh/id_rsa
-          
-          echo "✅ Step 3 Complete: GitHub runner service started!"
+          echo "✅ Step 3 Complete: GitHub runner service start command sent!"
 
   # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
   install-k3s:
