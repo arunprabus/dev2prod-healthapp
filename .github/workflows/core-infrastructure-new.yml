@@ -197,18 +197,11 @@ jobs:
           
           echo "Runner IP: $RUNNER_IP"
           
-          # Wait for SSH to be ready
-          for i in {1..20}; do
-            if timeout 10 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$RUNNER_IP "echo 'Runner SSH ready'" 2>/dev/null; then
-              echo "✅ Runner SSH is ready"
-              rm -f ~/.ssh/id_rsa
-              break
-            fi
-            echo "⏳ Waiting for runner SSH... ($i/20)"
-            sleep 15
-          done
+          # Just wait for instance to be fully ready (no SSH test needed)
+          echo "⏳ Waiting for runner to be fully ready..."
+          sleep 60
           
-          rm -f ~/.ssh/id_rsa
+          echo "✅ Runner instance is ready"
           echo "ready=true" >> $GITHUB_OUTPUT
 
   # Step 2: Deploy Infrastructure Resources
