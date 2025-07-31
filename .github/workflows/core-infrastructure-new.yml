@@ -60,19 +60,25 @@ jobs:
       
       - name: Deploy Runner Infrastructure
         working-directory: infra
+        env:
+          NETWORK_TIER: ${{ github.event.inputs.network || env.DEFAULT_NETWORK }}
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=health-app-runner.tfstate" \
+            -backend-config="key=health-app-$NETWORK_TIER-runner.tfstate" \
             -backend-config="region=$AWS_REGION"
           
           # Clean up existing key pair if it exists
           echo "🧹 Cleaning up existing key pairs..."
-          aws ec2 delete-key-pair --key-name health-app-monitoring-key 2>/dev/null || echo "Key pair doesn't exist"
+          aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-key 2>/dev/null || echo "Key pair doesn't exist"
           sleep 10
           
+          # Use network-specific runner config
+          cp environments/runner.tfvars environments/runner-$NETWORK_TIER.tfvars
+          sed -i "s/network_tier = \"monitoring\"/network_tier = \"$NETWORK_TIER\"/g" environments/runner-$NETWORK_TIER.tfvars
+          
           terraform apply \
-            -var-file="environments/runner.tfvars" \
+            -var-file="environments/runner-$NETWORK_TIER.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
@@ -133,6 +139,8 @@ jobs:
       - name: Deploy Infrastructure
         id: deploy
         working-directory: infra
+        env:
+          NETWORK_TIER: ${{ github.event.inputs.network || env.DEFAULT_NETWORK }}
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
@@ -141,26 +149,26 @@ jobs:
           
           # Clean up existing key pairs and terraform state
           echo "🧹 Cleaning up existing resources..."
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "$NETWORK_TIER" == "lower" ]; then
             aws ec2 delete-key-pair --key-name health-app-lower-dev-k3s-key 2>/dev/null || echo "Dev key doesn't exist"
             aws ec2 delete-key-pair --key-name health-app-lower-test-k3s-key 2>/dev/null || echo "Test key doesn't exist"
             terraform state rm 'module.k3s_clusters["dev"].aws_key_pair.main' 2>/dev/null || echo "Dev key not in state"
             terraform state rm 'module.k3s_clusters["test"].aws_key_pair.main' 2>/dev/null || echo "Test key not in state"
           else
-            aws ec2 delete-key-pair --key-name health-app-${{ github.event.inputs.network }}-k3s-key 2>/dev/null || echo "Key doesn't exist"
+            aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-k3s-key 2>/dev/null || echo "Key doesn't exist"
             terraform state rm 'module.k3s[0].aws_key_pair.main' 2>/dev/null || echo "Key not in state"
           fi
           sleep 10
           
           terraform apply \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/$NETWORK_TIER.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -auto-approve
           
           # Output cluster IPs
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "$NETWORK_TIER" == "lower" ]; then
             echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
             echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
           else
