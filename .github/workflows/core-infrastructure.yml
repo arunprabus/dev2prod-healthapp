@@ -286,54 +286,37 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       
       - name: Create GitHub Runner
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
-          echo "🏃 Step 3: Creating GitHub self-hosted runner..."
+          echo "🏃 Step 3: Starting GitHub self-hosted runner..."
           
-          # Wait for runner instance to be ready
-          echo "⏳ Waiting for runner instance to be ready..."
-          sleep 120
+          # Get runner IP
+          RUNNER_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null)
           
-          # Try multiple possible runner names
-          RUNNER_NAMES=(
-            "health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}"
-            "health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-runner"
-            "health-app-runner"
-          )
-          
-          RUNNER_IP=""
-          for name in "${RUNNER_NAMES[@]}"; do
-            echo "Checking for runner with name: $name"
-            IP=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=$name" "Name=instance-state-name,Values=running" \
-              --query 'Reservations[0].Instances[0].PublicIpAddress' \
-              --output text 2>/dev/null)
-            
-            if [ "$IP" != "None" ] && [ -n "$IP" ] && [ "$IP" != "null" ]; then
-              RUNNER_IP="$IP"
-              echo "✅ Runner instance found: $name at $RUNNER_IP"
-              break
-            fi
-          done
-          
-          if [ -z "$RUNNER_IP" ]; then
-            echo "❌ No runner instance found with any expected name"
-            echo "Available instances:"
-            aws ec2 describe-instances --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],State.Name,PublicIpAddress]' --output table
+          if [ "$RUNNER_IP" == "None" ] || [ -z "$RUNNER_IP" ]; then
+            echo "❌ Runner instance not found"
             exit 1
           fi
           
-          # Test basic connectivity
-          echo "Testing basic connectivity to runner..."
-          for i in {1..5}; do
-            if timeout 10 ping -c 1 "$RUNNER_IP" >/dev/null 2>&1; then
-              echo "✅ Runner is reachable"
-              break
-            fi
-            echo "⏳ Waiting for runner connectivity... ($i/5)"
-            sleep 30
-          done
+          echo "✅ Runner instance found at $RUNNER_IP"
           
-          echo "✅ Step 3 Complete: GitHub runner is ready!"
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Start the runner service
+          echo "Starting GitHub Actions runner service..."
+          ssh -o StrictHostKeyChecking=no ubuntu@$RUNNER_IP "cd /home/ubuntu/actions-runner && sudo ./svc.sh start"
+          
+          # Cleanup SSH key
+          rm -f ~/.ssh/id_rsa
+          
+          echo "✅ Step 3 Complete: GitHub runner service started!"
 
   # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
   install-k3s:
