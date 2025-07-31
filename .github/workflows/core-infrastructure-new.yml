@@ -170,8 +170,17 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Get runner IP
-          RUNNER_IP=$(terraform output -raw github_runner_public_ip)
+          # Get runner IP from AWS
+          RUNNER_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-runner-$NETWORK_TIER" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null)
+          
+          if [ "$RUNNER_IP" == "None" ] || [ -z "$RUNNER_IP" ]; then
+            echo "❌ No running runner instance found"
+            exit 1
+          fi
+          
           echo "Runner IP: $RUNNER_IP"
           
           # Wait for SSH to be ready
