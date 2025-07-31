@@ -30,8 +30,9 @@ env:
   TERRAFORM_VERSION: 1.6.0
 
 jobs:
-  # Step 1: Deploy GitHub Runner
+  # Step 1: Deploy GitHub Runner (only for deploy action)
   deploy-runner:
+    if: github.event.inputs.action == 'deploy'
     runs-on: ubuntu-latest
     outputs:
       runner_ready: ${{ steps.verify-runner.outputs.ready }}
@@ -64,13 +65,38 @@ jobs:
       
       - name: Verify Runner Ready
         id: verify-runner
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           echo "⏳ Waiting for runner to be ready..."
-          sleep 120
+          sleep 60
+          
+          # Setup SSH key for testing
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          
+          # Get runner IP
+          RUNNER_IP=$(terraform output -raw github_runner_public_ip)
+          echo "Runner IP: $RUNNER_IP"
+          
+          # Wait for SSH to be ready
+          for i in {1..20}; do
+            if timeout 10 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$RUNNER_IP "echo 'Runner SSH ready'" 2>/dev/null; then
+              echo "✅ Runner SSH is ready"
+              rm -f ~/.ssh/id_rsa
+              break
+            fi
+            echo "⏳ Waiting for runner SSH... ($i/20)"
+            sleep 15
+          done
+          
+          rm -f ~/.ssh/id_rsa
           echo "ready=true" >> $GITHUB_OUTPUT
 
   # Step 2: Deploy Infrastructure Resources
   deploy-infrastructure:
+    if: github.event.inputs.action == 'deploy'
     needs: deploy-runner
     runs-on: ubuntu-latest
     outputs:
@@ -114,12 +140,59 @@ jobs:
           fi
       
       - name: Verify Instances Ready
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          DEV_CLUSTER_IP: ${{ steps.deploy.outputs.dev_cluster_ip }}
+          TEST_CLUSTER_IP: ${{ steps.deploy.outputs.test_cluster_ip }}
+          CLUSTER_IP: ${{ steps.deploy.outputs.cluster_ip }}
         run: |
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
           echo "⏳ Waiting for instances to be ready..."
-          sleep 180
+          sleep 120
+          
+          # Function to test SSH connectivity
+          test_ssh() {
+            local IP=$1
+            local NAME=$2
+            echo "Testing SSH connectivity to $NAME ($IP)..."
+            
+            for i in {1..15}; do
+              if timeout 10 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 ubuntu@$IP "echo 'SSH ready'" 2>/dev/null; then
+                echo "✅ $NAME instance SSH is ready"
+                return 0
+              fi
+              echo "⏳ Waiting for $NAME SSH... ($i/15)"
+              sleep 20
+            done
+            echo "❌ $NAME instance SSH not ready after 5 minutes"
+            return 1
+          }
+          
+          # Test instances based on network tier
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            success=true
+            [ -n "$DEV_CLUSTER_IP" ] && { test_ssh "$DEV_CLUSTER_IP" "dev" || success=false; }
+            [ -n "$TEST_CLUSTER_IP" ] && { test_ssh "$TEST_CLUSTER_IP" "test" || success=false; }
+            
+            if [ "$success" = false ]; then
+              echo "❌ Some instances not ready"
+              exit 1
+            fi
+          else
+            [ -n "$CLUSTER_IP" ] && test_ssh "$CLUSTER_IP" "${{ github.event.inputs.network }}"
+          fi
+          
+          echo "✅ All instances are ready for K3s installation"
+          
+          # Cleanup SSH key
+          rm -f ~/.ssh/id_rsa
 
   # Step 3: Install K3s using Ansible
   install-k3s:
+    if: github.event.inputs.action == 'deploy'
     needs: [deploy-runner, deploy-infrastructure]
     runs-on: self-hosted
     container:
