@@ -170,13 +170,27 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           
-          # Get runner IP from AWS
-          RUNNER_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=health-app-runner-$NETWORK_TIER" "Name=instance-state-name,Values=running" \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text 2>/dev/null)
+          # Get runner IP from AWS - try multiple possible names
+          echo "Looking for runner instance..."
           
-          if [ "$RUNNER_IP" == "None" ] || [ -z "$RUNNER_IP" ]; then
+          # Try different possible runner instance names
+          for name_pattern in "health-app-runner-$NETWORK_TIER" "*runner*$NETWORK_TIER*" "*runner*"; do
+            echo "Trying pattern: $name_pattern"
+            RUNNER_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$name_pattern" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null)
+            
+            if [ "$RUNNER_IP" != "None" ] && [ -n "$RUNNER_IP" ] && [ "$RUNNER_IP" != "null" ]; then
+              echo "Found runner with pattern $name_pattern"
+              break
+            fi
+          done
+          
+          # If still not found, list all running instances to debug
+          if [ "$RUNNER_IP" == "None" ] || [ -z "$RUNNER_IP" ] || [ "$RUNNER_IP" == "null" ]; then
+            echo "Debug: All running instances:"
+            aws ec2 describe-instances --filters "Name=instance-state-name,Values=running" --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],PublicIpAddress]' --output table
             echo "❌ No running runner instance found"
             exit 1
           fi
