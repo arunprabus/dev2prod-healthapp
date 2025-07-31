@@ -1,0 +1,206 @@
+name: Core Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - destroy
+          - plan
+      network:
+        description: 'Network Tier'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+          - lower
+          - higher
+          - monitoring
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+  TERRAFORM_VERSION: 1.6.0
+
+jobs:
+  # Step 1: Deploy GitHub Runner
+  deploy-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      runner_ready: ${{ steps.verify-runner.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
+      - name: Deploy Runner Infrastructure
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-runner.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform apply \
+            -var-file="environments/runner.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve
+      
+      - name: Verify Runner Ready
+        id: verify-runner
+        run: |
+          echo "⏳ Waiting for runner to be ready..."
+          sleep 120
+          echo "ready=true" >> $GITHUB_OUTPUT
+
+  # Step 2: Deploy Infrastructure Resources
+  deploy-infrastructure:
+    needs: deploy-runner
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_ip: ${{ steps.deploy.outputs.cluster_ip }}
+      dev_cluster_ip: ${{ steps.deploy.outputs.dev_cluster_ip }}
+      test_cluster_ip: ${{ steps.deploy.outputs.test_cluster_ip }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      
+      - name: Deploy Infrastructure
+        id: deploy
+        working-directory: infra
+        run: |
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform apply \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve
+          
+          # Output cluster IPs
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
+            echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
+          else
+            echo "cluster_ip=$(terraform output -raw k3s_instance_ip)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Verify Instances Ready
+        run: |
+          echo "⏳ Waiting for instances to be ready..."
+          sleep 180
+
+  # Step 3: Install K3s using Ansible
+  install-k3s:
+    needs: [deploy-runner, deploy-infrastructure]
+    runs-on: self-hosted
+    container:
+      image: ghcr.io/${{ github.repository }}/runner-tools:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+      
+      - name: Create Ansible Inventory
+        env:
+          DEV_CLUSTER_IP: ${{ needs.deploy-infrastructure.outputs.dev_cluster_ip }}
+          TEST_CLUSTER_IP: ${{ needs.deploy-infrastructure.outputs.test_cluster_ip }}
+          CLUSTER_IP: ${{ needs.deploy-infrastructure.outputs.cluster_ip }}
+        run: |
+          cat > inventory.ini << EOF
+          [k3s_nodes]
+          EOF
+          
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            [ -n "$DEV_CLUSTER_IP" ] && echo "dev-cluster ansible_host=$DEV_CLUSTER_IP" >> inventory.ini
+            [ -n "$TEST_CLUSTER_IP" ] && echo "test-cluster ansible_host=$TEST_CLUSTER_IP" >> inventory.ini
+          else
+            [ -n "$CLUSTER_IP" ] && echo "${{ github.event.inputs.network }}-cluster ansible_host=$CLUSTER_IP" >> inventory.ini
+          fi
+          
+          cat >> inventory.ini << EOF
+          
+          [k3s_nodes:vars]
+          ansible_user=ubuntu
+          ansible_ssh_private_key_file=~/.ssh/id_rsa
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+          EOF
+      
+      - name: Install K3s with Ansible
+        run: |
+          ansible-playbook -i inventory.ini ansible/k3s-install.yml
+      
+      - name: Cleanup SSH Key
+        if: always()
+        run: rm -f ~/.ssh/id_rsa
+
+  # Destroy job
+  destroy:
+    if: github.event.inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform Destroy
+        working-directory: infra
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "❌ Type 'DESTROY' to confirm"
+            exit 1
+          fi
+          
+          terraform init -reconfigure \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          
+          terraform destroy \
+            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve

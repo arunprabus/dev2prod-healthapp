@@ -233,11 +233,15 @@ jobs:
         if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          DEV_CLUSTER_IP: ${{ needs.infrastructure.outputs.dev_cluster_ip }}
-          TEST_CLUSTER_IP: ${{ needs.infrastructure.outputs.test_cluster_ip }}
-          CLUSTER_IP: ${{ needs.infrastructure.outputs.cluster_ip }}
+          DEV_CLUSTER_IP: ${{ steps.redeploy.outputs.dev_cluster_ip || steps.deploy.outputs.dev_cluster_ip }}
+          TEST_CLUSTER_IP: ${{ steps.redeploy.outputs.test_cluster_ip || steps.deploy.outputs.test_cluster_ip }}
+          CLUSTER_IP: ${{ steps.redeploy.outputs.cluster_ip || steps.deploy.outputs.cluster_ip }}
         run: |
           echo "☸️ Installing and configuring K3s on cluster nodes..."
+          
+          # Wait for instances to be fully ready
+          echo "⏳ Waiting 90 seconds for instances to be fully ready..."
+          sleep 90
           
           # Setup SSH key
           mkdir -p ~/.ssh
@@ -251,14 +255,26 @@ jobs:
             
             echo "Installing K3s on $ENV cluster ($IP)..."
             
-            # Test SSH connectivity first
-            if ! timeout 10 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$IP "echo 'SSH connection successful'" 2>/dev/null; then
-              echo "❌ Cannot connect to $IP via SSH"
-              return 1
-            fi
+            # Test SSH connectivity with retries
+            echo "Testing SSH connectivity to $IP..."
+            for retry in {1..5}; do
+              if timeout 15 ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$IP "echo 'SSH connection successful'" 2>/dev/null; then
+                echo "✅ SSH connection established to $IP"
+                break
+              fi
+              echo "⏳ SSH attempt $retry/5 failed, retrying in 10 seconds..."
+              sleep 10
+              if [ $retry -eq 5 ]; then
+                echo "❌ Cannot connect to $IP via SSH after 5 attempts"
+                return 1
+              fi
+            done
             
             # Copy and execute K3s installation script
+            echo "Copying K3s installation script to $IP..."
             scp -o StrictHostKeyChecking=no scripts/install-k3s.sh ubuntu@$IP:/tmp/
+            
+            echo "Executing K3s installation on $IP..."
             ssh -o StrictHostKeyChecking=no ubuntu@$IP "chmod +x /tmp/install-k3s.sh && sudo /tmp/install-k3s.sh"
             
             if [ $? -eq 0 ]; then
