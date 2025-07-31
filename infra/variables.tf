@@ -212,3 +212,9 @@ variable "app_parameters" {
 
 # These variables are now defined in variables-tags.tf
 # Removed duplicate declarations
+
+variable "deploy_id" {
+  description = "Unique deployment ID to avoid resource conflicts"
+  type        = string
+  default     = "1"
+}
