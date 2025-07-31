@@ -188,17 +188,17 @@ module "parameter_store" {
   tags        = local.tags
 }
 
-# Deploy monitoring tools (only for monitoring environment)
-module "monitoring" {
-  source = "./modules/monitoring"
-  count  = var.network_tier == "monitoring" ? 1 : 0
-
-  environment     = local.environment
-  vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.public_subnet_ids
-  k3s_instance_ip = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].instance_public_ip : ""
-  tags            = local.tags
-}
+# Deploy monitoring tools (disabled for now due to Kubernetes provider issues)
+# module "monitoring" {
+#   source = "./modules/monitoring"
+#   count  = var.network_tier == "monitoring" ? 1 : 0
+#
+#   environment     = local.environment
+#   vpc_id          = module.vpc.vpc_id
+#   subnet_ids      = module.vpc.public_subnet_ids
+#   k3s_instance_ip = var.network_tier != "lower" && length(module.k3s) > 0 ? module.k3s[0].instance_public_ip : ""
+#   tags            = local.tags
+# }
 
 # Create VPC peering connections for monitoring environment
 # Only applicable when deploying the monitoring environment
