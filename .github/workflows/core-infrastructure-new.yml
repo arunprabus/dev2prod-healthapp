@@ -38,6 +38,8 @@ env:
   # Default values for push events
   DEFAULT_ACTION: deploy
   DEFAULT_NETWORK: lower
+  # Unique suffix to avoid resource conflicts
+  DEPLOY_ID: ${{ github.run_number }}
 
 jobs:
   # Step 1: Deploy GitHub Runner (only for deploy action)
@@ -155,6 +157,7 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="deploy_id=${{ env.DEPLOY_ID }}" \
             -auto-approve
       
       - name: Verify Runner Ready
@@ -256,8 +259,31 @@ jobs:
           
           sleep 10
           
-          # Delete IAM role causing conflicts
-          aws iam delete-role --role-name health-app-dev-parameter-access 2>/dev/null || true
+          # Delete all conflicting IAM roles and resources
+          echo "Cleaning up all conflicting IAM roles..."
+          
+          # Runner IAM roles
+          aws iam remove-role-from-instance-profile --instance-profile-name health-app-runner-profile-$NETWORK_TIER --role-name health-app-runner-role-$NETWORK_TIER 2>/dev/null || true
+          aws iam delete-instance-profile --instance-profile-name health-app-runner-profile-$NETWORK_TIER 2>/dev/null || true
+          aws iam detach-role-policy --role-name health-app-runner-role-$NETWORK_TIER --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore 2>/dev/null || true
+          aws iam delete-role --role-name health-app-runner-role-$NETWORK_TIER 2>/dev/null || true
+          
+          # K3s IAM roles for lower environment
+          if [ "$NETWORK_TIER" == "lower" ]; then
+            for env in dev test; do
+              aws iam remove-role-from-instance-profile --instance-profile-name health-app-$NETWORK_TIER-$env-k3s-profile --role-name health-app-$NETWORK_TIER-$env-k3s-role 2>/dev/null || true
+              aws iam delete-instance-profile --instance-profile-name health-app-$NETWORK_TIER-$env-k3s-profile 2>/dev/null || true
+              aws iam detach-role-policy --role-name health-app-$NETWORK_TIER-$env-k3s-role --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore 2>/dev/null || true
+              aws iam delete-role-policy --role-name health-app-$NETWORK_TIER-$env-k3s-role --policy-name health-app-$NETWORK_TIER-$env-k3s-s3-policy 2>/dev/null || true
+              aws iam delete-role-policy --role-name health-app-$NETWORK_TIER-$env-k3s-role --policy-name health-app-$NETWORK_TIER-$env-k3s-parameter-store-policy 2>/dev/null || true
+              aws iam delete-role --role-name health-app-$NETWORK_TIER-$env-k3s-role 2>/dev/null || true
+            done
+          fi
+          
+          # Delete all conflicting key pairs
+          aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-key 2>/dev/null || true
+          aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-dev-k3s-key 2>/dev/null || true
+          aws ec2 delete-key-pair --key-name health-app-$NETWORK_TIER-test-k3s-key 2>/dev/null || true
           
           sleep 10
           
