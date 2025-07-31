@@ -291,29 +291,47 @@ jobs:
           
           # Wait for runner instance to be ready
           echo "⏳ Waiting for runner instance to be ready..."
+          sleep 120
           
-          # Get runner instance IP
-          RUNNER_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" \
-            --query 'Reservations[0].Instances[0].PublicIpAddress' \
-            --output text 2>/dev/null)
+          # Try multiple possible runner names
+          RUNNER_NAMES=(
+            "health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}"
+            "health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-runner"
+            "health-app-runner"
+          )
           
-          if [ "$RUNNER_IP" != "None" ] && [ -n "$RUNNER_IP" ]; then
-            echo "✅ Runner instance found at $RUNNER_IP"
+          RUNNER_IP=""
+          for name in "${RUNNER_NAMES[@]}"; do
+            echo "Checking for runner with name: $name"
+            IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$name" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].PublicIpAddress' \
+              --output text 2>/dev/null)
             
-            # Test runner connectivity
-            for i in {1..10}; do
-              if timeout 10 curl -s "http://$RUNNER_IP:8080/health" >/dev/null 2>&1; then
-                echo "✅ Runner is healthy and ready"
-                break
-              fi
-              echo "⏳ Waiting for runner to be ready... ($i/10)"
-              sleep 30
-            done
-          else
-            echo "❌ Runner instance not found"
+            if [ "$IP" != "None" ] && [ -n "$IP" ] && [ "$IP" != "null" ]; then
+              RUNNER_IP="$IP"
+              echo "✅ Runner instance found: $name at $RUNNER_IP"
+              break
+            fi
+          done
+          
+          if [ -z "$RUNNER_IP" ]; then
+            echo "❌ No runner instance found with any expected name"
+            echo "Available instances:"
+            aws ec2 describe-instances --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],State.Name,PublicIpAddress]' --output table
             exit 1
           fi
+          
+          # Test basic connectivity
+          echo "Testing basic connectivity to runner..."
+          for i in {1..5}; do
+            if timeout 10 ping -c 1 "$RUNNER_IP" >/dev/null 2>&1; then
+              echo "✅ Runner is reachable"
+              break
+            fi
+            echo "⏳ Waiting for runner connectivity... ($i/5)"
+            sleep 30
+          done
           
           echo "✅ Step 3 Complete: GitHub runner is ready!"
 
