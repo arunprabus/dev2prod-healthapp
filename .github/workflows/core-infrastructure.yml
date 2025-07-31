@@ -756,4 +756,4 @@ jobs:
           echo "   7. ✅ Validate Cluster Deployment → Final validation"
           echo "   8. ✅ Setup K8s Secrets → Created Kubernetes secrets"
           echo "   9. ✅ Configure Network Security → Additional security rules"
-          echo "   10. ✅ Test Connectivity → End-to-end testing" 
+          echo "   10. ✅ Test Connectivity → End-to-end testing"

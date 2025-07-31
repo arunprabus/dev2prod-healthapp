@@ -1,62 +1,42 @@
 #!/bin/bash
-# GitHub Runner Installation Script
-# This script runs during EC2 instance boot to install and configure GitHub Actions runner
+# GitHub Runner Setup - Modular and Parameterized
+# This script calls the dedicated runner-setup.sh with proper variables
 
 set -e
 
 # Variables from Terraform
-GITHUB_REPO="${github_repo}"
+METADATA_IP="${metadata_ip}"
+S3_BUCKET="${s3_bucket}"
 GITHUB_TOKEN="${github_token}"
-RUNNER_NAME="${runner_name}"
+GITHUB_REPO="${github_repo}"
+NETWORK_TIER="${network_tier}"
+AWS_REGION="${aws_region}"
 
-echo "🚀 Installing GitHub Actions runner..."
-echo "Repository: $GITHUB_REPO"
-echo "Runner Name: $RUNNER_NAME"
+echo "🚀 Starting GitHub Runner setup with parameterized configuration..."
+echo "Metadata IP: $METADATA_IP"
+echo "S3 Bucket: $S3_BUCKET"
+echo "Network Tier: $NETWORK_TIER"
+echo "AWS Region: $AWS_REGION"
 
-# Update system
-apt-get update -y
+# Export variables for the setup script
+export metadata_ip="$METADATA_IP"
+export s3_bucket="$S3_BUCKET"
+export github_token="$GITHUB_TOKEN"
+export github_repo="$GITHUB_REPO"
+export network_tier="$NETWORK_TIER"
+export aws_region="$AWS_REGION"
 
-# Install required packages
-apt-get install -y curl jq unzip
+# Download and execute the runner setup script
+echo "Downloading runner setup script..."
+cd /tmp
+wget -O runner-setup.sh https://raw.githubusercontent.com/arunprabus/dev2prod-healthapp/main/infra/modules/github-runner/runner-setup.sh || {
+    echo "Failed to download runner-setup.sh, using embedded version..."
+    # Fallback to embedded script content would go here
+    echo "Please ensure runner-setup.sh is available in the module directory"
+    exit 1
+}
 
-# Create actions-runner directory
-mkdir -p /home/ubuntu/actions-runner
-cd /home/ubuntu/actions-runner
+chmod +x runner-setup.sh
+./runner-setup.sh
 
-# Download GitHub Actions runner
-RUNNER_VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | jq -r '.tag_name' | sed 's/v//')
-curl -o actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz -L https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
-
-# Extract runner
-tar xzf ./actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
-rm actions-runner-linux-x64-${RUNNER_VERSION}.tar.gz
-
-# Set permissions
-chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
-chmod +x /home/ubuntu/actions-runner/config.sh
-chmod +x /home/ubuntu/actions-runner/run.sh
-
-# Get registration token
-REGISTRATION_TOKEN=$(curl -s -X POST \
-  -H "Authorization: token $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.v3+json" \
-  "https://api.github.com/repos/$GITHUB_REPO/actions/runners/registration-token" | \
-  jq -r '.token')
-
-# Configure runner as ubuntu user
-sudo -u ubuntu ./config.sh \
-  --url "https://github.com/$GITHUB_REPO" \
-  --token "$REGISTRATION_TOKEN" \
-  --name "$RUNNER_NAME" \
-  --work "_work" \
-  --replace \
-  --unattended
-
-# Install and start as service
-./svc.sh install
-./svc.sh start
-
-# Enable service to start on boot
-systemctl enable actions.runner.*.service
-
-echo "✅ GitHub Actions runner installed and started successfully!"
+echo "✅ GitHub Runner setup completed successfully!"
