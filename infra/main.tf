@@ -178,15 +178,15 @@ module "github_runner" {
   aws_region       = var.aws_region
 }
 
-# Deploy Parameter Store for configuration management
-module "parameter_store" {
-  source = "./modules/parameter-store"
-
-  environment = local.environment
-  aws_region  = var.aws_region
-  parameters  = var.app_parameters
-  tags        = local.tags
-}
+# Deploy Parameter Store for configuration management - disabled for now
+# module "parameter_store" {
+#   source = "./modules/parameter-store"
+#
+#   environment = local.environment
+#   aws_region  = var.aws_region
+#   parameters  = var.app_parameters
+#   tags        = local.tags
+# }
 
 # Deploy monitoring tools (disabled for now due to Kubernetes provider issues)
 # module "monitoring" {
