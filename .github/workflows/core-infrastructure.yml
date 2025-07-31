@@ -35,6 +35,8 @@ on:
 env:
   AWS_REGION: ap-south-1
   TERRAFORM_VERSION: 1.6.0
+  DEFAULT_ACTION: redeploy
+  DEFAULT_NETWORK: lower
 
 jobs:
   # Step 1: Terraform → Creates instances
@@ -66,9 +68,9 @@ jobs:
             infra/.terraform
             infra/.terraform.lock.hcl
             ~/.terraform.d/plugin-cache
-          key: terraform-${{ env.TERRAFORM_VERSION }}-${{ github.event.inputs.network }}-${{ hashFiles('infra/**/*.tf', 'infra/**/*.tfvars') }}
+          key: terraform-${{ env.TERRAFORM_VERSION }}-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-${{ hashFiles('infra/**/*.tf', 'infra/**/*.tfvars') }}
           restore-keys: |
-            terraform-${{ env.TERRAFORM_VERSION }}-${{ github.event.inputs.network }}-
+            terraform-${{ env.TERRAFORM_VERSION }}-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-
             terraform-${{ env.TERRAFORM_VERSION }}-
 
       - name: Setup Terraform Plugin Cache
@@ -81,7 +83,7 @@ jobs:
         run: |
           terraform init -reconfigure \
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
-            -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
+            -backend-config="key=health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfstate" \
             -backend-config="region=$AWS_REGION"
 
       - name: Terraform Plan
@@ -89,14 +91,14 @@ jobs:
         working-directory: infra
         run: |
           terraform plan \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}"
 
       - name: Complete Redeploy
         id: redeploy
-        if: github.event.inputs.action == 'redeploy'
+        if: github.event.inputs.action == 'redeploy' || github.event_name == 'push'
         working-directory: infra
         run: |
           echo "🔥 Complete infrastructure redeploy - deleting everything..."
@@ -127,7 +129,7 @@ jobs:
           
           # Now destroy everything else
           terraform destroy \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
@@ -140,14 +142,14 @@ jobs:
           
           # Fresh deployment
           terraform apply \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -auto-approve
           
           # Output cluster IPs
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
             echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
           else
@@ -175,14 +177,14 @@ jobs:
           echo "🚀 Incremental deployment - applying changes only..."
           
           terraform apply \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -auto-approve
           
           # Output cluster IPs
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             echo "dev_cluster_ip=$(terraform output -raw dev_cluster_ip)" >> $GITHUB_OUTPUT
             echo "test_cluster_ip=$(terraform output -raw test_cluster_ip)" >> $GITHUB_OUTPUT
           else
@@ -193,7 +195,7 @@ jobs:
         if: github.event.inputs.action == 'destroy'
         working-directory: infra
         run: |
-          if [ "${{ github.event.inputs.action }}" == "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+          if [ "${{ github.event.inputs.action || env.DEFAULT_ACTION }}" == "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
             echo "❌ Type 'DESTROY' to confirm explicit destroy action"
             exit 1
           fi
@@ -201,7 +203,7 @@ jobs:
           echo "🔥 Destroying infrastructure..."
           
           terraform destroy \
-            -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
+            -var-file="environments/${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
@@ -210,7 +212,7 @@ jobs:
   # Step 2: Configure Security Groups → Sets up cross-SG references
   configure-security-groups:
     needs: terraform-deploy
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -232,7 +234,7 @@ jobs:
           
           # Configure cross-SG references for runner access
           echo "🔐 Setting up cross-SG references for secure access..."
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             # Get security group IDs
             DEV_SG=$(aws ec2 describe-instances \
               --filters "Name=tag:Name,Values=health-app-lower-dev-k3s-node-v2" \
@@ -271,7 +273,7 @@ jobs:
   # Step 3: Install and Configure K3s → Actually installs K3s software
   install-k3s:
     needs: [terraform-deploy, configure-security-groups]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -333,7 +335,7 @@ jobs:
           }
           
           # Install k3s based on network tier
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             success=true
             
             if [ -n "$DEV_CLUSTER_IP" ]; then
@@ -365,7 +367,7 @@ jobs:
   # Step 4: Verify K3s API Availability → Tests if K3s is responding
   verify-k3s-api:
     needs: [terraform-deploy, install-k3s]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     
@@ -399,7 +401,7 @@ jobs:
           }
           
           # Test clusters based on network tier
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             success=true
             
             if [ -n "$DEV_CLUSTER_IP" ]; then
@@ -424,7 +426,7 @@ jobs:
   # Step 5: Setup Kubeconfig → Configures cluster access
   setup-kubeconfig:
     needs: [terraform-deploy, verify-k3s-api]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -474,7 +476,7 @@ jobs:
           }
           
           # Setup kubeconfig based on network tier
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             if [ -n "$DEV_CLUSTER_IP" ]; then
               setup_kubeconfig "$DEV_CLUSTER_IP" "dev"
             fi
@@ -496,7 +498,7 @@ jobs:
   # Step 6: Validate Cluster Deployment → Final validation
   validate-cluster:
     needs: [terraform-deploy, setup-kubeconfig]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -545,7 +547,7 @@ jobs:
           sudo mv kubectl /usr/local/bin/
           
           # Validate clusters based on network tier
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             success=true
             
             if [ -n "$DEV_CLUSTER_IP" ]; then
@@ -571,7 +573,7 @@ jobs:
   # Step 7: Setup K8s Secrets → Creates Kubernetes secrets
   setup-k8s-secrets:
     needs: [terraform-deploy, validate-cluster]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -626,7 +628,7 @@ jobs:
           sudo mv kubectl /usr/local/bin/
           
           # Setup secrets based on network tier
-          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+          if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
             if [ -n "$DEV_CLUSTER_IP" ]; then
               setup_secrets "dev"
             fi
@@ -645,7 +647,7 @@ jobs:
   # Step 8: Configure Network Security → Additional security rules
   configure-network-security:
     needs: [terraform-deploy, setup-k8s-secrets]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -664,7 +666,7 @@ jobs:
           # Run network security configuration script
           if [ -f "scripts/setup-cross-sg-references.sh" ]; then
             chmod +x scripts/setup-cross-sg-references.sh
-            ./scripts/setup-cross-sg-references.sh ${{ github.event.inputs.network }}
+            ./scripts/setup-cross-sg-references.sh ${{ github.event.inputs.network || env.DEFAULT_NETWORK }}
           else
             echo "Network security script not found, skipping..."
           fi
@@ -674,7 +676,7 @@ jobs:
   # Step 9: Test Connectivity → End-to-end testing
   test-connectivity:
     needs: [terraform-deploy, configure-network-security]
-    if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
     
     steps:
@@ -697,12 +699,12 @@ jobs:
           # Run connectivity tests
           if [ -f "scripts/test-network-connectivity.sh" ]; then
             chmod +x scripts/test-network-connectivity.sh
-            ./scripts/test-network-connectivity.sh ${{ github.event.inputs.network }}
+            ./scripts/test-network-connectivity.sh ${{ github.event.inputs.network || env.DEFAULT_NETWORK }}
           else
             echo "Connectivity test script not found, performing basic tests..."
             
             # Basic connectivity tests
-            if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
               if [ -n "$DEV_CLUSTER_IP" ]; then
                 echo "Testing dev cluster connectivity..."
                 timeout 10 curl -k -s "https://$DEV_CLUSTER_IP:6443/version" && echo "✅ Dev cluster API accessible" || echo "❌ Dev cluster API not accessible"
