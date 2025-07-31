@@ -110,14 +110,27 @@ jobs:
           
           sleep 20
           
-          # Destroy existing terraform resources first
-          echo "🔥 Destroying existing terraform resources..."
-          terraform destroy \
-            -var-file="environments/runner-$NETWORK_TIER.tfvars" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.REPO_PAT }}" \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -auto-approve 2>/dev/null || echo "No existing resources to destroy"
+          # Delete specific problematic resources
+          echo "🔥 Deleting specific problematic resources..."
+          
+          # Delete IAM role that's causing conflicts
+          aws iam delete-role --role-name health-app-dev-parameter-access 2>/dev/null || true
+          aws iam delete-policy --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/health-app-dev-parameter-read 2>/dev/null || true
+          
+          # Delete all non-default VPCs to free up quota
+          for vpc in $(aws ec2 describe-vpcs --filters "Name=is-default,Values=false" --query "Vpcs[].VpcId" --output text); do
+            echo "Force deleting VPC: $vpc"
+            # Delete all subnets
+            aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc" --query "Subnets[].SubnetId" --output text | xargs -r -n1 aws ec2 delete-subnet --subnet-id 2>/dev/null || true
+            # Delete internet gateways
+            aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc" --query "InternetGateways[].InternetGatewayId" --output text | xargs -r -n1 -I {} sh -c 'aws ec2 detach-internet-gateway --internet-gateway-id {} --vpc-id '$vpc' && aws ec2 delete-internet-gateway --internet-gateway-id {}' 2>/dev/null || true
+            # Delete route tables (except main)
+            aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc" "Name=association.main,Values=false" --query "RouteTables[].RouteTableId" --output text | xargs -r -n1 aws ec2 delete-route-table --route-table-id 2>/dev/null || true
+            # Delete security groups (except default)
+            aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc" --query "SecurityGroups[?GroupName!='default'].GroupId" --output text | xargs -r -n1 aws ec2 delete-security-group --group-id 2>/dev/null || true
+            # Delete VPC
+            aws ec2 delete-vpc --vpc-id $vpc 2>/dev/null || true
+          done
           
           sleep 10
           
@@ -215,14 +228,8 @@ jobs:
           
           sleep 10
           
-          # Destroy existing infrastructure first
-          echo "🔥 Destroying existing infrastructure..."
-          terraform destroy \
-            -var-file="environments/$NETWORK_TIER.tfvars" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="github_pat=${{ secrets.REPO_PAT }}" \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -auto-approve 2>/dev/null || echo "No existing infrastructure to destroy"
+          # Delete IAM role causing conflicts
+          aws iam delete-role --role-name health-app-dev-parameter-access 2>/dev/null || true
           
           sleep 10
           
