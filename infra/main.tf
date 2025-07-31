@@ -228,16 +228,7 @@ module "monitoring_to_higher_peering" {
   tags                    = local.tags
 }
 
-# Output GitHub runner information
-output "github_runner_private_ip" {
-  description = "Private IP of GitHub runner"
-  value       = module.github_runner.runner_ip
-}
 
-output "github_runner_public_ip" {
-  description = "Public IP of GitHub runner"
-  value       = module.github_runner.runner_public_ip
-}
 
 # Database outputs - commented out since RDS module is disabled
 # output "db_instance_address" {
