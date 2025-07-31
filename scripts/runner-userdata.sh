@@ -1,23 +1,25 @@
 #!/bin/bash
+
 # GitHub Runner Installation Script
 # This script runs during EC2 instance boot to install and configure GitHub Actions runner
 
 set -e
 
-# Variables from Terraform
+# Variables (these will be replaced by Terraform)
 GITHUB_REPO="${github_repo}"
-GITHUB_TOKEN="${github_token}"
+GITHUB_PAT="${github_pat}"
 RUNNER_NAME="${runner_name}"
-
-echo "🚀 Installing GitHub Actions runner..."
-echo "Repository: $GITHUB_REPO"
-echo "Runner Name: $RUNNER_NAME"
 
 # Update system
 apt-get update -y
 
 # Install required packages
 apt-get install -y curl jq unzip
+
+# Create runner user
+useradd -m -s /bin/bash runner
+usermod -aG sudo runner
+echo "runner ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Create actions-runner directory
 mkdir -p /home/ubuntu/actions-runner
@@ -38,7 +40,7 @@ chmod +x /home/ubuntu/actions-runner/run.sh
 
 # Get registration token
 REGISTRATION_TOKEN=$(curl -s -X POST \
-  -H "Authorization: token $GITHUB_TOKEN" \
+  -H "Authorization: token $GITHUB_PAT" \
   -H "Accept: application/vnd.github.v3+json" \
   "https://api.github.com/repos/$GITHUB_REPO/actions/runners/registration-token" | \
   jq -r '.token')
@@ -59,4 +61,4 @@ sudo -u ubuntu ./config.sh \
 # Enable service to start on boot
 systemctl enable actions.runner.*.service
 
-echo "✅ GitHub Actions runner installed and started successfully!"
+echo "GitHub Actions runner installed and started successfully"

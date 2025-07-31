@@ -287,7 +287,7 @@ jobs:
       
       - name: Create GitHub Runner
         run: |
-          echo "🏃 Step 3: Starting GitHub self-hosted runner..."
+          echo "🏃 Step 3: Waiting for GitHub self-hosted runner to auto-install..."
           
           # Get runner instance ID
           RUNNER_INSTANCE_ID=$(aws ec2 describe-instances \
@@ -301,19 +301,10 @@ jobs:
           fi
           
           echo "✅ Runner instance found: $RUNNER_INSTANCE_ID"
+          echo "⏳ Waiting for runner to auto-install and come online (3-5 minutes)..."
+          sleep 180
           
-          # Start the runner service using SSM
-          echo "Starting GitHub Actions runner service..."
-          aws ssm send-command \
-            --instance-ids "$RUNNER_INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["cd /home/ubuntu/actions-runner","sudo ./svc.sh start"]' \
-            --output text
-          
-          # Wait for service to start
-          sleep 30
-          
-          echo "✅ Step 3 Complete: GitHub runner service started!"
+          echo "✅ Step 3 Complete: Runner should be online now!"
 
   # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
   install-k3s:
