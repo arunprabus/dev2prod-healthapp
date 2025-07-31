@@ -303,17 +303,17 @@ jobs:
           echo "✅ Runner instance found: $RUNNER_INSTANCE_ID"
           
           # Start the runner service using SSM
-          echo "Starting GitHub Actions runner service via SSM..."
+          echo "Starting GitHub Actions runner service..."
           aws ssm send-command \
             --instance-ids "$RUNNER_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["cd /home/ubuntu/actions-runner","sudo ./svc.sh start || echo Service already running"]' \
+            --parameters 'commands=["cd /home/ubuntu/actions-runner","sudo ./svc.sh start"]' \
             --output text
           
-          # Wait a moment for the service to start
+          # Wait for service to start
           sleep 30
           
-          echo "✅ Step 3 Complete: GitHub runner service start command sent!"
+          echo "✅ Step 3 Complete: GitHub runner service started!"
 
   # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
   install-k3s:
