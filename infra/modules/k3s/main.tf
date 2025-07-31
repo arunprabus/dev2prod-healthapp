@@ -80,7 +80,7 @@ resource "aws_security_group_rule" "k3s_ssh_from_runner" {
 
 # Key pair for SSH access
 resource "aws_key_pair" "main" {
-  key_name   = "${var.name_prefix}-key"
+  key_name   = "${var.name_prefix}-k3s-key"
   public_key = var.ssh_public_key
   tags       = var.tags
 }

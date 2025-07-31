@@ -132,12 +132,12 @@ jobs:
           # Clean up existing key pairs and terraform state
           echo "🧹 Cleaning up existing resources..."
           if [ "${{ github.event.inputs.network }}" == "lower" ]; then
-            aws ec2 delete-key-pair --key-name health-app-lower-dev-key 2>/dev/null || echo "Dev key doesn't exist"
-            aws ec2 delete-key-pair --key-name health-app-lower-test-key 2>/dev/null || echo "Test key doesn't exist"
+            aws ec2 delete-key-pair --key-name health-app-lower-dev-k3s-key 2>/dev/null || echo "Dev key doesn't exist"
+            aws ec2 delete-key-pair --key-name health-app-lower-test-k3s-key 2>/dev/null || echo "Test key doesn't exist"
             terraform state rm 'module.k3s_clusters["dev"].aws_key_pair.main' 2>/dev/null || echo "Dev key not in state"
             terraform state rm 'module.k3s_clusters["test"].aws_key_pair.main' 2>/dev/null || echo "Test key not in state"
           else
-            aws ec2 delete-key-pair --key-name health-app-${{ github.event.inputs.network }}-key 2>/dev/null || echo "Key doesn't exist"
+            aws ec2 delete-key-pair --key-name health-app-${{ github.event.inputs.network }}-k3s-key 2>/dev/null || echo "Key doesn't exist"
             terraform state rm 'module.k3s[0].aws_key_pair.main' 2>/dev/null || echo "Key not in state"
           fi
           sleep 10
