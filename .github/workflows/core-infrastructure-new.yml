@@ -113,7 +113,8 @@ jobs:
           # Delete specific problematic resources
           echo "🔥 Deleting specific problematic resources..."
           
-          # Delete IAM role that's causing conflicts
+          # Delete IAM role that's causing conflicts with proper cleanup
+          aws iam detach-role-policy --role-name health-app-dev-parameter-access --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/health-app-dev-parameter-read 2>/dev/null || true
           aws iam delete-role --role-name health-app-dev-parameter-access 2>/dev/null || true
           aws iam delete-policy --policy-arn arn:aws:iam::$ACCOUNT_ID:policy/health-app-dev-parameter-read 2>/dev/null || true
           
@@ -134,9 +135,20 @@ jobs:
           
           sleep 10
           
-          # Use network-specific runner config
+          # Use network-specific runner config with correct CIDR
           cp environments/runner.tfvars environments/runner-$NETWORK_TIER.tfvars
           sed -i "s/network_tier = \"monitoring\"/network_tier = \"$NETWORK_TIER\"/g" environments/runner-$NETWORK_TIER.tfvars
+          
+          # Fix CIDR ranges based on network tier
+          if [ "$NETWORK_TIER" == "lower" ]; then
+            sed -i 's/vpc_cidr = "10.3.0.0\/16"/vpc_cidr = "10.0.0.0\/16"/g' environments/runner-$NETWORK_TIER.tfvars
+            sed -i 's/public_subnet_cidrs = \["10.3.101.0\/24"\]/public_subnet_cidrs = ["10.0.101.0\/24"]/g' environments/runner-$NETWORK_TIER.tfvars
+            sed -i 's/private_subnet_cidrs = \["10.3.1.0\/24"\]/private_subnet_cidrs = ["10.0.1.0\/24"]/g' environments/runner-$NETWORK_TIER.tfvars
+          elif [ "$NETWORK_TIER" == "higher" ]; then
+            sed -i 's/vpc_cidr = "10.3.0.0\/16"/vpc_cidr = "10.1.0.0\/16"/g' environments/runner-$NETWORK_TIER.tfvars
+            sed -i 's/public_subnet_cidrs = \["10.3.101.0\/24"\]/public_subnet_cidrs = ["10.1.101.0\/24"]/g' environments/runner-$NETWORK_TIER.tfvars
+            sed -i 's/private_subnet_cidrs = \["10.3.1.0\/24"\]/private_subnet_cidrs = ["10.1.1.0\/24"]/g' environments/runner-$NETWORK_TIER.tfvars
+          fi
           
           terraform apply \
             -var-file="environments/runner-$NETWORK_TIER.tfvars" \
