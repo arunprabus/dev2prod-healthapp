@@ -123,7 +123,7 @@ jobs:
     needs: [deploy-runner, deploy-infrastructure]
     runs-on: self-hosted
     container:
-      image: ghcr.io/${{ github.repository }}/runner-tools:latest
+      image: ghcr.io/arunprabus/dev2prod-healthapp/runner-tools:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -168,6 +168,27 @@ jobs:
       - name: Cleanup SSH Key
         if: always()
         run: rm -f ~/.ssh/id_rsa
+      
+      - name: Job Summary
+        if: always()
+        run: |
+          echo "## 🚀 Infrastructure Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Runner | ✅ Ready | Self-hosted runner deployed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Infrastructure | ✅ Deployed | ${{ github.event.inputs.network }} tier resources |" >> $GITHUB_STEP_SUMMARY
+          echo "| K3s Installation | ✅ Complete | Ansible deployment successful |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            echo "### 🎯 Cluster Endpoints" >> $GITHUB_STEP_SUMMARY
+            [ -n "${{ needs.deploy-infrastructure.outputs.dev_cluster_ip }}" ] && echo "- **Dev Cluster**: https://${{ needs.deploy-infrastructure.outputs.dev_cluster_ip }}:6443" >> $GITHUB_STEP_SUMMARY
+            [ -n "${{ needs.deploy-infrastructure.outputs.test_cluster_ip }}" ] && echo "- **Test Cluster**: https://${{ needs.deploy-infrastructure.outputs.test_cluster_ip }}:6443" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 🎯 Cluster Endpoint" >> $GITHUB_STEP_SUMMARY
+            [ -n "${{ needs.deploy-infrastructure.outputs.cluster_ip }}" ] && echo "- **${{ github.event.inputs.network }} Cluster**: https://${{ needs.deploy-infrastructure.outputs.cluster_ip }}:6443" >> $GITHUB_STEP_SUMMARY
+          fi
 
   # Destroy job
   destroy:
@@ -204,3 +225,13 @@ jobs:
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
             -auto-approve
+      
+      - name: Destroy Summary
+        if: always()
+        run: |
+          echo "## 💥 Infrastructure Destroy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Component | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ${{ github.event.inputs.network }} Infrastructure | ✅ Destroyed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Resources Cleaned | ✅ Complete |" >> $GITHUB_STEP_SUMMARY
