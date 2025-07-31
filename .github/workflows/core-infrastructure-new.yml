@@ -1,11 +1,18 @@
 name: Core Infrastructure
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/core-infrastructure-new.yml'
   workflow_dispatch:
     inputs:
       action:
         description: 'Action'
         required: true
+        default: 'deploy'
         type: choice
         options:
           - deploy
@@ -28,11 +35,14 @@ on:
 env:
   AWS_REGION: ap-south-1
   TERRAFORM_VERSION: 1.6.0
+  # Default values for push events
+  DEFAULT_ACTION: deploy
+  DEFAULT_NETWORK: lower
 
 jobs:
   # Step 1: Deploy GitHub Runner (only for deploy action)
   deploy-runner:
-    if: github.event.inputs.action == 'deploy'
+    if: (github.event.inputs.action == 'deploy') || (github.event_name == 'push')
     runs-on: ubuntu-latest
     outputs:
       runner_ready: ${{ steps.verify-runner.outputs.ready }}
@@ -101,7 +111,7 @@ jobs:
 
   # Step 2: Deploy Infrastructure Resources
   deploy-infrastructure:
-    if: github.event.inputs.action == 'deploy'
+    if: (github.event.inputs.action == 'deploy') || (github.event_name == 'push')
     needs: deploy-runner
     runs-on: ubuntu-latest
     outputs:
@@ -210,7 +220,7 @@ jobs:
 
   # Step 3: Install K3s using Ansible
   install-k3s:
-    if: github.event.inputs.action == 'deploy'
+    if: (github.event.inputs.action == 'deploy') || (github.event_name == 'push')
     needs: [deploy-runner, deploy-infrastructure]
     runs-on: self-hosted
     container:
