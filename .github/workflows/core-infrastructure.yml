@@ -1,6 +1,12 @@
 name: Core Infrastructure
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+      - '.github/workflows/core-infrastructure.yml'
   workflow_dispatch:
     inputs:
       action:
