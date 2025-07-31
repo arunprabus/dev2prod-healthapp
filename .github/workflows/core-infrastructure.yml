@@ -270,8 +270,8 @@ jobs:
           
           echo "✅ Step 2 Complete: Security group configuration done!"
 
-  # Step 3: Install and Configure K3s → Actually installs K3s software
-  install-k3s:
+  # Step 3: Create GitHub Runner → Launch EC2 and register it as a GitHub self-hosted runner
+  create-github-runner:
     needs: [terraform-deploy, configure-security-groups]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -279,23 +279,60 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: Create GitHub Runner
+        run: |
+          echo "🏃 Step 3: Creating GitHub self-hosted runner..."
+          
+          # Wait for runner instance to be ready
+          echo "⏳ Waiting for runner instance to be ready..."
+          
+          # Get runner instance IP
+          RUNNER_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null)
+          
+          if [ "$RUNNER_IP" != "None" ] && [ -n "$RUNNER_IP" ]; then
+            echo "✅ Runner instance found at $RUNNER_IP"
+            
+            # Test runner connectivity
+            for i in {1..10}; do
+              if timeout 10 curl -s "http://$RUNNER_IP:8080/health" >/dev/null 2>&1; then
+                echo "✅ Runner is healthy and ready"
+                break
+              fi
+              echo "⏳ Waiting for runner to be ready... ($i/10)"
+              sleep 30
+            done
+          else
+            echo "❌ Runner instance not found"
+            exit 1
+          fi
+          
+          echo "✅ Step 3 Complete: GitHub runner is ready!"
+
+  # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
+  install-k3s:
+    needs: [terraform-deploy, create-github-runner]
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    runs-on: self-hosted
+    
+    steps:
+      - uses: actions/checkout@v4
+      
       - name: Install and Configure K3s
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           DEV_CLUSTER_IP: ${{ needs.terraform-deploy.outputs.dev_cluster_ip }}
           TEST_CLUSTER_IP: ${{ needs.terraform-deploy.outputs.test_cluster_ip }}
           CLUSTER_IP: ${{ needs.terraform-deploy.outputs.cluster_ip }}
         run: |
-          echo "☸️ Step 3: Installing and configuring K3s on cluster nodes..."
-          
-          # Wait for instances to be fully ready
-          echo "⏳ Waiting 90 seconds for instances to be fully ready..."
-          sleep 90
-          
-          # Setup SSH key
-          mkdir -p ~/.ssh
-          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "☸️ Step 4: Installing and configuring K3s on cluster nodes using self-hosted runner..."
           
           # Function to install k3s on a node using script
           install_k3s() {
@@ -352,23 +389,20 @@ jobs:
             fi
           else
             if [ -n "$CLUSTER_IP" ]; then
-              install_k3s "$CLUSTER_IP" "${{ github.event.inputs.network }}"
+              install_k3s "$CLUSTER_IP" "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}"
             else
               echo "❌ Cluster IP not available"
               exit 1
             fi
           fi
           
-          # Cleanup SSH key
-          rm -f ~/.ssh/id_rsa
-          
-          echo "🎉 Step 3 Complete: K3s installation and configuration done!"
+          echo "🎉 Step 4 Complete: K3s installation and configuration done!"
 
-  # Step 4: Verify K3s API Availability → Tests if K3s is responding
+  # Step 5: Verify K3s API Availability → Tests if K3s is responding
   verify-k3s-api:
     needs: [terraform-deploy, install-k3s]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 20
     
     steps:
@@ -380,7 +414,7 @@ jobs:
           TEST_CLUSTER_IP: ${{ needs.terraform-deploy.outputs.test_cluster_ip }}
           CLUSTER_IP: ${{ needs.terraform-deploy.outputs.cluster_ip }}
         run: |
-          echo "🔍 Step 4: Verifying K3s API availability..."
+          echo "🔍 Step 5: Verifying K3s API availability..."
           
           # Function to test K3s API
           test_k3s_api() {
@@ -417,17 +451,17 @@ jobs:
             fi
           else
             if [ -n "$CLUSTER_IP" ]; then
-              test_k3s_api "$CLUSTER_IP" "${{ github.event.inputs.network }}"
+              test_k3s_api "$CLUSTER_IP" "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}"
             fi
           fi
           
-          echo "✅ Step 4 Complete: K3s API verification done!"
+          echo "✅ Step 5 Complete: K3s API verification done!"
 
-  # Step 5: Setup Kubeconfig → Configures cluster access
+  # Step 6: Setup Kubeconfig → Configures cluster access
   setup-kubeconfig:
     needs: [terraform-deploy, verify-k3s-api]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - uses: actions/checkout@v4
@@ -493,13 +527,13 @@ jobs:
           # Cleanup SSH key
           rm -f ~/.ssh/id_rsa
           
-          echo "✅ Step 5 Complete: Kubeconfig setup done!"
+          echo "✅ Step 6 Complete: Kubeconfig setup done!"
 
-  # Step 6: Validate Cluster Deployment → Final validation
+  # Step 7: Validate Cluster Deployment → Final validation
   validate-cluster:
     needs: [terraform-deploy, setup-kubeconfig]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - uses: actions/checkout@v4
@@ -568,13 +602,13 @@ jobs:
             fi
           fi
           
-          echo "✅ Step 6 Complete: Cluster validation done!"
+          echo "✅ Step 7 Complete: Cluster validation done!"
 
-  # Step 7: Setup K8s Secrets → Creates Kubernetes secrets
+  # Step 8: Setup K8s Secrets → Creates Kubernetes secrets
   setup-k8s-secrets:
     needs: [terraform-deploy, validate-cluster]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - uses: actions/checkout@v4
@@ -642,13 +676,13 @@ jobs:
             fi
           fi
           
-          echo "✅ Step 7 Complete: K8s secrets setup done!"
+          echo "✅ Step 8 Complete: K8s secrets setup done!"
 
-  # Step 8: Configure Network Security → Additional security rules
+  # Step 9: Configure Network Security → Additional security rules
   configure-network-security:
     needs: [terraform-deploy, setup-k8s-secrets]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - uses: actions/checkout@v4
@@ -671,13 +705,13 @@ jobs:
             echo "Network security script not found, skipping..."
           fi
           
-          echo "✅ Step 8 Complete: Network security configuration done!"
+          echo "✅ Step 9 Complete: Network security configuration done!"
 
-  # Step 9: Test Connectivity → End-to-end testing
+  # Step 10: Test Connectivity → End-to-end testing
   test-connectivity:
     needs: [terraform-deploy, configure-network-security]
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     
     steps:
       - uses: actions/checkout@v4
@@ -722,14 +756,15 @@ jobs:
             fi
           fi
           
-          echo "🎉 Step 9 Complete: Infrastructure deployment pipeline finished!"
-          echo "📋 Summary: All 9 steps completed successfully"
+          echo "🎉 Step 10 Complete: Infrastructure deployment pipeline finished!"
+          echo "📋 Summary: All 10 steps completed successfully"
           echo "   1. ✅ Terraform → Created instances"
           echo "   2. ✅ Configure Security Groups → Set up cross-SG references"
-          echo "   3. ✅ Install and Configure K3s → Installed K3s software"
-          echo "   4. ✅ Verify K3s API Availability → Tested K3s response"
-          echo "   5. ✅ Setup Kubeconfig → Configured cluster access"
-          echo "   6. ✅ Validate Cluster Deployment → Final validation"
-          echo "   7. ✅ Setup K8s Secrets → Created Kubernetes secrets"
-          echo "   8. ✅ Configure Network Security → Additional security rules"
-          echo "   9. ✅ Test Connectivity → End-to-end testing"
+          echo "   3. ✅ Create GitHub Runner → Launched EC2 and registered as self-hosted runner"
+          echo "   4. ✅ Install and Configure K3s → Installed K3s software using self-hosted runner"
+          echo "   5. ✅ Verify K3s API Availability → Tested K3s response"
+          echo "   6. ✅ Setup Kubeconfig → Configured cluster access"
+          echo "   7. ✅ Validate Cluster Deployment → Final validation"
+          echo "   8. ✅ Setup K8s Secrets → Created Kubernetes secrets"
+          echo "   9. ✅ Configure Network Security → Additional security rules"
+          echo "   10. ✅ Test Connectivity → End-to-end testing"
