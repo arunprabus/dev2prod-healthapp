@@ -24,27 +24,11 @@ provider "aws" {
 # }
 
 locals {
-  # Name prefix for resources
-  name_prefix = "health-app-${var.network_tier}"
-  
-  # Common tags for all resources
-  common_tags = {
-    Project           = "health-app"
-    Environment       = local.environment
-    ManagedBy        = "terraform"
-    Team             = var.team_name
-    CostCenter       = var.cost_center
-    DataClassification = var.data_classification
-    ComplianceScope  = var.compliance_scope
-    BackupRequired   = var.backup_required
-    MonitoringLevel  = var.monitoring_level
-  }
-  
-  # Use tags from variables merged with common tags
-  tags = merge(local.common_tags, var.tags, var.additional_tags)
-  
   # Map network tier to environment
   environment = var.network_tier == "lower" ? "dev" : var.network_tier == "higher" ? "prod" : "monitoring"
+  
+  # Use tags from variables merged with common tags
+  tags = merge(local.common_tags, var.tags)
   
   # Define VPC identifiers for networks
   lower_env_vpc_name = "health-app-lower-vpc"
