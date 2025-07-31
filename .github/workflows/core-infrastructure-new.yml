@@ -110,6 +110,17 @@ jobs:
           
           sleep 20
           
+          # Destroy existing terraform resources first
+          echo "🔥 Destroying existing terraform resources..."
+          terraform destroy \
+            -var-file="environments/runner-$NETWORK_TIER.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve 2>/dev/null || echo "No existing resources to destroy"
+          
+          sleep 10
+          
           # Use network-specific runner config
           cp environments/runner.tfvars environments/runner-$NETWORK_TIER.tfvars
           sed -i "s/network_tier = \"monitoring\"/network_tier = \"$NETWORK_TIER\"/g" environments/runner-$NETWORK_TIER.tfvars
@@ -201,6 +212,17 @@ jobs:
           terraform state rm 'module.parameter_store.aws_iam_role.parameter_access' 2>/dev/null || true
           terraform state rm 'module.parameter_store.aws_iam_policy.parameter_read' 2>/dev/null || true
           terraform state rm 'module.vpc.aws_vpc.main' 2>/dev/null || true
+          
+          sleep 10
+          
+          # Destroy existing infrastructure first
+          echo "🔥 Destroying existing infrastructure..."
+          terraform destroy \
+            -var-file="environments/$NETWORK_TIER.tfvars" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="github_pat=${{ secrets.REPO_PAT }}" \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -auto-approve 2>/dev/null || echo "No existing infrastructure to destroy"
           
           sleep 10
           
