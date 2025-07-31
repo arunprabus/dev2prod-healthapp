@@ -75,16 +75,16 @@ output "cluster_ips" {
 #   value       = module.deployment.config_map_name
 # }
 
-# Monitoring Outputs (conditional based on whether monitoring is enabled)
-output "prometheus_endpoint" {
-  description = "Endpoint for Prometheus service"
-  value       = var.environment == "monitoring" ? module.monitoring[0].prometheus_service_endpoint : null
-}
-
-output "grafana_endpoint" {
-  description = "Endpoint for Grafana service"
-  value       = var.environment == "monitoring" ? module.monitoring[0].grafana_service_endpoint : null
-}
+# Monitoring Outputs - commented out since monitoring module is disabled
+# output "prometheus_endpoint" {
+#   description = "Endpoint for Prometheus service"
+#   value       = var.environment == "monitoring" ? module.monitoring[0].prometheus_service_endpoint : null
+# }
+#
+# output "grafana_endpoint" {
+#   description = "Endpoint for Grafana service"
+#   value       = var.environment == "monitoring" ? module.monitoring[0].grafana_service_endpoint : null
+# }
 
 # Environment Information
 output "environment" {
