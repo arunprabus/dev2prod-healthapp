@@ -56,6 +56,9 @@ jobs:
             -backend-config="key=health-app-runner.tfstate" \
             -backend-config="region=$AWS_REGION"
           
+          # Import existing key pair if it exists
+          terraform import 'module.github_runner.aws_key_pair.runner' health-app-monitoring-key 2>/dev/null || echo "Key pair doesn't exist, will create"
+          
           terraform apply \
             -var-file="environments/runner.tfvars" \
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
@@ -123,6 +126,14 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="key=health-app-${{ github.event.inputs.network }}.tfstate" \
             -backend-config="region=$AWS_REGION"
+          
+          # Import existing resources if they exist
+          if [ "${{ github.event.inputs.network }}" == "lower" ]; then
+            terraform import 'module.k3s_clusters["dev"].aws_key_pair.main' health-app-lower-dev-key 2>/dev/null || echo "Dev key doesn't exist"
+            terraform import 'module.k3s_clusters["test"].aws_key_pair.main' health-app-lower-test-key 2>/dev/null || echo "Test key doesn't exist"
+          else
+            terraform import 'module.k3s[0].aws_key_pair.main' health-app-${{ github.event.inputs.network }}-key 2>/dev/null || echo "Key doesn't exist"
+          fi
           
           terraform apply \
             -var-file="environments/${{ github.event.inputs.network }}.tfvars" \
