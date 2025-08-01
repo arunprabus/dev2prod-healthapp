@@ -231,13 +231,31 @@ jobs:
           echo "⏳ Waiting 30 seconds for instances to initialize..."
           sleep 30
           
+          # List all instances to debug
+          echo "🔍 Debugging instance discovery..."
+          aws ec2 describe-instances --query 'Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key==`Name`].Value|[0]]' --output table
+          
           if [ "${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" == "lower" ]; then
+            # Try multiple tag patterns for lower tier
             DEV_INSTANCE=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=health-app-dev-k3s" "Name=instance-state-name,Values=running" \
-              --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
+              --filters "Name=tag:Name,Values=health-app-*dev*" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null)
+            
+            if [ "$DEV_INSTANCE" = "None" ] || [ -z "$DEV_INSTANCE" ]; then
+              DEV_INSTANCE=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=*dev*k3s*" "Name=instance-state-name,Values=running" \
+                --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
+            fi
+            
             TEST_INSTANCE=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=health-app-test-k3s" "Name=instance-state-name,Values=running" \
-              --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
+              --filters "Name=tag:Name,Values=health-app-*test*" "Name=instance-state-name,Values=running" \
+              --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null)
+            
+            if [ "$TEST_INSTANCE" = "None" ] || [ -z "$TEST_INSTANCE" ]; then
+              TEST_INSTANCE=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=*test*k3s*" "Name=instance-state-name,Values=running" \
+                --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
+            fi
             
             echo "Found dev instance: $DEV_INSTANCE"
             echo "Found test instance: $TEST_INSTANCE"
@@ -245,7 +263,7 @@ jobs:
             echo "test_instance=$TEST_INSTANCE" >> $GITHUB_OUTPUT
           else
             INSTANCE=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=health-app-k3s" "Name=instance-state-name,Values=running" \
+              --filters "Name=tag:Name,Values=health-app-*k3s*" "Name=instance-state-name,Values=running" \
               --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
             
             echo "Found instance: $INSTANCE"
