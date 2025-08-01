@@ -285,26 +285,165 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       
-      - name: Create GitHub Runner
+      - name: Create GitHub Runner with Enhanced Logging
         run: |
-          echo "🏃 Step 3: Waiting for GitHub self-hosted runner to auto-install..."
+          echo "🏃 Step 3: Setting up GitHub self-hosted runner with detailed monitoring..."
           
-          # Get runner instance ID
+          # Get runner instance details
+          echo "🔍 Finding runner instance..."
           RUNNER_INSTANCE_ID=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" "Name=instance-state-name,Values=running" \
             --query 'Reservations[0].Instances[0].InstanceId' \
             --output text 2>/dev/null)
           
+          RUNNER_PUBLIC_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=health-app-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text 2>/dev/null)
+          
           if [ "$RUNNER_INSTANCE_ID" == "None" ] || [ -z "$RUNNER_INSTANCE_ID" ]; then
             echo "❌ Runner instance not found"
+            echo "🔍 Checking all instances with runner tag..."
+            aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-runner-*" --query 'Reservations[].Instances[].[InstanceId,State.Name,Tags[?Key==`Name`].Value|[0]]' --output table
             exit 1
           fi
           
-          echo "✅ Runner instance found: $RUNNER_INSTANCE_ID"
-          echo "⏳ Waiting for runner to auto-install and come online (3-5 minutes)..."
-          sleep 180
+          echo "✅ Runner instance found:"
+          echo "   Instance ID: $RUNNER_INSTANCE_ID"
+          echo "   Public IP: $RUNNER_PUBLIC_IP"
           
-          echo "✅ Step 3 Complete: Runner should be online now!"
+          # Monitor instance initialization
+          echo "📊 Monitoring instance initialization..."
+          for i in {1..20}; do
+            INSTANCE_STATUS=$(aws ec2 describe-instance-status --instance-ids $RUNNER_INSTANCE_ID --query 'InstanceStatuses[0].InstanceStatus.Status' --output text 2>/dev/null || echo "initializing")
+            SYSTEM_STATUS=$(aws ec2 describe-instance-status --instance-ids $RUNNER_INSTANCE_ID --query 'InstanceStatuses[0].SystemStatus.Status' --output text 2>/dev/null || echo "initializing")
+            
+            echo "   Check $i/20: Instance=$INSTANCE_STATUS, System=$SYSTEM_STATUS"
+            
+            if [ "$INSTANCE_STATUS" == "ok" ] && [ "$SYSTEM_STATUS" == "ok" ]; then
+              echo "✅ Instance fully initialized"
+              break
+            fi
+            
+            if [ $i -eq 20 ]; then
+              echo "⚠️ Instance still initializing after 10 minutes, but continuing..."
+            fi
+            
+            sleep 30
+          done
+          
+          # Monitor cloud-init and user data execution
+          echo "📋 Monitoring cloud-init and runner setup..."
+          for i in {1..30}; do
+            echo "   Setup check $i/30 ($(date)):"
+            
+            # Check if we can connect via Session Manager
+            if aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$RUNNER_INSTANCE_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null | grep -q "Online"; then
+              echo "   ✅ SSM Agent online"
+              
+              # Check cloud-init status
+              CLOUD_INIT_STATUS=$(aws ssm send-command \
+                --instance-ids $RUNNER_INSTANCE_ID \
+                --document-name "AWS-RunShellScript" \
+                --parameters 'commands=["cloud-init status --wait --long 2>/dev/null || echo failed"]' \
+                --query 'Command.CommandId' --output text 2>/dev/null)
+              
+              if [ -n "$CLOUD_INIT_STATUS" ] && [ "$CLOUD_INIT_STATUS" != "None" ]; then
+                sleep 10
+                CLOUD_INIT_RESULT=$(aws ssm get-command-invocation \
+                  --command-id $CLOUD_INIT_STATUS \
+                  --instance-id $RUNNER_INSTANCE_ID \
+                  --query 'StandardOutputContent' --output text 2>/dev/null || echo "pending")
+                echo "   📋 Cloud-init status: $CLOUD_INIT_RESULT"
+              fi
+              
+              # Check if runner service is running
+              RUNNER_CHECK=$(aws ssm send-command \
+                --instance-ids $RUNNER_INSTANCE_ID \
+                --document-name "AWS-RunShellScript" \
+                --parameters 'commands=["systemctl is-active actions.runner.* 2>/dev/null || echo inactive"]' \
+                --query 'Command.CommandId' --output text 2>/dev/null)
+              
+              if [ -n "$RUNNER_CHECK" ] && [ "$RUNNER_CHECK" != "None" ]; then
+                sleep 5
+                RUNNER_STATUS=$(aws ssm get-command-invocation \
+                  --command-id $RUNNER_CHECK \
+                  --instance-id $RUNNER_INSTANCE_ID \
+                  --query 'StandardOutputContent' --output text 2>/dev/null || echo "checking")
+                echo "   🏃 Runner service status: $RUNNER_STATUS"
+                
+                if echo "$RUNNER_STATUS" | grep -q "active"; then
+                  echo "   ✅ Runner service is active!"
+                  break
+                fi
+              fi
+            else
+              echo "   ⏳ SSM Agent not yet online"
+            fi
+            
+            if [ $i -eq 30 ]; then
+              echo "   ⚠️ Runner setup taking longer than expected, but continuing..."
+            fi
+            
+            sleep 30
+          done
+          
+          # Final status check
+          echo "🔍 Final runner status check..."
+          
+          # Check GitHub API for registered runners
+          echo "📡 Checking GitHub API for registered runners..."
+          GITHUB_RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runners" | \
+            jq -r '.runners[] | select(.name | contains("github-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}")) | "\(.name) - \(.status)"')
+          
+          if [ -n "$GITHUB_RUNNERS" ]; then
+            echo "✅ Found registered runners:"
+            echo "$GITHUB_RUNNERS"
+          else
+            echo "⚠️ No runners found in GitHub API yet"
+          fi
+          
+          # Get detailed logs via SSM
+          echo "📋 Getting setup logs from instance..."
+          LOG_COMMAND=$(aws ssm send-command \
+            --instance-ids $RUNNER_INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["echo === Cloud-init output ===; tail -50 /var/log/cloud-init-output.log 2>/dev/null || echo No cloud-init log; echo === Runner config log ===; tail -20 /var/log/runner-config.log 2>/dev/null || echo No runner config log; echo === Service status ===; systemctl status actions.runner.* --no-pager 2>/dev/null || echo No service found"]' \
+            --query 'Command.CommandId' --output text 2>/dev/null)
+          
+          if [ -n "$LOG_COMMAND" ] && [ "$LOG_COMMAND" != "None" ]; then
+            sleep 10
+            echo "📋 Instance logs:"
+            aws ssm get-command-invocation \
+              --command-id $LOG_COMMAND \
+              --instance-id $RUNNER_INSTANCE_ID \
+              --query 'StandardOutputContent' --output text 2>/dev/null || echo "Could not retrieve logs"
+          fi
+          
+          # Create additional helper scripts on the instance
+          echo "📝 Creating helper scripts on runner instance..."
+          HELPER_COMMAND=$(aws ssm send-command \
+            --instance-ids $RUNNER_INSTANCE_ID \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["cat > /home/ubuntu/check-runner-github.sh << '"'"'EOF'"'"'\n#!/bin/bash\necho \"🔍 Checking runner registration with GitHub...\"\necho \"Runner name: github-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-$(hostname | cut -d"-" -f3-)\"\necho \"Labels: github-runner-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}\"\necho \"\"\necho \"📋 Service status:\"\nsystemctl status actions.runner.* --no-pager 2>/dev/null || echo \"No service found\"\necho \"\"\necho \"🔍 Process status:\"\nps aux | grep -E \"(Runner|run.sh)\" | grep -v grep || echo \"No runner process\"\necho \"\"\necho \"🌐 Network test:\"\ncurl -s --connect-timeout 10 https://api.github.com/rate_limit > /dev/null && echo \"✅ GitHub API accessible\" || echo \"❌ GitHub API not accessible\"\necho \"\"\necho \"📝 Recent logs:\"\ntail -10 /var/log/runner-config.log 2>/dev/null || echo \"No config log\"\nEOF\nchmod +x /home/ubuntu/check-runner-github.sh\nchown ubuntu:ubuntu /home/ubuntu/check-runner-github.sh"]' \
+            --query 'Command.CommandId' --output text 2>/dev/null)
+          
+          if [ -n "$HELPER_COMMAND" ] && [ "$HELPER_COMMAND" != "None" ]; then
+            sleep 5
+            echo "✅ Helper scripts created on instance"
+          fi
+          
+          echo "✅ Step 3 Complete: Runner setup monitoring finished!"
+          echo "📋 Summary:"
+          echo "   - Instance ID: $RUNNER_INSTANCE_ID"
+          echo "   - Public IP: $RUNNER_PUBLIC_IP"
+          echo "   - Check runner status in GitHub Settings > Actions > Runners"
+          echo "   - Use Session Manager to connect: aws ssm start-session --target $RUNNER_INSTANCE_ID"
+          echo "   - On instance, run: /home/ubuntu/check-runner-github.sh"
+          echo "   - Debug with: /home/ubuntu/debug-runner.sh"
+          echo "   - Restart with: /home/ubuntu/restart-runner.sh"
 
   # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
   install-k3s:
@@ -756,4 +895,4 @@ jobs:
           echo "   7. ✅ Validate Cluster Deployment → Final validation"
           echo "   8. ✅ Setup K8s Secrets → Created Kubernetes secrets"
           echo "   9. ✅ Configure Network Security → Additional security rules"
-          echo "   10. ✅ Test Connectivity → End-to-end testing" 
+          echo "   10. ✅ Test Connectivity → End-to-end testing"

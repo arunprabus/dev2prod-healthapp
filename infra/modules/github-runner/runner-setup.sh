@@ -124,8 +124,16 @@ sleep 10
 
 # Get registration token
 echo "Getting registration token..."
+echo "Repository: ${github_repo}"
+echo "Network tier: ${network_tier}"
 REG_TOKEN=$(curl -s -X POST -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners/registration-token | jq -r '.token')
-echo "Token obtained: $${REG_TOKEN:0:10}..."
+if [ "$REG_TOKEN" == "null" ] || [ -z "$REG_TOKEN" ]; then
+  echo "❌ Failed to get registration token"
+  echo "Checking token permissions..."
+  curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo} | jq -r '.permissions // "No permissions info"'
+  exit 1
+fi
+echo "✅ Token obtained: $${REG_TOKEN:0:10}..."
 
 # Create service with clean naming
 RUNNER_NAME="github-runner-${network_tier}-$(hostname | cut -d'-' -f3-)"
@@ -136,25 +144,70 @@ echo "🏷️ Labels: $LABELS"
 echo "🌐 Network tier: ${network_tier}"
 
 # Configure runner as ubuntu user
-echo "Running configuration as ubuntu user..."
-sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended --replace" > /var/log/runner-config.log 2>&1
+echo "🔧 Running configuration as ubuntu user..."
+echo "Runner name: $RUNNER_NAME"
+echo "Labels: $LABELS"
+echo "Repository URL: https://github.com/${github_repo}"
+
+# Create a more detailed config log
+echo "$(date): Starting runner configuration" > /var/log/runner-config.log
+echo "Runner name: $RUNNER_NAME" >> /var/log/runner-config.log
+echo "Labels: $LABELS" >> /var/log/runner-config.log
+echo "Repository: https://github.com/${github_repo}" >> /var/log/runner-config.log
+echo "Network tier: ${network_tier}" >> /var/log/runner-config.log
+echo "" >> /var/log/runner-config.log
+
+sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/${github_repo} --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended --replace" >> /var/log/runner-config.log 2>&1
 CONFIG_EXIT_CODE=$?
 echo "Runner configuration exit code: $CONFIG_EXIT_CODE"
 
+if [ $CONFIG_EXIT_CODE -eq 0 ]; then
+  echo "✅ Runner configuration successful"
+else
+  echo "❌ Runner configuration failed"
+  echo "Last 10 lines of config log:"
+  tail -10 /var/log/runner-config.log
+fi
+
 # Install and start service
-echo "Installing runner service..."
+echo "🚀 Installing runner service..."
 cd /home/ubuntu/actions-runner
-./svc.sh install ubuntu
-./svc.sh start
+
+echo "Installing service as ubuntu user..."
+./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
+INSTALL_EXIT_CODE=$?
+echo "Service install exit code: $INSTALL_EXIT_CODE"
+
+echo "Starting service..."
+./svc.sh start >> /var/log/runner-config.log 2>&1
+START_EXIT_CODE=$?
+echo "Service start exit code: $START_EXIT_CODE"
+
 sleep 10
 
-# Check service status
+# Check service status with detailed logging
+echo "🔍 Checking service status..."
 if systemctl is-active --quiet actions.runner.*; then
     echo "✅ Runner service started successfully"
+    systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1
 else
-    echo "⚠️ Service failed, trying direct start..."
-    sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh > /dev/null 2>&1 &"
+    echo "⚠️ Service failed, checking what went wrong..."
+    systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1 || echo "No service found"
+    
+    echo "Trying direct start as fallback..."
+    sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh >> /var/log/runner-config.log 2>&1 &"
+    sleep 5
+    
+    if pgrep -f Runner.Listener > /dev/null; then
+        echo "✅ Runner started via direct method"
+    else
+        echo "❌ All start methods failed"
+    fi
 fi
+
+# Final process check
+echo "🔍 Final process check:"
+ps aux | grep -E "(Runner|run.sh)" | grep -v grep || echo "No runner process found"
 
 # Add ubuntu to docker group
 usermod -aG docker ubuntu
@@ -173,9 +226,27 @@ else
     echo "❌ GitHub API connectivity: FAILED"
 fi
 
-echo "🎉 GitHub runner setup completed!"
+# Final status summary
+echo "📋 GitHub runner setup summary:"
 echo "Runner name: $RUNNER_NAME"
+echo "Labels: $LABELS"
+echo "Network tier: ${network_tier}"
 echo "Public IP: $(curl -s http://$METADATA_IP/latest/meta-data/public-ipv4)"
+echo "Instance ID: $(curl -s http://$METADATA_IP/latest/meta-data/instance-id)"
+
+# Check final status
+if systemctl is-active --quiet actions.runner.* || pgrep -f Runner.Listener > /dev/null; then
+    echo "🎉 ✅ GitHub runner setup completed successfully!"
+    echo "Runner should appear in GitHub Settings > Actions > Runners"
+else
+    echo "⚠️ GitHub runner setup completed with issues"
+    echo "Check logs: /var/log/runner-config.log"
+    echo "Debug with: /home/ubuntu/debug-runner.sh"
+fi
+
+# Log final status
+echo "$(date): Setup completed" >> /var/log/runner-config.log
+echo "Final status: $(systemctl is-active actions.runner.* 2>/dev/null || echo 'inactive')" >> /var/log/runner-config.log
 
 # Setup EBS volume for logs
 echo "💾 Setting up EBS volume for logs..."
