@@ -38,6 +38,50 @@ LABELS="github-runner-$NETWORK_TIER"
 
 sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/$GITHUB_REPO --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended"
 
+# Fix missing svc.sh if needed
+if [ ! -f "svc.sh" ]; then
+    echo "🔧 Creating missing svc.sh script..."
+    cat > svc.sh << 'SVCEOF'
+#!/bin/bash
+SVC_NAME="actions.runner.$(cat .runner | jq -r '.gitHubUrl' | sed 's/https:\/\/github.com\///').$(cat .runner | jq -r '.runnerName').service"
+SVC_DESCRIPTION="GitHub Actions Runner ($(cat .runner | jq -r '.gitHubUrl' | sed 's/https:\/\/github.com\///').$(cat .runner | jq -r '.runnerName'))"
+USER_ID=$2
+RUNNER_ROOT=$(pwd)
+if [ -z "$USER_ID" ]; then USER_ID=$(whoami); fi
+case $1 in
+    install)
+        sudo tee /etc/systemd/system/$SVC_NAME > /dev/null << UNIT
+[Unit]
+Description=$SVC_DESCRIPTION
+After=network.target
+[Service]
+ExecStart=$RUNNER_ROOT/run.sh
+User=$USER_ID
+WorkingDirectory=$RUNNER_ROOT
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+[Install]
+WantedBy=multi-user.target
+UNIT
+        sudo systemctl daemon-reload
+        sudo systemctl enable $SVC_NAME
+        ;;
+    start) sudo systemctl start $SVC_NAME ;;
+    stop) sudo systemctl stop $SVC_NAME ;;
+    status) sudo systemctl status $SVC_NAME ;;
+    uninstall)
+        sudo systemctl stop $SVC_NAME || true
+        sudo systemctl disable $SVC_NAME || true
+        sudo rm -f /etc/systemd/system/$SVC_NAME
+        sudo systemctl daemon-reload
+        ;;
+    *) echo "Usage: $0 {install|start|stop|status|uninstall} [user]"; exit 1 ;;
+esac
+SVCEOF
+    chmod +x svc.sh
+fi
+
 # Install and start service
 ./svc.sh install ubuntu
 ./svc.sh start
