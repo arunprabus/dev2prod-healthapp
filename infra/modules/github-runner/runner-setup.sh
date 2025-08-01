@@ -21,9 +21,19 @@ if ! command -v aws >/dev/null; then
   unzip awscliv2.zip && ./aws/install && rm -rf aws awscliv2.zip
 fi
 
-# Install SSM Agent
+# Install SSM Agent properly
 if ! systemctl is-active --quiet amazon-ssm-agent; then
-    snap install amazon-ssm-agent --classic || apt install snapd -y && snap install amazon-ssm-agent --classic
+    # Try snap first
+    if command -v snap >/dev/null; then
+        snap install amazon-ssm-agent --classic
+    else
+        # Install snapd and then SSM agent
+        apt install snapd -y
+        snap install amazon-ssm-agent --classic
+    fi
+    # Enable and start SSM agent
+    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+    systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 fi
 
 # Install additional tools
@@ -40,7 +50,13 @@ cd /home/ubuntu
 mkdir -p actions-runner && cd actions-runner
 curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
 tar xzf ./actions-runner-linux-x64-2.311.0.tar.gz
+
+# Create symlink for root access
+ln -sf /home/ubuntu/actions-runner /root/actions-runner
+
+# Fix ownership
 chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
+chmod +x /home/ubuntu/actions-runner/*.sh
 
 # Clean up existing runners
 EXISTING_RUNNERS=$(curl -s -H "Authorization: token ${github_token}" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${github_repo}/actions/runners | jq -r ".runners[] | select(.name | contains(\"github-runner-${network_tier}\")) | .id")
@@ -73,6 +89,7 @@ systemctl start actions.runner.*
 # Wait and verify service is running
 sleep 15
 
+# Check if service is running
 if systemctl is-active --quiet actions.runner.*; then
     echo "Runner service started successfully" >> /var/log/runner-config.log
     systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1
@@ -81,6 +98,14 @@ else
     systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1
     # Fallback to direct start
     sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh >> /var/log/runner-config.log 2>&1 &"
+    sleep 5
+fi
+
+# Final verification
+if pgrep -f "Runner.Listener" > /dev/null || systemctl is-active --quiet actions.runner.*; then
+    echo "Runner is running" >> /var/log/runner-config.log
+else
+    echo "Runner failed to start" >> /var/log/runner-config.log
 fi
 
 usermod -aG docker ubuntu
@@ -118,15 +143,48 @@ chown ubuntu:ubuntu /home/ubuntu/monitor-runner.sh
 # Add to root crontab since it needs systemctl access
 echo "*/5 * * * * /home/ubuntu/monitor-runner.sh" | crontab -
 
+# Create startup script for boot
+cat > /etc/systemd/system/github-runner-startup.service << 'EOF'
+[Unit]
+Description=GitHub Runner Startup
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/ubuntu/start-runner-on-boot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /home/ubuntu/start-runner-on-boot.sh << 'EOF'
+#!/bin/bash
+sleep 30
+if ! systemctl is-active --quiet actions.runner.*; then
+    systemctl start actions.runner.* || {
+        cd /home/ubuntu/actions-runner
+        sudo -u ubuntu nohup ./run.sh > /var/log/runner-config.log 2>&1 &
+    }
+fi
+EOF
+
+chmod +x /home/ubuntu/start-runner-on-boot.sh
+systemctl enable github-runner-startup.service
+
 # Debug and restart scripts
 cat > /home/ubuntu/debug-runner.sh << 'EOF'
 #!/bin/bash
 echo "=== Service Status ==="
-systemctl status actions.runner.* --no-pager
+systemctl status actions.runner.* --no-pager 2>/dev/null || echo "No service found"
 echo "=== Process Status ==="
-ps aux | grep Runner | grep -v grep
+ps aux | grep Runner | grep -v grep || echo "No runner process"
+echo "=== Actions Runner Directory ==="
+ls -la /home/ubuntu/actions-runner/ 2>/dev/null || echo "Directory not found"
 echo "=== Config Log ==="
-tail -20 /var/log/runner-config.log
+tail -20 /var/log/runner-config.log 2>/dev/null || echo "No config log"
+echo "=== Service Files ==="
+ls -la /etc/systemd/system/actions.runner.* 2>/dev/null || echo "No service files"
 EOF
 
 cat > /home/ubuntu/restart-runner.sh << 'EOF'
