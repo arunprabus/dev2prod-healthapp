@@ -207,14 +207,7 @@ jobs:
             -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
             -var="github_pat=${{ secrets.REPO_PAT }}" \
             -var="aws_region=${{ env.AWS_REGION }}" \
-            -auto-approve
-
-  # Step 2: Setup Runner Service via AWS Run Command
-  setup-runner-service:
-    needs: terraform-deploy
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    
+            -auto-approve   
     steps:
       - uses: actions/checkout@v4
       
