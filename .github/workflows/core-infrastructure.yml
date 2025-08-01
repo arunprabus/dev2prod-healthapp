@@ -567,6 +567,27 @@ jobs:
               fi
             else
               echo "   ⏳ SSM Agent not yet online"
+              
+              # Trigger SSM fix after 10 failed attempts
+              if [ $i -eq 10 ]; then
+                echo "   🔧 Triggering SSM Agent fix..."
+                SSM_FIX_SCRIPT='#!/bin/bash
+                echo "Fixing SSM Agent..."
+                sudo snap install amazon-ssm-agent --classic || true
+                sudo systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+                sudo systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+                sudo systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager || true
+                echo "SSM Agent fix completed"'
+                
+                # Use user data to execute fix (fallback method)
+                aws ec2 modify-instance-attribute \
+                  --instance-id $RUNNER_INSTANCE_ID \
+                  --user-data "$(echo "$SSM_FIX_SCRIPT" | base64 -w 0)" || echo "Could not modify user data"
+                
+                echo "   🔄 Restarting instance to apply SSM fix..."
+                aws ec2 reboot-instances --instance-ids $RUNNER_INSTANCE_ID
+                sleep 60  # Wait for reboot
+              fi
             fi
             
             if [ $i -eq 30 ]; then

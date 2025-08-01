@@ -1,28 +1,25 @@
 #!/bin/bash
+set -e
 
-# Fix SSM Agent on K3s instances
-echo "🔧 Fixing SSM Agent..."
+echo "🔧 Fixing SSM Agent installation..."
 
-INSTANCES=("13.232.75.155" "13.127.158.59")
-
-for IP in "${INSTANCES[@]}"; do
-  echo "📡 Fixing SSM on $IP..."
-  
-  ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$IP << 'EOF'
-    # Install SSM Agent
+# Check if snap version exists
+if snap list amazon-ssm-agent 2>/dev/null; then
+    echo "✅ SSM Agent installed via snap"
+    sudo systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service
+else
+    echo "📦 Installing SSM Agent via snap..."
     sudo snap install amazon-ssm-agent --classic
     sudo systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
     sudo systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
-    
-    # Check status
-    sudo systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager
-    
-    # Check K3s while we're here
-    sudo systemctl status k3s --no-pager
-    curl -k https://localhost:6443/version || echo "K3s API not responding"
-EOF
-  
-  echo "✅ SSM fix attempted on $IP"
-done
+fi
 
-echo "🎉 SSM Agent fix complete!"
+# Check status
+echo "📊 SSM Agent status:"
+sudo systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager
+
+# Test registration
+echo "🔍 Testing SSM registration..."
+aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)" --query 'InstanceInformationList[0].PingStatus' --output text
+
+echo "✅ SSM Agent fixed"
