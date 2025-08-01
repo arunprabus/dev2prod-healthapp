@@ -1,0 +1,93 @@
+name: Simplified CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      network-tier:
+        description: 'Network tier (e.g., dev, qa, prod)'
+        required: true
+        default: 'lower'
+
+jobs:
+  terraform-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Terraform Init & Apply
+        uses: hashicorp/terraform-github-actions@v1.6.0
+        with:
+          tf_actions_subcommand: 'apply'
+          tf_actions_working_dir: 'infrastructure'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+
+  setup-runner-service:
+    needs: terraform-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Find Runner Instance ID
+        id: find-runner
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*runner*${{ github.event.inputs.network-tier }}*" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
+          echo "::set-output name=instance_id::$INSTANCE_ID"
+      - name: Fix Runner Service via SSM
+        if: steps.find-runner.outputs.instance_id != 'None'
+        run: |
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "${{ steps.find-runner.outputs.instance_id }}" \
+            --parameters commands=["cd /home/ubuntu/actions-runner && sudo ./svc.sh install ubuntu && sudo ./svc.sh start"] \
+            --region ${{ secrets.AWS_REGION }}
+
+  install-k3s:
+    needs: terraform-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Find K3s Instance ID
+        id: find-k3s
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=*k3s*${{ github.event.inputs.network-tier }}*" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "None")
+          echo "::set-output name=instance_id::$INSTANCE_ID"
+      - name: Install K3s via SSM
+        if: steps.find-k3s.outputs.instance_id != 'None'
+        run: |
+          aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "${{ steps.find-k3s.outputs.instance_id }}" \
+            --parameters commands=["$(sed 's/"/\"/g' install-k3s.sh)"] \
+            --region ${{ secrets.AWS_REGION }}
+
+  setup-cross-sg:
+    needs: terraform-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Setup Cross-SG References
+        run: |
+          chmod +x setup-cross-sg-references.sh
+          ./setup-cross-sg-references.sh ${{ github.event.inputs.network-tier }}
