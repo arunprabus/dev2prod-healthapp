@@ -62,11 +62,24 @@ sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url http
 
 # Install and start service
 cd /home/ubuntu/actions-runner
-./svc.sh install ubuntu >> /var/log/runner-config.log 2>&1
-./svc.sh start >> /var/log/runner-config.log 2>&1
-sleep 10
 
-if ! systemctl is-active --quiet actions.runner.*; then
+# Install service as root (required for systemd service creation)
+./svc.sh install ubuntu
+
+# Enable and start the service
+systemctl enable actions.runner.*
+systemctl start actions.runner.*
+
+# Wait and verify service is running
+sleep 15
+
+if systemctl is-active --quiet actions.runner.*; then
+    echo "Runner service started successfully" >> /var/log/runner-config.log
+    systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1
+else
+    echo "Service failed, trying direct start" >> /var/log/runner-config.log
+    systemctl status actions.runner.* --no-pager >> /var/log/runner-config.log 2>&1
+    # Fallback to direct start
     sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh >> /var/log/runner-config.log 2>&1 &"
 fi
 
@@ -81,21 +94,60 @@ mount /dev/xvdf /var/log/runner-logs
 echo "/dev/xvdf /var/log/runner-logs ext4 defaults 0 2" >> /etc/fstab
 chown ubuntu:ubuntu /var/log/runner-logs
 
-# Basic health monitor
+# Health monitor with proper service management
 cat > /home/ubuntu/monitor-runner.sh << 'EOF'
 #!/bin/bash
+LOG_FILE="/var/log/runner-logs/health-monitor.log"
+echo "$(date): Checking runner health" >> $LOG_FILE
+
 if ! systemctl is-active --quiet actions.runner.*; then
-    systemctl restart actions.runner.* || sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh &"
+    echo "$(date): Service inactive, restarting" >> $LOG_FILE
+    systemctl restart actions.runner.* >> $LOG_FILE 2>&1
+    sleep 10
+    
+    if ! systemctl is-active --quiet actions.runner.*; then
+        echo "$(date): Service restart failed, trying direct start" >> $LOG_FILE
+        sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && nohup ./run.sh >> $LOG_FILE 2>&1 &"
+    fi
 fi
 EOF
-chmod +x /home/ubuntu/monitor-runner.sh
-echo "*/5 * * * * /home/ubuntu/monitor-runner.sh" | crontab -u ubuntu -
 
-# Simple debug script
+chmod +x /home/ubuntu/monitor-runner.sh
+chown ubuntu:ubuntu /home/ubuntu/monitor-runner.sh
+
+# Add to root crontab since it needs systemctl access
+echo "*/5 * * * * /home/ubuntu/monitor-runner.sh" | crontab -
+
+# Debug and restart scripts
 cat > /home/ubuntu/debug-runner.sh << 'EOF'
 #!/bin/bash
+echo "=== Service Status ==="
 systemctl status actions.runner.* --no-pager
-ps aux | grep Runner
-cat /var/log/runner-config.log
+echo "=== Process Status ==="
+ps aux | grep Runner | grep -v grep
+echo "=== Config Log ==="
+tail -20 /var/log/runner-config.log
 EOF
-chmod +x /home/ubuntu/debug-runner.sh
+
+cat > /home/ubuntu/restart-runner.sh << 'EOF'
+#!/bin/bash
+echo "Stopping runner service..."
+systemctl stop actions.runner.*
+sleep 5
+pkill -f Runner.Listener || true
+sleep 5
+echo "Starting runner service..."
+systemctl start actions.runner.*
+sleep 10
+if systemctl is-active --quiet actions.runner.*; then
+    echo "Service restarted successfully"
+    systemctl status actions.runner.* --no-pager
+else
+    echo "Service failed, trying direct start"
+    cd /home/ubuntu/actions-runner
+    sudo -u ubuntu nohup ./run.sh > /var/log/runner-logs/direct-run.log 2>&1 &
+fi
+EOF
+
+chmod +x /home/ubuntu/debug-runner.sh /home/ubuntu/restart-runner.sh
+chown ubuntu:ubuntu /home/ubuntu/debug-runner.sh /home/ubuntu/restart-runner.sh
