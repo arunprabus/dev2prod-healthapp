@@ -1,6 +1,13 @@
-# Use existing key pair for GitHub runner
-data "aws_key_pair" "github_runner" {
-  key_name = "health-app-runner-${var.network_tier}"
+# Create key pair for GitHub runner
+resource "aws_key_pair" "github_runner" {
+  key_name   = "health-app-runner-${var.network_tier}"
+  public_key = var.ssh_public_key
+  
+  tags = {
+    Name = "health-app-runner-${var.network_tier}"
+    Environment = var.network_tier
+    Project = "health-app"
+  }
 }
 
 # EBS volume for runner logs
@@ -25,11 +32,11 @@ data "aws_subnet" "runner_subnet" {
 resource "aws_instance" "github_runner" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type              = "t2.micro"
-  key_name                   = data.aws_key_pair.github_runner.key_name
+  key_name                   = aws_key_pair.github_runner.key_name
   vpc_security_group_ids     = [aws_security_group.runner.id]
   subnet_id                  = var.subnet_id
   associate_public_ip_address = true  # Ensure public IP for internet access
-  iam_instance_profile       = data.aws_iam_instance_profile.runner_profile.name
+  iam_instance_profile       = aws_iam_instance_profile.runner_profile.name
   
   user_data_replace_on_change = true
   user_data = base64encode(templatefile("${path.module}/user_data_simple.sh", {
@@ -105,12 +112,49 @@ resource "aws_security_group" "runner" {
 
 
 
-# Use existing IAM role
-data "aws_iam_role" "runner_role" {
+# Create IAM role for GitHub runner
+resource "aws_iam_role" "runner_role" {
   name = "health-app-runner-role-${var.network_tier}"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+  
+  tags = {
+    Name = "health-app-runner-role-${var.network_tier}"
+    Environment = var.network_tier
+    Project = "health-app"
+  }
 }
 
-# Use existing IAM instance profile
-data "aws_iam_instance_profile" "runner_profile" {
+# Attach policies to runner role
+resource "aws_iam_role_policy_attachment" "runner_ssm" {
+  role       = aws_iam_role.runner_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "runner_s3" {
+  role       = aws_iam_role.runner_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
+}
+
+# Create IAM instance profile
+resource "aws_iam_instance_profile" "runner_profile" {
   name = "health-app-runner-profile-${var.network_tier}"
+  role = aws_iam_role.runner_role.name
+  
+  tags = {
+    Name = "health-app-runner-profile-${var.network_tier}"
+    Environment = var.network_tier
+    Project = "health-app"
+  }
 }
