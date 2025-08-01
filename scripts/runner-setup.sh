@@ -17,9 +17,19 @@ unzip awscliv2.zip && ./aws/install
 # Setup GitHub Actions runner
 cd /home/ubuntu
 mkdir -p actions-runner && cd actions-runner
-curl -o actions-runner-linux-x64-2.311.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.311.0/actions-runner-linux-x64-2.311.0.tar.gz
-tar xzf ./actions-runner-linux-x64-2.311.0.tar.gz
+curl -o actions-runner-linux-x64-2.316.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.316.0/actions-runner-linux-x64-2.316.0.tar.gz
+tar xzf ./actions-runner-linux-x64-2.316.0.tar.gz
 chown -R ubuntu:ubuntu /home/ubuntu/actions-runner
+
+# Verify svc.sh exists
+if [ ! -f "svc.sh" ]; then
+    echo "❌ svc.sh missing from runner package"
+    ls -la
+    exit 1
+else
+    echo "✅ svc.sh found"
+    chmod +x svc.sh
+fi
 
 # Clean up old runners
 echo "🧹 Cleaning up old runners..."
@@ -38,9 +48,9 @@ LABELS="github-runner-$NETWORK_TIER"
 
 sudo -u ubuntu bash -c "cd /home/ubuntu/actions-runner && ./config.sh --url https://github.com/$GITHUB_REPO --token $REG_TOKEN --name '$RUNNER_NAME' --labels '$LABELS' --unattended"
 
-# Fix missing svc.sh if needed
+# Verify svc.sh exists (should be in package)
 if [ ! -f "svc.sh" ]; then
-    echo "🔧 Creating missing svc.sh script..."
+    echo "⚠️ svc.sh missing, creating fallback..."
     cat > svc.sh << 'SVCEOF'
 #!/bin/bash
 SVC_NAME="actions.runner.$(cat .runner | jq -r '.gitHubUrl' | sed 's/https:\/\/github.com\///').$(cat .runner | jq -r '.runnerName').service"
@@ -79,6 +89,9 @@ UNIT
     *) echo "Usage: $0 {install|start|stop|status|uninstall} [user]"; exit 1 ;;
 esac
 SVCEOF
+    chmod +x svc.sh
+else
+    echo "✅ svc.sh exists in package"
     chmod +x svc.sh
 fi
 

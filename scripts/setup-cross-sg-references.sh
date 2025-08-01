@@ -1,67 +1,40 @@
 #!/bin/bash
-
-# Post-deployment script to add cross-SG references
-# This runs after infrastructure is deployed to avoid circular dependencies
-
 set -e
 
-ENVIRONMENT=${1:-dev}
-AWS_REGION=${AWS_REGION:-ap-south-1}
+NETWORK_TIER="$1"
+REGION="ap-south-1"
 
-echo "🔧 Adding cross-SG references for $ENVIRONMENT environment..."
-
-cd infra
-
-# Get security group IDs from Terraform outputs
-DB_SG_ID=$(terraform output -raw db_security_group_id 2>/dev/null || echo "")
-
-if [ "$ENVIRONMENT" == "dev" ] || [ "$ENVIRONMENT" == "test" ]; then
-    K3S_SG_ID=$(terraform output -raw ${ENVIRONMENT}_security_group_id 2>/dev/null || echo "")
-else
-    K3S_SG_ID=$(terraform output -raw k3s_security_group_id 2>/dev/null || echo "")
+if [ -z "$NETWORK_TIER" ]; then
+  echo "❌ Usage: $0 <network-tier>"
+  exit 1
 fi
 
-if [ -z "$DB_SG_ID" ] || [ -z "$K3S_SG_ID" ]; then
-    echo "❌ Security group IDs not found. Skipping cross-SG setup."
-    echo "DB SG ID: $DB_SG_ID"
-    echo "K3S SG ID: $K3S_SG_ID"
-    exit 0
+echo "🔐 Setting up cross-SG references for [$NETWORK_TIER] tier..."
+
+# Fetch SG of runner instance matching the tier
+RUNNER_SG=$(aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=*runner*$NETWORK_TIER*" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+    --output text 2>/dev/null)
+
+# Fetch SG of K3s node matching the tier
+K3S_SG=$(aws ec2 describe-instances \
+    --filters "Name=tag:Name,Values=*dev*k3s*$NETWORK_TIER*" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+    --output text 2>/dev/null)
+
+# Handle missing SGs
+if [ "$RUNNER_SG" == "None" ] || [ "$K3S_SG" == "None" ]; then
+  echo "⚠️ Security group(s) not found for tier [$NETWORK_TIER]. Skipping rule."
+  exit 0
 fi
 
-echo "📍 Database Security Group: $DB_SG_ID"
-echo "📍 K3s Security Group: $K3S_SG_ID"
-
-# Get database port
-DB_PORT=$(terraform output -raw db_instance_port 2>/dev/null || echo "3306")
-
-echo "🔒 Adding cross-SG reference rules..."
-
-# Add ingress rule to DB SG allowing K3s SG
-echo "Adding DB ingress rule from K3s SG..."
+# Apply SG ingress rule (Runner → K3s port 6443)
 aws ec2 authorize-security-group-ingress \
-    --group-id $DB_SG_ID \
+    --group-id "$K3S_SG" \
     --protocol tcp \
-    --port $DB_PORT \
-    --source-group $K3S_SG_ID \
-    --region $AWS_REGION \
-    2>/dev/null || echo "Rule may already exist"
+    --port 6443 \
+    --source-group "$RUNNER_SG" \
+    --region "$REGION" 2>/dev/null || echo "⚠️ Rule may already exist or failed silently."
 
-# Remove the broad VPC CIDR rule from DB SG
-echo "Removing broad VPC CIDR rule from DB SG..."
-VPC_CIDR=$(terraform output -raw vpc_cidr_block 2>/dev/null || echo "")
-if [ -n "$VPC_CIDR" ]; then
-    aws ec2 revoke-security-group-ingress \
-        --group-id $DB_SG_ID \
-        --protocol tcp \
-        --port $DB_PORT \
-        --cidr $VPC_CIDR \
-        --region $AWS_REGION \
-        2>/dev/null || echo "VPC CIDR rule may not exist"
-fi
-
-echo "✅ Cross-SG references configured successfully!"
-echo ""
-echo "🔒 Security Configuration:"
-echo "  • Database SG allows ingress from K3s SG only"
-echo "  • Removed broad VPC CIDR access"
-echo "  • Network isolation maintained"
+echo "✅ Cross-SG rule added: $RUNNER_SG → $K3S_SG (port 6443)"
