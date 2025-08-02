@@ -157,6 +157,7 @@ resource "aws_instance" "k3s" {
   user_data = templatefile("../modules/k3s/user_data_k3s.sh", {
     environment   = var.environment
     cluster_name  = "${local.name_prefix}-cluster"
+    db_endpoint   = ""
     s3_bucket     = "health-app-terraform-state"
     network_tier  = var.network_tier
   })
