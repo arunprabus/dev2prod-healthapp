@@ -1,4 +1,4 @@
-name: 🔗 Network Connectivity Test
+name: 🔧 Post-Infrastructure Setup & Connectivity Test
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ on:
           - k3s-api
           - database
           - full
-          - k3s-setup
+          - post-infra-setup
 
 jobs:
   connectivity-test:
@@ -33,12 +33,27 @@ jobs:
       TEST_TYPE: ${{ inputs.test_type }}
 
     steps:
+      - name: 🔧 Install AWS CLI
+        run: |
+          if ! command -v aws &> /dev/null; then
+            echo "Installing AWS CLI..."
+            sudo apt-get update -qq
+            sudo apt-get install -y unzip curl
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip -q awscliv2.zip
+            sudo ./aws/install
+            rm -rf aws awscliv2.zip
+            echo "AWS CLI installed: $(aws --version)"
+          else
+            echo "AWS CLI already available: $(aws --version)"
+          fi
+
       - name: 🔑 Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ap-south-1
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          aws configure set default.region "ap-south-1"
+          echo "✅ AWS credentials configured"
 
       - name: 🏷️ Verify Runner Network
         run: |
@@ -123,48 +138,106 @@ jobs:
             echo "❌ AWS CLI not available - skipping database connectivity test"
           fi
 
-      - name: 🔧 K3s Setup (Optional)
-        if: ${{ inputs.test_type == 'k3s-setup' }}
+      - name: 🔧 Post-Infrastructure Setup
+        if: ${{ inputs.test_type == 'post-infra-setup' }}
         run: |
-          echo "=== K3s Setup (Optional) ==="
-          echo "⚠️ This step is optional and may fail due to network restrictions"
+          echo "=== Post-Infrastructure Setup & Configuration ==="
           
           case "$NETWORK_TIER" in
             lower)
               TAG_NAME="health-app-lower-k3s-master"
+              SECRET_NAME="KUBECONFIG_DEV"
               ;;
             higher)
               TAG_NAME="health-app-higher-k3s-master"
+              SECRET_NAME="KUBECONFIG_PROD"
               ;;
             monitoring)
               TAG_NAME="health-app-monitoring-k3s-master"
+              SECRET_NAME="KUBECONFIG_MONITORING"
               ;;
           esac
           
-          if command -v aws &> /dev/null; then
-            K3S_IP=$(aws ec2 describe-instances \
-              --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
-              --query "Reservations[*].Instances[*].PrivateIpAddress" --output text 2>/dev/null || echo "")
-            
-            if [ -z "$K3S_IP" ] || [ "$K3S_IP" = "None" ]; then
-              echo "❌ No K3s cluster found - skipping setup"
-              exit 0
-            fi
-            
-            echo "Found K3s cluster at: $K3S_IP"
-            
-            if ping -c 2 "$K3S_IP" > /dev/null 2>&1; then
-              echo "✅ K3s cluster is reachable"
-              echo "ℹ️ K3s setup would be possible with proper network configuration"
-            else
-              echo "❌ K3s cluster not reachable from this runner"
-              echo "ℹ️ This may be expected due to network isolation"
-            fi
-          else
-            echo "❌ AWS CLI not available - skipping K3s setup test"
+          if ! command -v aws &> /dev/null; then
+            echo "❌ AWS CLI not available - skipping K3s setup"
+            exit 0
           fi
           
-          echo "✅ K3s setup check completed (non-blocking)"
+          # Get K3s cluster IP
+          K3S_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].PublicIpAddress" --output text 2>/dev/null || echo "")
+          
+          if [ -z "$K3S_IP" ] || [ "$K3S_IP" = "None" ]; then
+            echo "❌ No K3s cluster found - skipping setup"
+            exit 0
+          fi
+          
+          echo "Found K3s cluster at: $K3S_IP"
+          
+          # Test connectivity
+          if ! ping -c 2 "$K3S_IP" > /dev/null 2>&1; then
+            echo "❌ K3s cluster not reachable - skipping configuration"
+            exit 0
+          fi
+          
+          echo "✅ K3s cluster is reachable"
+          
+          # Setup SSH key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s_key
+          chmod 600 ~/.ssh/k3s_key
+          
+          # Wait for SSH to be ready
+          echo "Waiting for SSH to be ready..."
+          for i in {1..10}; do
+            if ssh -i ~/.ssh/k3s_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
+              echo "✅ SSH connection established (attempt $i)"
+              break
+            else
+              echo "SSH not ready, waiting... (attempt $i/10)"
+              if [ $i -eq 10 ]; then
+                echo "❌ SSH connection failed after 10 attempts"
+                exit 0
+              fi
+              sleep 10
+            fi
+          done
+          
+          # Download kubeconfig
+          echo "Downloading kubeconfig..."
+          if scp -i ~/.ssh/k3s_key -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml ./kubeconfig-$NETWORK_TIER 2>/dev/null; then
+            # Update server IP in kubeconfig
+            sed -i "s/127.0.0.1/$K3S_IP/g" ./kubeconfig-$NETWORK_TIER
+            
+            # Test kubeconfig
+            export KUBECONFIG=./kubeconfig-$NETWORK_TIER
+            if kubectl cluster-info --request-timeout=10s > /dev/null 2>&1; then
+              echo "✅ Kubeconfig is working"
+              kubectl get nodes
+              
+              # Create GitHub secret
+              if command -v gh &> /dev/null; then
+                KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-$NETWORK_TIER)
+                echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME
+                echo "✅ GitHub secret $SECRET_NAME created"
+              else
+                echo "⚠️ GitHub CLI not available - kubeconfig saved locally"
+              fi
+            else
+              echo "❌ Kubeconfig test failed"
+            fi
+            
+            # Cleanup
+            rm -f ./kubeconfig-$NETWORK_TIER
+          else
+            echo "❌ Failed to download kubeconfig"
+          fi
+          
+          # Cleanup SSH key
+          rm -f ~/.ssh/k3s_key
+          
+          echo "✅ Post-infrastructure setup completed"
 
       - name: 📊 Generate Report
         if: always()
