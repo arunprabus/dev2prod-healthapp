@@ -167,8 +167,15 @@ KUBE_EOF
   # Upload kubeconfig to S3 if bucket is provided
   if [[ -n "$S3_BUCKET" ]]; then
     echo "📤 Uploading kubeconfig to S3..."
-    aws s3 cp /tmp/gha-kubeconfig.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml
-    echo "✅ GitHub Actions kubeconfig uploaded to S3"
+    if aws s3 ls s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml >/dev/null 2>&1; then
+      echo "🔄 Existing kubeconfig found, updating..."
+      aws s3 cp /tmp/gha-kubeconfig.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml
+      echo "✅ GitHub Actions kubeconfig updated in S3"
+    else
+      echo "📤 Creating new kubeconfig..."
+      aws s3 cp /tmp/gha-kubeconfig.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml
+      echo "✅ GitHub Actions kubeconfig uploaded to S3"
+    fi
   fi
 else
   echo "❌ Failed to generate service account token"
@@ -176,13 +183,20 @@ fi
 
 # Also upload standard kubeconfig to S3 for easy access
 if [[ -n "$S3_BUCKET" ]]; then
-  echo "📤 Uploading standard kubeconfig to S3..."
   # Create standard kubeconfig with public IP
   PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
   cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig-standard.yaml
   sed -i "s/127.0.0.1/$PUBLIC_IP/g" /tmp/kubeconfig-standard.yaml
-  aws s3 cp /tmp/kubeconfig-standard.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml
-  echo "✅ Standard kubeconfig uploaded to S3"
+  
+  if aws s3 ls s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml >/dev/null 2>&1; then
+    echo "🔄 Existing standard kubeconfig found, updating..."
+    aws s3 cp /tmp/kubeconfig-standard.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml
+    echo "✅ Standard kubeconfig updated in S3"
+  else
+    echo "📤 Creating new standard kubeconfig..."
+    aws s3 cp /tmp/kubeconfig-standard.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml
+    echo "✅ Standard kubeconfig uploaded to S3"
+  fi
 fi
 
 # Setup local kubeconfig access
