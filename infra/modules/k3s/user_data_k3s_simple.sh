@@ -12,7 +12,17 @@ NETWORK_TIER="${network_tier}"
 # Update system
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y curl wget git jq
+apt-get install -y curl wget git jq unzip
+
+# Install AWS CLI v2 (optional - K3s works without it)
+echo "Installing AWS CLI v2..."
+if curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && unzip awscliv2.zip && ./aws/install; then
+  echo "AWS CLI v2 installed successfully"
+  rm -rf aws awscliv2.zip
+else
+  echo "AWS CLI v2 installation failed, continuing without it"
+  rm -rf aws awscliv2.zip 2>/dev/null || true
+fi
 
 # Install K3s
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --disable traefik" sh -

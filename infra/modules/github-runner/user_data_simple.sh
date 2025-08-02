@@ -32,13 +32,22 @@ echo "SSM Agent status: $(systemctl is-active snap.amazon-ssm-agent.amazon-ssm-a
 # Install AWS CLI v2
 echo "=== STEP 3: INSTALLING AWS CLI ==="
 echo "Downloading AWS CLI..."
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-echo "Extracting AWS CLI..."
-unzip awscliv2.zip
-echo "Installing AWS CLI..."
-./aws/install
-rm -rf aws awscliv2.zip
-echo "AWS CLI installed: $(aws --version)"
+if curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"; then
+  echo "Extracting AWS CLI..."
+  if unzip awscliv2.zip; then
+    echo "Installing AWS CLI..."
+    if ./aws/install; then
+      echo "AWS CLI installed: $(aws --version)"
+    else
+      echo "AWS CLI installation failed"
+    fi
+  else
+    echo "AWS CLI extraction failed"
+  fi
+  rm -rf aws awscliv2.zip
+else
+  echo "AWS CLI download failed, continuing without it"
+fi
 
 # Install kubectl
 echo "Installing kubectl..."
