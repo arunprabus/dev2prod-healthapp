@@ -103,7 +103,7 @@ resource "aws_security_group" "runner" {
 
 # Security group for K3s cluster access
 resource "aws_security_group" "k3s_access" {
-  name_prefix = "k3s-access-sg-${var.network_tier}-"
+  name_prefix = "health-app-k3s-access-sg-${var.network_tier}-"
   vpc_id = var.vpc_id
   
   # K3s API server access from runner subnet
@@ -125,7 +125,7 @@ resource "aws_security_group" "k3s_access" {
   }
   
   tags = {
-    Name = "k3s-access-sg-${var.network_tier}"
+    Name = "health-app-k3s-access-sg-${var.network_tier}"
     Purpose = "K3s cluster access from runners"
     Environment = var.network_tier
     Project = "health-app"
