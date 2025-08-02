@@ -473,7 +473,7 @@ jobs:
         
         # Get K3s instance ID
         INSTANCE_ID=$(aws ec2 describe-instances \
-          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=tag:Type,Values=k3s-cluster" "Name=instance-state-name,Values=running" \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
           --query "Reservations[0].Instances[0].InstanceId" --output text)
         
         if [ "$INSTANCE_ID" != "None" ] && [ -n "$INSTANCE_ID" ]; then
