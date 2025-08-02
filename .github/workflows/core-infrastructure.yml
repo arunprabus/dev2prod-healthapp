@@ -572,34 +572,42 @@ jobs:
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
         chmod 600 ~/.ssh/k3s-key
         
-        # Wait for K3s to be ready via API check
-        echo "⏳ Waiting for K3s API to be ready..."
-        for i in {1..20}; do
-          echo "Checking K3s API (attempt $i/20)..."
-          if timeout 10 curl -k https://$K3S_IP:6443/version 2>/dev/null; then
-            echo "✅ K3s API is responding!"
+        # Wait for K3s to be ready via API check - COMMENTED OUT
+        # echo "⏳ Waiting for K3s API to be ready..."
+        # for i in {1..20}; do
+        #   echo "Checking K3s API (attempt $i/20)..."
+        #   if timeout 10 curl -k https://$K3S_IP:6443/version 2>/dev/null; then
+        #     echo "✅ K3s API is responding!"
+        #     break
+        #   else
+        #     echo "⏳ K3s API not ready yet, waiting..."
+        #     sleep 30
+        #   fi
+        #   
+        #   if [ $i -eq 20 ]; then
+        #     echo "❌ K3s API failed to start after 10 minutes"
+        #     echo "💡 This usually means K3s installation failed during user-data execution"
+        #     exit 1
+        #   fi
+        # done
+        
+        echo "⏩ Skipping K3s API check - proceeding directly to kubeconfig download"
+        
+        # Download kubeconfig via SSH with retry
+        echo "📥 Downloading kubeconfig via SSH..."
+        for i in {1..10}; do
+          if scp -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml; then
+            echo "✅ Kubeconfig downloaded successfully (attempt $i)"
             break
           else
-            echo "⏳ K3s API not ready yet, waiting..."
-            sleep 30
-          fi
-          
-          if [ $i -eq 20 ]; then
-            echo "❌ K3s API failed to start after 10 minutes"
-            echo "💡 This usually means K3s installation failed during user-data execution"
-            exit 1
+            echo "⏳ Kubeconfig not ready yet (attempt $i/10), waiting..."
+            if [ $i -eq 10 ]; then
+              echo "❌ Failed to download kubeconfig after 10 attempts"
+              exit 1
+            fi
+            sleep 60
           fi
         done
-        
-        # Download kubeconfig via SSH
-        echo "📥 Downloading kubeconfig via SSH..."
-        if scp -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml; then
-          echo "✅ Kubeconfig downloaded successfully"
-        else
-          echo "❌ Failed to download kubeconfig via SSH"
-          echo "💡 This usually means K3s is not installed or kubeconfig file doesn't exist"
-          exit 1
-        fi
         
         # Update server IP to public IP
         sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml

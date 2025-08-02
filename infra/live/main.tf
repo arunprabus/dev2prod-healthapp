@@ -164,18 +164,7 @@ resource "aws_instance" "k3s" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
 
-# Simple delay to allow instance to boot
-resource "null_resource" "wait_for_k3s" {
-  depends_on = [aws_instance.k3s]
-  
-  provisioner "local-exec" {
-    command = "echo 'EC2 instance created, kubeconfig step will handle K3s verification'"
-  }
-  
-  triggers = {
-    instance_id = aws_instance.k3s.id
-  }
-}
+
 
 # GitHub Runner
 module "github_runner" {

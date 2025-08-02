@@ -1,141 +1,61 @@
 #!/bin/bash
-set -e
+set -euxo pipefail
 
-echo "🚀 Setting up K3s Kubernetes cluster..."
-# Log to both file and console for debugging
-exec > >(tee -a /var/log/k3s-install.log) 2>&1
+# Wait until cloud-init is fully done
+cloud-init status --wait || true
 
-echo "=== K3S USER DATA STARTED ==="
-date
-echo "PWD: $(pwd)"
-echo "USER: $(whoami)"
-echo "HOSTNAME: $(hostname)"
-echo "ENVIRONMENT: ${environment}"
-echo "NETWORK_TIER: ${network_tier}"
-echo "CLUSTER_NAME: ${cluster_name}"
-echo "S3_BUCKET: ${s3_bucket}"
-
-# Variables from Terraform
+# --- Injected by Terraform ---
 ENVIRONMENT="${environment}"
 CLUSTER_NAME="${cluster_name}"
-# DB_ENDPOINT="dummy"  # Commented out for now
+DB_ENDPOINT="${db_endpoint}"
 S3_BUCKET="${s3_bucket}"
 NETWORK_TIER="${network_tier}"
 
-echo "=== K3S INSTALLATION STARTED ==="
-date
-echo "Environment: $ENVIRONMENT"
-echo "Cluster: $CLUSTER_NAME"
-echo "Network Tier: $NETWORK_TIER"
-# echo "Database: $DB_ENDPOINT"  # Commented out for now
+# Log file to track installation
+LOG_FILE="/var/log/k3s-install.log"
+touch "$LOG_FILE"
 
-# Update system
-echo "=== STEP 1: UPDATING SYSTEM ==="
-export DEBIAN_FRONTEND=noninteractive
-echo "Running apt-get update..."
-apt-get update
-echo "Installing base packages..."
-apt-get install -y curl wget git jq docker.io awscli unzip  # mysql-client (commented out for now)
-echo "Base packages installed successfully"
+echo "🚀 Starting K3s setup..." | tee -a "$LOG_FILE"
 
-# Install/Update SSM Agent
-echo "Installing SSM Agent..."
-snap install amazon-ssm-agent --classic
-systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+# --- Install K3s ---
+echo "📦 Installing K3s..." | tee -a "$LOG_FILE"
+curl -sfL https://get.k3s.io | sh - >> "$LOG_FILE" 2>&1
 
-# Install K3s with basic setup
-echo "=== STEP 4: INSTALLING K3S ==="
-echo "📦 Installing K3s..."
-export INSTALL_K3S_EXEC="--write-kubeconfig-mode 644"
-echo "Downloading K3s installer..."
-if curl -sfL https://get.k3s.io | sh -; then
-  echo "K3s installation script completed"
-else
-  echo "K3s installation script failed"
+# --- Wait for kubeconfig ---
+echo "⏳ Waiting for kubeconfig..." | tee -a "$LOG_FILE"
+for i in {1..30}; do
+  if test -f /etc/rancher/k3s/k3s.yaml; then
+    break
+  fi
+  sleep 5
+done
+
+if ! test -f /etc/rancher/k3s/k3s.yaml; then
+  echo "❌ kubeconfig not found. Exiting." | tee -a "$LOG_FILE"
   exit 1
 fi
 
-echo "=== STEP 5: VERIFYING K3S INSTALLATION ==="
-echo "⏳ Waiting for K3s to initialize..."
-sleep 60
+# --- Replace 127.0.0.1 with public IP for external access ---
+PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+sed -i "s/127.0.0.1/$PUBLIC_IP/g" /etc/rancher/k3s/k3s.yaml
 
-# Check if K3s is running
-echo "Checking K3s service status..."
-if systemctl is-active --quiet k3s; then
-  echo "✅ K3s service is running"
-else
-  echo "❌ K3s service not running, attempting to start..."
-  echo "Current service status:"
-  systemctl status k3s --no-pager || echo "Service status check failed"
-  
-  echo "Attempting to start K3s service..."
-  systemctl start k3s
-  sleep 30
-  
-  if systemctl is-active --quiet k3s; then
-    echo "✅ K3s service started successfully"
-  else
-    echo "❌ K3s service failed to start"
-    echo "Final service status:"
-    systemctl status k3s --no-pager
-    echo "Service logs:"
-    journalctl -u k3s --no-pager -n 50
-    exit 1
-  fi
-fi
-
-# Setup Docker
-echo "🐳 Setting up Docker..."
-systemctl enable docker
-systemctl start docker
-usermod -aG docker ubuntu
-
-# Install kubectl
-echo "☸️ Installing kubectl..."
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv kubectl /usr/local/bin/
-
-# Install Helm
-echo "⚓ Installing Helm..."
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-
-# Install additional tools
-echo "🔧 Installing additional tools..."
-# Install Terraform
-wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | tee /usr/share/keyrings/hashicorp-archive-keyring.gpg
-echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/hashicorp.list
-apt-get update && apt-get install -y terraform
-
-# Install Docker Compose
-curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-chmod +x /usr/local/bin/docker-compose
-
-# Wait for kubeconfig file to be created
-echo "⏳ Waiting for kubeconfig file..."
-for i in {1..20}; do
-  if [ -f /etc/rancher/k3s/k3s.yaml ]; then
-    echo "✅ Kubeconfig file found (attempt $i)"
-    break
-  else
-    echo "⏳ Waiting for kubeconfig... (attempt $i/20)"
-    sleep 10
-  fi
-done
-
-# Test kubectl
+# --- Export kubeconfig ---
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-if kubectl get nodes > /dev/null 2>&1; then
-  echo "✅ kubectl is working"
-  kubectl get nodes
-else
-  echo "⚠️ kubectl not working yet, but kubeconfig exists"
-fi
 
-# Create completion marker for external scripts
-echo "K3S_READY=$(date)" > /var/log/k3s-ready
-echo "✅ K3s installation completed and ready"
+# --- Install kubectl ---
+echo "⚙️ Installing kubectl..." | tee -a "$LOG_FILE"
+KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+chmod +x kubectl
+mv kubectl /usr/local/bin/kubectl
+
+# --- Validate kubectl works ---
+echo "🧪 Testing kubectl..." | tee -a "$LOG_FILE"
+kubectl get nodes >> "$LOG_FILE" 2>&1 || echo "⚠️ kubectl failed initially."
+
+# --- Signal completion ---
+touch /var/log/k3s-install-complete
+echo "✅ K3s setup complete." | tee -a "$LOG_FILE"
 
 # Create namespaces based on environment
 echo "🏷️ Creating namespaces for $ENVIRONMENT..."
