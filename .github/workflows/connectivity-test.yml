@@ -232,6 +232,17 @@ jobs:
         echo "Creating GitHub secret..."
         KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-${{ inputs.network_tier }})
         
+        # Use GitHub CLI to create secret
+        echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_$(echo ${{ inputs.network_tier }} | tr '[:lower:]' '[:upper:]') --body -
+        
+        echo "✅ GitHub secret KUBECONFIG_$(echo ${{ inputs.network_tier }} | tr '[:lower:]' '[:upper:]') created"
+        
+        # Cleanup
+        rm -f ./kubeconfig-${{ inputs.network_tier }}
+        
+        echo "🎉 K3s setup completed successfully for ${{ inputs.network_tier }} network"
+        KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-${{ inputs.network_tier }})
+        
         # Determine secret name based on network tier
         case "${{ inputs.network_tier }}" in
           "lower")
