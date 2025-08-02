@@ -457,6 +457,64 @@ jobs:
         echo "🔧 Applying data transfer optimizations"
         ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} optimize
 
+    - name: Verify K3s Installation
+      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
+      working-directory: infra/two-network-setup
+      run: |
+        echo "🔍 Verifying K3s installation..."
+        
+        # Get K3s instance IP
+        K3S_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
+        
+        if [ "$K3S_IP" = "None" ] || [ -z "$K3S_IP" ]; then
+          echo "❌ No K3s instance found"
+          exit 1
+        fi
+        
+        echo "K3s instance found at: $K3S_IP"
+        
+        # Wait for instance to be ready
+        echo "Waiting for instance to be ready..."
+        for i in {1..20}; do
+          if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'Instance ready'" 2>/dev/null; then
+            echo "✅ Instance is accessible (attempt $i)"
+            break
+          else
+            echo "Instance not ready, waiting... (attempt $i/20)"
+            if [ $i -eq 20 ]; then
+              echo "⚠️ Instance not accessible after 20 attempts - continuing anyway"
+              break
+            fi
+            sleep 15
+          fi
+        done
+        
+        # Check K3s installation
+        echo "Checking K3s installation..."
+        if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "sudo systemctl is-active k3s" 2>/dev/null; then
+          echo "✅ K3s service is running"
+          
+          # Check kubectl
+          if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "kubectl get nodes" 2>/dev/null; then
+            echo "✅ kubectl is working"
+            ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "kubectl get nodes"
+          else
+            echo "⚠️ kubectl not working properly"
+          fi
+          
+          # Check kubeconfig file
+          if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "test -f /etc/rancher/k3s/k3s.yaml"; then
+            echo "✅ Kubeconfig file exists"
+          else
+            echo "❌ Kubeconfig file missing"
+          fi
+        else
+          echo "❌ K3s service not running - checking installation logs"
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo journalctl -u k3s --no-pager -n 20" || echo "Could not retrieve logs"
+        fi
+
     - name: Infrastructure Summary
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
       working-directory: infra/two-network-setup

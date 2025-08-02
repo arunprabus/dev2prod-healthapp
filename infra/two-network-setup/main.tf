@@ -154,35 +154,13 @@ resource "aws_instance" "k3s" {
     ignore_changes = [ami]
   }
 
-  user_data = <<-EOF
-    #!/bin/bash
-    apt-get update
-    apt-get install -y curl docker.io mysql-client
-    
-    # Install and configure SSM Agent
-    snap install amazon-ssm-agent --classic
-    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-    systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
-    
-    # Install K3s
-    curl -sfL https://get.k3s.io | sh -
-    
-    # Setup Docker
-    systemctl enable docker
-    systemctl start docker
-    usermod -aG docker ubuntu
-    
-    # Make kubeconfig accessible
-    chmod 644 /etc/rancher/k3s/k3s.yaml
-    mkdir -p /home/ubuntu/.kube
-    cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-    chown ubuntu:ubuntu /home/ubuntu/.kube/config
-    
-    # Install kubectl
-    curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-    chmod +x kubectl
-    mv kubectl /usr/local/bin/
-  EOF
+  user_data = templatefile("../modules/k3s/user_data_k3s.sh", {
+    environment   = var.environment
+    cluster_name  = "${local.name_prefix}-cluster"
+    db_endpoint   = aws_db_instance.main.endpoint
+    s3_bucket     = "health-app-terraform-state"
+    network_tier  = var.network_tier
+  })
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
