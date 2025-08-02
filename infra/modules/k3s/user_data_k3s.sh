@@ -5,6 +5,16 @@ echo "🚀 Setting up K3s Kubernetes cluster..."
 # Log to both file and console for debugging
 exec > >(tee -a /var/log/k3s-install.log) 2>&1
 
+echo "=== K3S USER DATA STARTED ==="
+date
+echo "PWD: $(pwd)"
+echo "USER: $(whoami)"
+echo "HOSTNAME: $(hostname)"
+echo "ENVIRONMENT: ${environment}"
+echo "NETWORK_TIER: ${network_tier}"
+echo "CLUSTER_NAME: ${cluster_name}"
+echo "S3_BUCKET: ${s3_bucket}"
+
 # Variables from Terraform
 ENVIRONMENT="${environment}"
 CLUSTER_NAME="${cluster_name}"
@@ -20,9 +30,13 @@ echo "Network Tier: $NETWORK_TIER"
 # echo "Database: $DB_ENDPOINT"  # Commented out for now
 
 # Update system
+echo "=== STEP 1: UPDATING SYSTEM ==="
 export DEBIAN_FRONTEND=noninteractive
+echo "Running apt-get update..."
 apt-get update
+echo "Installing base packages..."
 apt-get install -y curl wget git jq docker.io awscli unzip  # mysql-client (commented out for now)
+echo "Base packages installed successfully"
 
 # Install/Update SSM Agent
 echo "Installing SSM Agent..."
@@ -31,18 +45,31 @@ systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
 systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
 # Install K3s with basic setup
+echo "=== STEP 4: INSTALLING K3S ==="
 echo "📦 Installing K3s..."
 export INSTALL_K3S_EXEC="--write-kubeconfig-mode 644"
-curl -sfL https://get.k3s.io | sh -
+echo "Downloading K3s installer..."
+if curl -sfL https://get.k3s.io | sh -; then
+  echo "K3s installation script completed"
+else
+  echo "K3s installation script failed"
+  exit 1
+fi
 
+echo "=== STEP 5: VERIFYING K3S INSTALLATION ==="
 echo "⏳ Waiting for K3s to initialize..."
 sleep 60
 
 # Check if K3s is running
+echo "Checking K3s service status..."
 if systemctl is-active --quiet k3s; then
   echo "✅ K3s service is running"
 else
   echo "❌ K3s service not running, attempting to start..."
+  echo "Current service status:"
+  systemctl status k3s --no-pager || echo "Service status check failed"
+  
+  echo "Attempting to start K3s service..."
   systemctl start k3s
   sleep 30
   
@@ -50,9 +77,9 @@ else
     echo "✅ K3s service started successfully"
   else
     echo "❌ K3s service failed to start"
-    echo "Service status:"
+    echo "Final service status:"
     systemctl status k3s --no-pager
-    echo "Installation logs:"
+    echo "Service logs:"
     journalctl -u k3s --no-pager -n 50
     exit 1
   fi

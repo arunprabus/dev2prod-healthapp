@@ -1,26 +1,44 @@
 #!/bin/bash
-exec > /var/log/user-data.log 2>&1
+exec > >(tee -a /var/log/user-data.log) 2>&1
 
-echo "=== USER DATA STARTED ==="
+echo "=== GITHUB RUNNER USER DATA STARTED ==="
 date
+echo "PWD: $(pwd)"
+echo "USER: $(whoami)"
+echo "HOSTNAME: $(hostname)"
+echo "NETWORK_TIER: ${network_tier}"
 
 # Update system and install base tools
+echo "=== STEP 1: UPDATING SYSTEM ==="
 export DEBIAN_FRONTEND=noninteractive
+echo "Running apt-get update..."
 apt-get update
+echo "Installing base packages..."
 apt-get install -y curl wget git jq unzip zip python3 python3-pip docker.io
+echo "Base packages installed successfully"
 
 # Install/Update SSM Agent
+echo "=== STEP 2: INSTALLING SSM AGENT ==="
 echo "Installing SSM Agent..."
-snap install amazon-ssm-agent --classic
+if snap install amazon-ssm-agent --classic; then
+  echo "SSM Agent installed successfully"
+else
+  echo "SSM Agent installation failed"
+fi
 systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
 systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+echo "SSM Agent status: $(systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service)"
 
 # Install AWS CLI v2
-echo "Installing AWS CLI v2..."
+echo "=== STEP 3: INSTALLING AWS CLI ==="
+echo "Downloading AWS CLI..."
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+echo "Extracting AWS CLI..."
 unzip awscliv2.zip
+echo "Installing AWS CLI..."
 ./aws/install
 rm -rf aws awscliv2.zip
+echo "AWS CLI installed: $(aws --version)"
 
 # Install kubectl
 echo "Installing kubectl..."
