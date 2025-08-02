@@ -7,11 +7,25 @@
     github_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
     
   tasks:
+    - name: Wait for SSH to be ready
+      wait_for:
+        port: 22
+        host: "{{ ansible_host }}"
+        timeout: 600
+        delay: 30
+      delegate_to: localhost
+      
+    - name: Test SSH connectivity
+      ping:
+      retries: 5
+      delay: 10
+      
     - name: Wait for K3s to be ready
       wait_for:
         port: 6443
         host: "{{ ansible_host }}"
-        timeout: 300
+        timeout: 600
+        delay: 60
       delegate_to: localhost
       
     - name: Check K3s service status

@@ -380,20 +380,57 @@ jobs:
         if [ "$K3S_IP" != "Not available" ]; then
           echo "Waiting for K3s at $K3S_IP to be ready..."
           
-          # Wait for SSH to be available
-          for i in {1..10}; do
-            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
-              echo "SSH connection established (attempt $i)"
+          # Wait for SSH to be available with better debugging
+          echo "Testing connectivity to $K3S_IP..."
+          
+          # Test basic connectivity first
+          if ! ping -c 3 $K3S_IP > /dev/null 2>&1; then
+            echo "❌ Cannot ping $K3S_IP - check security groups and network"
+            exit 1
+          fi
+          echo "✅ Ping successful"
+          
+          # Test port 22 connectivity
+          if ! nc -z -w5 $K3S_IP 22; then
+            echo "❌ Port 22 not accessible on $K3S_IP"
+            echo "Checking security groups..."
+            aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].SecurityGroups[*].GroupId" --output text | xargs -I {} aws ec2 describe-security-groups --group-ids {} --query "SecurityGroups[*].IpPermissions[?FromPort==\`22\`]" --output table
+            exit 1
+          fi
+          echo "✅ Port 22 accessible"
+          
+          # Wait for SSH service to be ready
+          for i in {1..15}; do
+            echo "Attempting SSH connection (attempt $i/15)..."
+            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
+              echo "✅ SSH connection established (attempt $i)"
               break
             else
-              echo "SSH not ready, waiting... (attempt $i/10)"
+              echo "SSH not ready, waiting 30s..."
+              if [ $i -eq 15 ]; then
+                echo "❌ SSH connection failed after 15 attempts"
+                echo "Checking instance status..."
+                aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].[InstanceId,State.Name,StateReason.Message]" --output table
+                exit 1
+              fi
               sleep 30
             fi
           done
           
-          # Run Ansible playbook
+          # Run Ansible playbook with better error handling
           cd ../../ansible
-          ansible-playbook -i ../infra/two-network-setup/ansible/inventory.ini k3s-setup.yml -v
+          
+          # Test Ansible connectivity first
+          echo "Testing Ansible connectivity..."
+          if ! ansible -i ../infra/two-network-setup/ansible/inventory.ini k3s_masters -m ping -v; then
+            echo "❌ Ansible connectivity test failed"
+            echo "Inventory contents:"
+            cat ../infra/two-network-setup/ansible/inventory.ini
+            exit 1
+          fi
+          
+          echo "Running Ansible playbook..."
+          ansible-playbook -i ../infra/two-network-setup/ansible/inventory.ini k3s-setup.yml -v --timeout=60
           
           echo "✅ Ansible K3s configuration completed"
         else
