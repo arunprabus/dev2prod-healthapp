@@ -61,7 +61,6 @@ jobs:
     permissions:
       contents: read
       actions: write
-      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -299,16 +298,7 @@ jobs:
         chmod 600 ~/.ssh/id_rsa
         ssh-keyscan -H github.com >> ~/.ssh/known_hosts
         
-        # Install GitHub CLI if not present
-        if ! command -v gh &> /dev/null; then
-          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-          sudo apt update
-          sudo apt install gh -y
-        fi
-        
-        # Authenticate GitHub CLI
-        echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+        # GitHub CLI not needed - using job summary approach
         
         # Install kubectl if not present
         if ! command -v kubectl &> /dev/null; then
@@ -427,15 +417,32 @@ jobs:
         
         echo "🔐 Updating GitHub secret: $SECRET_NAME"
         
-        # Use GitHub CLI to update secret (simpler than API)
-        echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo ${{ github.repository }}
+        # Store kubeconfig in temporary file for manual secret setup
+        echo "$KUBECONFIG_B64" > /tmp/kubeconfig_b64_${{ matrix.env }}.txt
+        echo "📝 Kubeconfig base64 encoded and ready for GitHub secret: $SECRET_NAME"
+        echo "To manually set the secret, use the content from the job summary."
         
-        echo "✅ Updated GitHub secret: $SECRET_NAME"
+        # Add to job summary for manual secret setup
+        echo "### 🔐 Kubeconfig Secret Setup" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Secret Name:** \`$SECRET_NAME\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Secret Value (Base64):**" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "$KUBECONFIG_B64" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Instructions:**" >> $GITHUB_STEP_SUMMARY
+        echo "1. Go to Settings → Secrets and variables → Actions" >> $GITHUB_STEP_SUMMARY
+        echo "2. Click 'New repository secret'" >> $GITHUB_STEP_SUMMARY
+        echo "3. Name: \`$SECRET_NAME\`" >> $GITHUB_STEP_SUMMARY
+        echo "4. Value: Copy the base64 content above" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         
         # Cleanup
-        rm -f /tmp/kubeconfig-${{ matrix.env }}.yaml
+        rm -f /tmp/kubeconfig-${{ matrix.env }}.yaml /tmp/kubeconfig_b64_${{ matrix.env }}.txt
         
-        echo "🎉 Kubeconfig setup completed for ${{ matrix.env }} environment"
+        echo "🎉 Kubeconfig generated for ${{ matrix.env }} environment - check job summary for secret setup"
 
     - name: Infrastructure Summary
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
