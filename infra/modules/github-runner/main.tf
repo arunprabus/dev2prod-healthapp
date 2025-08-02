@@ -33,7 +33,7 @@ resource "aws_instance" "github_runner" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type              = "t2.micro"
   key_name                   = aws_key_pair.github_runner.key_name
-  vpc_security_group_ids     = [aws_security_group.runner.id]
+  vpc_security_group_ids     = [aws_security_group.runner.id, aws_security_group.k3s_access.id]
   subnet_id                  = var.subnet_id
   associate_public_ip_address = true  # Ensure public IP for internet access
   iam_instance_profile       = aws_iam_instance_profile.runner_profile.name
@@ -84,7 +84,7 @@ resource "aws_security_group" "runner" {
     description = "All outbound traffic for GitHub API and package downloads"
   }
   
-  # SSH access from VPC
+  # SSH access from VPC (management subnet)
   ingress {
     from_port   = 22
     to_port     = 22
@@ -93,18 +93,40 @@ resource "aws_security_group" "runner" {
     description = "SSH access from VPC"
   }
   
-  # HTTPS outbound specifically for GitHub (redundant but explicit)
+  tags = {
+    Name = "health-app-runner-sg-${var.network_tier}"
+    Purpose = "GitHub runner with K3s access"
+    Environment = var.network_tier
+    Project = "health-app"
+  }
+}
+
+# Security group for K3s cluster access
+resource "aws_security_group" "k3s_access" {
+  name_prefix = "k3s-access-sg-${var.network_tier}-"
+  vpc_id = var.vpc_id
+  
+  # K3s API server access from runner subnet
   egress {
-    from_port   = 443
-    to_port     = 443
+    from_port   = 6443
+    to_port     = 6443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS for GitHub API access"
+    cidr_blocks = var.k3s_subnet_cidrs
+    description = "K3s API server access to clusters"
+  }
+  
+  # SSH access to K3s nodes for kubeconfig retrieval
+  egress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = var.k3s_subnet_cidrs
+    description = "SSH access to K3s nodes"
   }
   
   tags = {
-    Name = "health-app-runner-sg-${var.network_tier}"
-    Purpose = "GitHub runner internet access"
+    Name = "k3s-access-sg-${var.network_tier}"
+    Purpose = "K3s cluster access from runners"
     Environment = var.network_tier
     Project = "health-app"
   }

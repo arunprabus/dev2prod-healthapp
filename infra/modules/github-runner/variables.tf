@@ -42,3 +42,9 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
+variable "k3s_subnet_cidrs" {
+  description = "CIDR blocks of K3s subnets for security group rules"
+  type        = list(string)
+  default     = []
+}
+

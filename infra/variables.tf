@@ -201,3 +201,9 @@ variable "compliance_scope" {
   type        = string
   default     = "hipaa"
 }
+
+variable "management_subnet_cidrs" {
+  description = "CIDR blocks for management subnets (GitHub runners, bastion hosts)"
+  type        = list(string)
+  default     = []
+}

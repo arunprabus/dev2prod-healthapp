@@ -3,20 +3,22 @@ resource "aws_security_group" "k3s" {
   name_prefix = "${var.name_prefix}-k3s-"
   vpc_id      = var.vpc_id
 
-  # SSH access
+  # SSH access from management subnets and public (for initial setup)
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = concat(["0.0.0.0/0"], var.management_subnet_cidrs)
+    description = "SSH access for management and setup"
   }
 
-  # K3s API server - Allow GitHub Actions access
+  # K3s API server - Allow GitHub Actions access from management subnets
   ingress {
     from_port   = 6443
     to_port     = 6443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = concat(["0.0.0.0/0"], var.management_subnet_cidrs)  # Allow public + management subnet access
+    description = "K3s API server access"
   }
 
   # HTTP/HTTPS for applications
@@ -58,7 +60,10 @@ resource "aws_security_group" "k3s" {
 resource "aws_key_pair" "main" {
   key_name   = "${var.name_prefix}-key"
   public_key = var.ssh_public_key
-  tags       = var.tags
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-k3s-key"
+    Purpose = "K3s cluster SSH access"
+  })
 }
 
 # IAM role for S3 access
@@ -90,7 +95,8 @@ resource "aws_iam_role_policy" "k3s_s3_policy" {
         Effect = "Allow"
         Action = [
           "s3:PutObject",
-          "s3:PutObjectAcl"
+          "s3:PutObjectAcl",
+          "s3:GetObject"
         ]
         Resource = [
           "arn:aws:s3:::${var.s3_bucket}/kubeconfig/*",
@@ -101,6 +107,17 @@ resource "aws_iam_role_policy" "k3s_s3_policy" {
   })
 }
 
+# Attach additional policies for enhanced functionality
+resource "aws_iam_role_policy_attachment" "k3s_ssm" {
+  role       = aws_iam_role.k3s_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "k3s_cloudwatch" {
+  role       = aws_iam_role.k3s_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 resource "aws_iam_instance_profile" "k3s_profile" {
   name = "${var.name_prefix}-k3s-profile"
   role = aws_iam_role.k3s_role.name
@@ -108,97 +125,38 @@ resource "aws_iam_instance_profile" "k3s_profile" {
 
 # K3s master node
 resource "aws_instance" "k3s" {
-  ami                    = "ami-0f58b397bc5c1f2e8" # Ubuntu 22.04 LTS
-  instance_type          = var.k3s_instance_type
-  key_name              = aws_key_pair.main.key_name
-  vpc_security_group_ids = [aws_security_group.k3s.id]
-  subnet_id             = var.subnet_id
-  iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
-
-  user_data = <<-EOF
-#!/bin/bash
-
-# Set variables from Terraform
-ENVIRONMENT="${var.environment}"
-S3_BUCKET="${var.s3_bucket}"
-
-apt-get update
-apt-get install -y curl docker.io mysql-client awscli
-
-# Install K3s with write permissions
-curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
-
-# Setup Docker
-systemctl enable docker
-systemctl start docker
-usermod -aG docker ubuntu
-
-# Install kubectl
-curl -LO "https://dl.k8s.io/release/$$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv kubectl /usr/local/bin/
-
-# Wait for K3s to be ready
-sleep 60
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-
-# Create namespace and service account
-echo "Creating namespace and service account..."
-kubectl create namespace gha-access || true
-kubectl create serviceaccount gha-deployer -n gha-access
-
-# Create role with deployment permissions
-echo "Creating role with deployment permissions..."
-kubectl create role gha-role --verb=get,list,watch,create,update,patch,delete --resource=pods,services,deployments,namespaces -n gha-access
-kubectl create rolebinding gha-rolebinding --role=gha-role --serviceaccount=gha-access:gha-deployer -n gha-access
-
-# Generate dynamic token
-echo "Generating dynamic token..."
-TOKEN=$$(kubectl create token gha-deployer -n gha-access --duration=24h)
-
-if [[ -n "$$TOKEN" ]]; then
-  PUBLIC_IP=$$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type              = var.k3s_instance_type
+  key_name                   = aws_key_pair.main.key_name
+  vpc_security_group_ids     = [aws_security_group.k3s.id]
+  subnet_id                  = var.subnet_id
+  iam_instance_profile       = aws_iam_instance_profile.k3s_profile.name
+  associate_public_ip_address = true
   
-  # Create kubeconfig with dynamic token
-  cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    insecure-skip-tls-verify: true
-    server: https://$$PUBLIC_IP:6443
-  name: k3s-cluster
-contexts:
-- context:
-    cluster: k3s-cluster
-    namespace: gha-access
-    user: gha-deployer
-  name: gha-context
-current-context: gha-context
-users:
-- name: gha-deployer
-  user:
-    token: $$TOKEN
-KUBE_EOF
+  user_data_replace_on_change = true
+  user_data = base64encode(templatefile("${path.module}/user_data_k3s.sh", {
+    environment   = var.environment
+    cluster_name  = var.cluster_name
+    db_endpoint   = var.db_endpoint
+    s3_bucket     = var.s3_bucket
+    network_tier  = var.network_tier
+  }))
+
+  tags = merge(var.tags, { 
+    Name = "${var.name_prefix}-k3s-master"
+    Type = "k3s-cluster"
+    NetworkTier = var.network_tier
+  })
+}
+
+# Get Ubuntu AMI
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
   
-  # Upload to S3
-  if [[ -n "$$S3_BUCKET" ]]; then
-    echo "Uploading kubeconfig to S3..."
-    aws s3 cp /tmp/gha-kubeconfig.yaml s3://$$S3_BUCKET/kubeconfig/$$ENVIRONMENT-gha.yaml
-    echo "SUCCESS: Service account kubeconfig uploaded"
-  fi
-else
-  echo "ERROR: Failed to generate token"
-fi
-
-# Local access
-mkdir -p /home/ubuntu/.kube
-cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
-chown ubuntu:ubuntu /home/ubuntu/.kube/config
-
-echo "K3s cluster ready for $$ENVIRONMENT environment!"
-EOF
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-k3s-node-v2" })
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
 }
 

@@ -2,10 +2,14 @@
 environment = "monitoring"
 cluster_name = "health-app-monitoring"
 
-# Network Configuration
+# Industry Standard Network Configuration
 vpc_cidr = "10.3.0.0/16"
-public_subnet_cidrs = ["10.3.1.0/24"]  # Monitoring subnet
-private_subnet_cidrs = []  # No private subnets needed
+# Public subnets: K3s monitoring cluster
+public_subnet_cidrs = ["10.3.1.0/24"]  # K3s Monitoring
+# Private subnets: Internal monitoring services
+private_subnet_cidrs = ["10.3.10.0/24"]  # Internal monitoring
+# Management subnet: GitHub runners with cross-network access
+management_subnet_cidrs = ["10.3.100.0/24"]  # GitHub runners subnet
 
 # K8s Clusters (Monitoring only) - FREE TIER
 k8s_clusters = {

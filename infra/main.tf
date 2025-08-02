@@ -65,27 +65,32 @@ data "aws_route_tables" "higher_env" {
 module "vpc" {
   source = "./modules/vpc"
 
-  name_prefix           = local.name_prefix
-  vpc_cidr             = var.vpc_cidr
-  availability_zones   = var.availability_zones
-  public_subnet_cidrs  = var.public_subnet_cidrs
-  private_subnet_cidrs = var.private_subnet_cidrs
-  environment          = var.environment
-  tags                 = local.tags
+  name_prefix              = local.name_prefix
+  vpc_cidr                = var.vpc_cidr
+  availability_zones      = var.availability_zones
+  public_subnet_cidrs     = var.public_subnet_cidrs
+  private_subnet_cidrs    = var.private_subnet_cidrs
+  management_subnet_cidrs = var.management_subnet_cidrs
+  environment             = var.environment
+  tags                    = local.tags
 }
 
 module "k3s" {
   source = "./modules/k3s"
 
-  name_prefix       = local.name_prefix
-  vpc_id            = module.vpc.vpc_id
-  vpc_cidr          = module.vpc.vpc_cidr_block
-  subnet_id         = module.vpc.public_subnet_ids[0]
-  k3s_instance_type = var.k3s_instance_type
-  environment       = var.environment
-  ssh_public_key    = var.ssh_public_key
-  s3_bucket         = var.tf_state_bucket
-  tags              = local.tags
+  name_prefix              = local.name_prefix
+  vpc_id                   = module.vpc.vpc_id
+  vpc_cidr                 = module.vpc.vpc_cidr_block
+  subnet_id                = module.vpc.public_subnet_ids[0]
+  k3s_instance_type        = var.k3s_instance_type
+  environment              = var.environment
+  cluster_name             = var.cluster_name
+  db_endpoint              = var.database_config != null ? module.rds[0].db_endpoint : ""
+  network_tier             = var.environment
+  management_subnet_cidrs  = var.management_subnet_cidrs
+  ssh_public_key           = var.ssh_public_key
+  s3_bucket                = var.tf_state_bucket
+  tags                     = local.tags
 }
 
 module "rds" {
@@ -132,10 +137,11 @@ module "github_runner" {
 
   network_tier     = var.environment
   vpc_id           = module.vpc.vpc_id
-  subnet_id        = module.vpc.public_subnet_ids[0]  # Use public subnet for internet access
+  subnet_id        = length(module.vpc.management_subnet_ids) > 0 ? module.vpc.management_subnet_ids[0] : module.vpc.public_subnet_ids[0]
   ssh_public_key   = var.ssh_public_key
   repo_pat         = var.github_pat
   repo_name        = var.github_repo
+  k3s_subnet_cidrs = var.public_subnet_cidrs  # Pass K3s subnet CIDRs for security group rules
 
   depends_on = [module.vpc]
 }

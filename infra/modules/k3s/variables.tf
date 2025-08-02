@@ -45,3 +45,25 @@ variable "s3_bucket" {
   type        = string
   default     = ""
 }
+
+variable "cluster_name" {
+  description = "K3s cluster name"
+  type        = string
+}
+
+variable "db_endpoint" {
+  description = "Database endpoint for application configuration"
+  type        = string
+  default     = ""
+}
+
+variable "network_tier" {
+  description = "Network tier (lower/higher/monitoring)"
+  type        = string
+}
+
+variable "management_subnet_cidrs" {
+  description = "CIDR blocks of management subnets for security group rules"
+  type        = list(string)
+  default     = []
+}

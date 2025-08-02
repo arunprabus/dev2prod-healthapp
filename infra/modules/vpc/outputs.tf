@@ -30,3 +30,8 @@ output "all_route_table_ids" {
     aws_route_table.private[*].id
   )
 }
+
+output "management_subnet_ids" {
+  description = "IDs of the management subnets"
+  value       = aws_subnet.management[*].id
+}

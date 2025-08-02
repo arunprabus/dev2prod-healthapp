@@ -43,6 +43,22 @@ resource "aws_subnet" "private" {
   })
 }
 
+# Management subnets for GitHub runners and bastion hosts
+resource "aws_subnet" "management" {
+  count = length(var.management_subnet_cidrs)
+
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.management_subnet_cidrs[count.index]
+  availability_zone       = var.availability_zones[count.index]
+  map_public_ip_on_launch = true
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-management-${count.index + 1}"
+    Type = "management"
+    Purpose = "GitHub runners and bastion hosts"
+  })
+}
+
 
 
 resource "aws_route_table" "public" {
@@ -80,4 +96,12 @@ resource "aws_route_table_association" "private" {
 
   subnet_id      = aws_subnet.private[count.index].id
   route_table_id = aws_route_table.private[count.index].id
+}
+
+# Management subnet associations (use public route table for internet access)
+resource "aws_route_table_association" "management" {
+  count = length(var.management_subnet_cidrs)
+
+  subnet_id      = aws_subnet.management[count.index].id
+  route_table_id = aws_route_table.public.id
 }

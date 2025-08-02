@@ -2,10 +2,14 @@
 environment = "lower"
 cluster_name = "health-app-lower"
 
-# Network Configuration
+# Industry Standard Network Configuration
 vpc_cidr = "10.0.0.0/16"
-public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]  # Dev and Test subnets
+# Public subnets: K3s clusters (need public IP for API access)
+public_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]  # K3s Dev and Test
+# Private subnets: Databases and internal services
 private_subnet_cidrs = ["10.0.10.0/24", "10.0.11.0/24"]  # DB subnets
+# Management subnet: GitHub runners and bastion hosts
+management_subnet_cidrs = ["10.0.100.0/24"]  # GitHub runners subnet
 
 # K8s Clusters (Dev + Test)
 k8s_clusters = {
