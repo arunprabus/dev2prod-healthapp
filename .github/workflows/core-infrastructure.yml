@@ -35,7 +35,7 @@ on:
       runner_type:
         description: 'Runner Type'
         required: false
-        default: 'aws'
+        default: 'github'
         type: choice
         options:
         - github
