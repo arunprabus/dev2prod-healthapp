@@ -52,7 +52,6 @@ jobs:
       run: |
         echo "=== K3s API Connectivity Test ==="
         
-        # Get K3s cluster IP from AWS
         case "${{ inputs.network_tier }}" in
           "lower")
             K3S_IP=$(aws ec2 describe-instances \
@@ -119,7 +118,6 @@ jobs:
         echo "=== K3s Setup (Optional) ==="
         echo "⚠️ This step is optional and may fail due to network restrictions"
         
-        # Get K3s cluster IP
         case "${{ inputs.network_tier }}" in
           "lower")
             K3S_IP=$(aws ec2 describe-instances \
@@ -148,7 +146,6 @@ jobs:
         
         echo "Found K3s cluster at: $K3S_IP"
         
-        # Test basic connectivity (non-blocking)
         if ping -c 2 $K3S_IP > /dev/null 2>&1; then
           echo "✅ K3s cluster is reachable"
           echo "ℹ️ K3s setup would be possible with proper network configuration"
