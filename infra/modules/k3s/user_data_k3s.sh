@@ -225,7 +225,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nginx-test
-  namespace: health-app-${ENVIRONMENT}
+  namespace: health-app-$ENVIRONMENT
   labels:
     app: nginx-test
 spec:
@@ -255,7 +255,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: nginx-test-service
-  namespace: health-app-${ENVIRONMENT}
+  namespace: health-app-$ENVIRONMENT
 spec:
   selector:
     app: nginx-test
@@ -267,9 +267,9 @@ spec:
 EOF
 
 # Apply test deployment if namespace exists
-if kubectl get namespace health-app-${ENVIRONMENT} 2>/dev/null; then
+if kubectl get namespace health-app-$ENVIRONMENT 2>/dev/null; then
   kubectl apply -f /tmp/test-deployment.yaml
-  echo "✅ Test deployment created in health-app-${ENVIRONMENT}"
+  echo "✅ Test deployment created in health-app-$ENVIRONMENT"
 fi
 
 # Create health monitoring script
