@@ -30,42 +30,33 @@ snap install amazon-ssm-agent --classic
 systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
 systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
-# Install K3s with proper permissions
+# Install K3s with basic setup
 echo "📦 Installing K3s..."
-if curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --disable traefik" sh -; then
-  echo "✅ K3s installation completed"
+export INSTALL_K3S_EXEC="--write-kubeconfig-mode 644"
+curl -sfL https://get.k3s.io | sh -
+
+echo "⏳ Waiting for K3s to initialize..."
+sleep 60
+
+# Check if K3s is running
+if systemctl is-active --quiet k3s; then
+  echo "✅ K3s service is running"
 else
-  echo "❌ K3s installation failed"
-  exit 1
-fi
-
-# Wait for K3s to start
-echo "⏳ Waiting for K3s to start..."
-sleep 30
-
-# Ensure K3s service is enabled and started
-echo "🔄 Enabling and starting K3s service..."
-systemctl enable k3s
-systemctl start k3s
-
-# Wait for service to be active
-for i in {1..10}; do
+  echo "❌ K3s service not running, attempting to start..."
+  systemctl start k3s
+  sleep 30
+  
   if systemctl is-active --quiet k3s; then
-    echo "✅ K3s service is active (attempt $i)"
-    break
+    echo "✅ K3s service started successfully"
   else
-    echo "⏳ Waiting for K3s service... (attempt $i/10)"
-    if [ $i -eq 10 ]; then
-      echo "❌ K3s service failed to start after 10 attempts"
-      echo "Service status:"
-      systemctl status k3s --no-pager
-      echo "Service logs:"
-      journalctl -u k3s --no-pager -n 20
-      exit 1
-    fi
-    sleep 10
+    echo "❌ K3s service failed to start"
+    echo "Service status:"
+    systemctl status k3s --no-pager
+    echo "Installation logs:"
+    journalctl -u k3s --no-pager -n 50
+    exit 1
   fi
-done
+fi
 
 # Setup Docker
 echo "🐳 Setting up Docker..."
@@ -94,25 +85,26 @@ apt-get update && apt-get install -y terraform
 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 chmod +x /usr/local/bin/docker-compose
 
-# Additional wait for K3s to be fully ready
-echo "⏳ Waiting for K3s to be fully ready..."
-sleep 60
-
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-
-# Wait for K3s to be fully ready with retries
-echo "🔍 Verifying K3s installation..."
-for i in {1..10}; do
-  if kubectl get nodes > /dev/null 2>&1; then
-    echo "✅ K3s is ready (attempt $i)"
-    kubectl get nodes
-    kubectl get pods -A
+# Wait for kubeconfig file to be created
+echo "⏳ Waiting for kubeconfig file..."
+for i in {1..20}; do
+  if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+    echo "✅ Kubeconfig file found (attempt $i)"
     break
   else
-    echo "⏳ K3s not ready yet, waiting... (attempt $i/10)"
-    sleep 30
+    echo "⏳ Waiting for kubeconfig... (attempt $i/20)"
+    sleep 10
   fi
 done
+
+# Test kubectl
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+if kubectl get nodes > /dev/null 2>&1; then
+  echo "✅ kubectl is working"
+  kubectl get nodes
+else
+  echo "⚠️ kubectl not working yet, but kubeconfig exists"
+fi
 
 # Create completion marker for external scripts
 echo "K3S_READY=$(date)" > /var/log/k3s-ready
