@@ -2,12 +2,13 @@
 set -e
 
 echo "🚀 Setting up K3s Kubernetes cluster..."
-exec > /var/log/k3s-install.log 2>&1
+# Log to both file and console for debugging
+exec > >(tee -a /var/log/k3s-install.log) 2>&1
 
 # Variables from Terraform
 ENVIRONMENT="${environment}"
 CLUSTER_NAME="${cluster_name}"
-DB_ENDPOINT="${db_endpoint}"
+# DB_ENDPOINT="${db_endpoint}"  # Commented out for now
 S3_BUCKET="${s3_bucket}"
 NETWORK_TIER="${network_tier}"
 
@@ -16,11 +17,12 @@ date
 echo "Environment: $ENVIRONMENT"
 echo "Cluster: $CLUSTER_NAME"
 echo "Network Tier: $NETWORK_TIER"
+# echo "Database: $DB_ENDPOINT"  # Commented out for now
 
 # Update system
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y curl wget git jq docker.io mysql-client awscli unzip
+apt-get install -y curl wget git jq docker.io awscli unzip  # mysql-client (commented out for now)
 
 # Install/Update SSM Agent
 echo "Installing SSM Agent..."
@@ -30,7 +32,40 @@ systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
 
 # Install K3s with proper permissions
 echo "📦 Installing K3s..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --disable traefik" sh -
+if curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --disable traefik" sh -; then
+  echo "✅ K3s installation completed"
+else
+  echo "❌ K3s installation failed"
+  exit 1
+fi
+
+# Wait for K3s to start
+echo "⏳ Waiting for K3s to start..."
+sleep 30
+
+# Ensure K3s service is enabled and started
+echo "🔄 Enabling and starting K3s service..."
+systemctl enable k3s
+systemctl start k3s
+
+# Wait for service to be active
+for i in {1..10}; do
+  if systemctl is-active --quiet k3s; then
+    echo "✅ K3s service is active (attempt $i)"
+    break
+  else
+    echo "⏳ Waiting for K3s service... (attempt $i/10)"
+    if [ $i -eq 10 ]; then
+      echo "❌ K3s service failed to start after 10 attempts"
+      echo "Service status:"
+      systemctl status k3s --no-pager
+      echo "Service logs:"
+      journalctl -u k3s --no-pager -n 20
+      exit 1
+    fi
+    sleep 10
+  fi
+done
 
 # Setup Docker
 echo "🐳 Setting up Docker..."
@@ -59,9 +94,9 @@ apt-get update && apt-get install -y terraform
 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 chmod +x /usr/local/bin/docker-compose
 
-# Wait for K3s to be ready
-echo "⏳ Waiting for K3s to be ready..."
-sleep 30
+# Additional wait for K3s to be fully ready
+echo "⏳ Waiting for K3s to be fully ready..."
+sleep 60
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
@@ -409,19 +444,30 @@ echo "Cluster: $CLUSTER_NAME"
 echo "Environment: $ENVIRONMENT"
 echo "Network Tier: $NETWORK_TIER"
 echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
-echo "Database endpoint: $DB_ENDPOINT"
+# echo "Database endpoint: $DB_ENDPOINT"  # Commented out for now
 
 echo "📋 Available scripts:"
 echo "  - /home/ubuntu/cluster-info.sh - Show cluster information"
 echo "  - /home/ubuntu/monitor-k3s.sh - Health monitoring (runs every 5 minutes)"
 echo "  - /home/ubuntu/restart-k3s.sh - Restart K3s cluster"
 
+# Final verification and debug info
+echo "=== FINAL VERIFICATION ==="
+echo "🔍 K3s service status:"
+systemctl status k3s --no-pager
+echo ""
+echo "🔍 K3s process:"
+ps aux | grep k3s | grep -v grep
+echo ""
+echo "🔍 Kubeconfig file:"
+ls -la /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "Kubeconfig file not found"
+echo ""
+echo "🔍 kubectl test:"
+kubectl get nodes 2>/dev/null || echo "kubectl not working"
+
 echo "SUCCESS" > /var/log/k3s-install-complete
 echo "K3S_INSTALLATION_COMPLETE=$(date)" >> /var/log/k3s-ready
 echo "=== K3S INSTALLATION COMPLETED ==="
 date
 
-# Final verification
-echo "🎉 Final K3s status:"
-kubectl get nodes --no-headers 2>/dev/null | awk '{print "Node: " $1 " Status: " $2}' || echo "K3s not responding"
 echo "📊 System ready for connections"

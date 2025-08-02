@@ -157,7 +157,7 @@ resource "aws_instance" "k3s" {
   user_data = templatefile("../modules/k3s/user_data_k3s.sh", {
     environment   = var.environment
     cluster_name  = "${local.name_prefix}-cluster"
-    db_endpoint   = aws_db_instance.main.endpoint
+    # db_endpoint   = aws_db_instance.main.endpoint  # Commented out for now
     s3_bucket     = "health-app-terraform-state"
     network_tier  = var.network_tier
   })
@@ -182,59 +182,57 @@ module "github_runner" {
   depends_on = [aws_key_pair.main]
 }
 
-# RDS Subnet Group - create
-resource "aws_db_subnet_group" "main" {
-  name       = "${local.name_prefix}-db-subnet-group"
-  subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
-  
-  tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
-}
+# RDS Database - Commented out for now
+# resource "aws_db_subnet_group" "main" {
+#   name       = "${local.name_prefix}-db-subnet-group"
+#   subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
+#   
+#   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
+# }
 
-# Security group for RDS
-resource "aws_security_group" "rds" {
-  name_prefix = "${local.name_prefix}-rds-"
-  vpc_id      = data.aws_vpc.first.id
-  
-  lifecycle {
-    create_before_destroy = true
-  }
+# resource "aws_security_group" "rds" {
+#   name_prefix = "${local.name_prefix}-rds-"
+#   vpc_id      = data.aws_vpc.first.id
+#   
+#   lifecycle {
+#     create_before_destroy = true
+#   }
 
-  ingress {
-    from_port       = var.restore_from_snapshot ? 5432 : 3306
-    to_port         = var.restore_from_snapshot ? 5432 : 3306
-    protocol        = "tcp"
-    security_groups = [aws_security_group.k3s.id]
-  }
+#   ingress {
+#     from_port       = var.restore_from_snapshot ? 5432 : 3306
+#     to_port         = var.restore_from_snapshot ? 5432 : 3306
+#     protocol        = "tcp"
+#     security_groups = [aws_security_group.k3s.id]
+#   }
 
-  tags = merge(local.tags, { Name = "${local.name_prefix}-rds-sg" })
-}
+#   tags = merge(local.tags, { Name = "${local.name_prefix}-rds-sg" })
+# }
 
-# RDS Database (MySQL or PostgreSQL based on snapshot)
-resource "aws_db_instance" "main" {
-  identifier     = "${local.name_prefix}-db"
-  engine         = var.restore_from_snapshot ? "postgres" : "mysql"
-  engine_version = var.restore_from_snapshot ? "17.4" : "8.0"
-  instance_class = "db.t3.micro"
-  
-  allocated_storage     = 20
-  max_allocated_storage = 20
-  storage_type          = "gp2"
-  storage_encrypted     = false
-  
-  # Restore from snapshot if specified
-  snapshot_identifier = var.restore_from_snapshot ? var.snapshot_identifier : null
-  
-  # Only set these if NOT restoring from snapshot
-  db_name  = var.restore_from_snapshot ? null : "healthapp"
-  username = var.restore_from_snapshot ? null : "admin"
-  password = var.restore_from_snapshot ? null : "${var.environment}Password123!"
-  
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-  
-  backup_retention_period = 0
-  skip_final_snapshot     = true
-  deletion_protection     = false
-  
-  tags = merge(local.tags, { Name = "${local.name_prefix}-rds" })
-}
+# resource "aws_db_instance" "main" {
+#   identifier     = "${local.name_prefix}-db"
+#   engine         = var.restore_from_snapshot ? "postgres" : "mysql"
+#   engine_version = var.restore_from_snapshot ? "17.4" : "8.0"
+#   instance_class = "db.t3.micro"
+#   
+#   allocated_storage     = 20
+#   max_allocated_storage = 20
+#   storage_type          = "gp2"
+#   storage_encrypted     = false
+#   
+#   # Restore from snapshot if specified
+#   snapshot_identifier = var.restore_from_snapshot ? var.snapshot_identifier : null
+#   
+#   # Only set these if NOT restoring from snapshot
+#   db_name  = var.restore_from_snapshot ? null : "healthapp"
+#   username = var.restore_from_snapshot ? null : "admin"
+#   password = var.restore_from_snapshot ? null : "${var.environment}Password123!"
+#   
+#   vpc_security_group_ids = [aws_security_group.rds.id]
+#   db_subnet_group_name   = aws_db_subnet_group.main.name
+#   
+#   backup_retention_period = 0
+#   skip_final_snapshot     = true
+#   deletion_protection     = false
+#   
+#   tags = merge(local.tags, { Name = "${local.name_prefix}-rds" })
+# }

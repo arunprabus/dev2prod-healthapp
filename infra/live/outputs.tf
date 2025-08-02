@@ -45,10 +45,10 @@ output "github_runner_debug_commands" {
   }
 }
 
-output "rds_endpoint" {
-  description = "RDS endpoint"
-  value       = aws_db_instance.main.endpoint
-}
+# output "rds_endpoint" {
+#   description = "RDS endpoint"
+#   value       = aws_db_instance.main.endpoint
+# }
 
 output "environment_info" {
   description = "Environment information"
