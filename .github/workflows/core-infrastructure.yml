@@ -448,6 +448,9 @@ jobs:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
     
     steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
@@ -468,44 +471,34 @@ jobs:
       run: |
         echo "🔍 Debugging K3s installation for ${{ matrix.env }} environment..."
         
-        # Get K3s instance details
+        # Use simple debug script that doesn't require SSM
+        chmod +x scripts/debug-k3s-simple.sh
+        ./scripts/debug-k3s-simple.sh ${{ matrix.env }}
+        
+        # Get K3s instance details for further checks
         K3S_DETAILS=$(aws ec2 describe-instances \
           --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
           --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress]" --output text)
         
-        K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
-        K3S_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
-        
-        echo "🔍 Checking installation status: $K3S_INSTANCE_ID"
-        
-        # Check user-data logs
-        echo "=== USER DATA LOGS ==="
-        COMMAND_ID=$(aws ssm send-command \
-          --instance-ids "$K3S_INSTANCE_ID" \
-          --document-name "AWS-RunShellScript" \
-          --parameters 'commands=["tail -100 /var/log/cloud-init-output.log"]' \
-          --query "Command.CommandId" --output text)
-        
-        sleep 10
-        aws ssm get-command-invocation \
-          --command-id "$COMMAND_ID" \
-          --instance-id "$K3S_INSTANCE_ID" \
-          --query "StandardOutputContent" --output text
-        
-        echo "=== K3S INSTALL LOG ==="
-        COMMAND_ID=$(aws ssm send-command \
-          --instance-ids "$K3S_INSTANCE_ID" \
-          --document-name "AWS-RunShellScript" \
-          --parameters 'commands=["cat /var/log/k3s-install.log 2>/dev/null || echo No K3s install log found"]' \
-          --query "Command.CommandId" --output text)
-        
-        sleep 10
-        aws ssm get-command-invocation \
-          --command-id "$COMMAND_ID" \
-          --instance-id "$K3S_INSTANCE_ID" \
-          --query "StandardOutputContent" --output text
+        if [ "$K3S_DETAILS" != "None" ]; then
+          K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
+          K3S_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
+          
+          echo "📋 Instance found: $K3S_INSTANCE_ID at $K3S_IP"
+          
+          # Check if we can reach the K3s API
+          echo "🔍 Testing K3s API connectivity..."
+          if timeout 10 curl -k https://$K3S_IP:6443/version 2>/dev/null; then
+            echo "✅ K3s API is responding"
+          else
+            echo "❌ K3s API not responding - installation may have failed"
+            echo "💡 Check user data logs on the instance for details"
+          fi
+        else
+          echo "❌ No K3s instance found for ${{ matrix.env }} environment"
+        fi
 
-    - name: Setup kubeconfig via Systems Manager
+    - name: Setup kubeconfig via SSH
       run: |
         echo "🔧 Setting up kubeconfig for ${{ matrix.env }} environment..."
         
@@ -514,51 +507,49 @@ jobs:
           --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
           --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress]" --output text)
         
+        if [ "$K3S_DETAILS" = "None" ]; then
+          echo "❌ No K3s instance found for ${{ matrix.env }} environment"
+          exit 1
+        fi
+        
         K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
         K3S_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
         
-        echo "📥 Connecting to K3s via Systems Manager: $K3S_INSTANCE_ID"
+        echo "📥 Connecting to K3s via SSH: $K3S_IP"
         
-        # Wait for K3s to be ready via SSM
-        for i in {1..10}; do
-          echo "⏳ Checking K3s status (attempt $i/10)..."
-          
-          COMMAND_ID=$(aws ssm send-command \
-            --instance-ids "$K3S_INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["sudo systemctl is-active k3s"]' \
-            --query "Command.CommandId" --output text)
-          
-          sleep 15
-          
-          RESULT=$(aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$K3S_INSTANCE_ID" \
-            --query "StandardOutputContent" --output text 2>/dev/null || echo "waiting")
-          
-          if [[ "$RESULT" == "active" ]]; then
-            echo "✅ K3s is ready!"
+        # Setup SSH key
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+        chmod 600 ~/.ssh/k3s-key
+        
+        # Wait for K3s to be ready via API check
+        echo "⏳ Waiting for K3s API to be ready..."
+        for i in {1..20}; do
+          echo "Checking K3s API (attempt $i/20)..."
+          if timeout 10 curl -k https://$K3S_IP:6443/version 2>/dev/null; then
+            echo "✅ K3s API is responding!"
             break
           else
-            echo "⏳ K3s not ready yet, waiting..."
+            echo "⏳ K3s API not ready yet, waiting..."
             sleep 30
+          fi
+          
+          if [ $i -eq 20 ]; then
+            echo "❌ K3s API failed to start after 10 minutes"
+            echo "💡 This usually means K3s installation failed during user-data execution"
+            exit 1
           fi
         done
         
-        # Download kubeconfig via SSM
-        echo "📥 Downloading kubeconfig via Systems Manager..."
-        COMMAND_ID=$(aws ssm send-command \
-          --instance-ids "$K3S_INSTANCE_ID" \
-          --document-name "AWS-RunShellScript" \
-          --parameters 'commands=["sudo cat /etc/rancher/k3s/k3s.yaml"]' \
-          --query "Command.CommandId" --output text)
-        
-        sleep 10
-        
-        aws ssm get-command-invocation \
-          --command-id "$COMMAND_ID" \
-          --instance-id "$K3S_INSTANCE_ID" \
-          --query "StandardOutputContent" --output text > /tmp/kubeconfig.yaml
+        # Download kubeconfig via SSH
+        echo "📥 Downloading kubeconfig via SSH..."
+        if scp -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml; then
+          echo "✅ Kubeconfig downloaded successfully"
+        else
+          echo "❌ Failed to download kubeconfig via SSH"
+          echo "💡 This usually means K3s is not installed or kubeconfig file doesn't exist"
+          exit 1
+        fi
         
         # Update server IP to public IP
         sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
@@ -595,5 +586,6 @@ jobs:
         echo "$KUBECONFIG_B64" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         
-        rm -f /tmp/kubeconfig.yaml
+        # Cleanup
+        rm -f ~/.ssh/k3s-key /tmp/kubeconfig.yaml
         echo "🎉 Kubeconfig configured and uploaded to S3 for ${{ matrix.env }} environment"
