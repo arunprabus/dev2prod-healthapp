@@ -22,6 +22,7 @@ on:
         - k3s-api
         - database
         - full
+        - k3s-setup
 
 jobs:
   connectivity-test:
@@ -111,6 +112,52 @@ jobs:
           echo "Testing database at $DB_ENDPOINT"
           timeout 10 nc -z $DB_ENDPOINT 5432 && echo "✅ Database port accessible" || echo "❌ Database port not accessible"
         fi
+
+    - name: 🔧 K3s Setup (Optional)
+      if: inputs.test_type == 'k3s-setup'
+      run: |
+        echo "=== K3s Setup (Optional) ==="
+        echo "⚠️ This step is optional and may fail due to network restrictions"
+        
+        # Get K3s cluster IP
+        case "${{ inputs.network_tier }}" in
+          "lower")
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-lower-k3s-master" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" \
+              --output text)
+            ;;
+          "higher")
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-higher-k3s-master" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" \
+              --output text)
+            ;;
+          "monitoring")
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-monitoring-k3s-master" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" \
+              --output text)
+            ;;
+        esac
+        
+        if [ -z "$K3S_IP" ]; then
+          echo "❌ No K3s cluster found - skipping setup"
+          exit 0
+        fi
+        
+        echo "Found K3s cluster at: $K3S_IP"
+        
+        # Test basic connectivity (non-blocking)
+        if ping -c 2 $K3S_IP > /dev/null 2>&1; then
+          echo "✅ K3s cluster is reachable"
+          echo "ℹ️ K3s setup would be possible with proper network configuration"
+        else
+          echo "❌ K3s cluster not reachable from this runner"
+          echo "ℹ️ This is expected due to network isolation"
+        fi
+        
+        echo "✅ K3s setup check completed (non-blocking)"
 
     - name: 📊 Generate Report
       if: always()
