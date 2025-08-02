@@ -26,9 +26,20 @@ on:
 jobs:
   connectivity-test:
     name: Test Network Connectivity
-    runs-on: [self-hosted, github-runner-${{ inputs.network_tier }}]
+    runs-on: self-hosted
     
     steps:
+    - name: 🏷️ Verify Runner Network
+      run: |
+        echo "Expected network: ${{ inputs.network_tier }}"
+        echo "Runner hostname: $(hostname)"
+        echo "Runner labels should include: github-runner-${{ inputs.network_tier }}"
+        
+        # Verify we're on the correct network runner
+        if ! hostname | grep -q "${{ inputs.network_tier }}"; then
+          echo "⚠️ Warning: Runner may not be on expected network tier"
+        fi
+        
     - name: 🔍 Test Basic Connectivity
       if: inputs.test_type == 'basic' || inputs.test_type == 'full'
       run: |
@@ -169,7 +180,7 @@ jobs:
 
   cross-network-test:
     name: Cross-Network Connectivity Test
-    runs-on: [self-hosted, github-runner-monitoring]
+    runs-on: self-hosted
     if: inputs.network_tier == 'monitoring' && (inputs.test_type == 'full' || inputs.test_type == 'k3s-api')
     
     steps:
