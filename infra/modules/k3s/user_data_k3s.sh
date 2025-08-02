@@ -1,61 +1,41 @@
 #!/bin/bash
-set -euxo pipefail
+set -e
 
-# Wait until cloud-init is fully done
-cloud-init status --wait || true
+# Log everything
+exec > >(tee /var/log/k3s-install.log) 2>&1
 
-# --- Injected by Terraform ---
-ENVIRONMENT="${environment}"
-CLUSTER_NAME="${cluster_name}"
-DB_ENDPOINT="${db_endpoint}"
-S3_BUCKET="${s3_bucket}"
-NETWORK_TIER="${network_tier}"
+echo "Starting K3s installation at $(date)"
 
-# Log file to track installation
-LOG_FILE="/var/log/k3s-install.log"
-touch "$LOG_FILE"
+# Install K3s directly
+echo "Installing K3s..."
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
 
-echo "🚀 Starting K3s setup..." | tee -a "$LOG_FILE"
+# Wait for service to be ready
+echo "Starting K3s service..."
+systemctl enable k3s
+systemctl start k3s
 
-# --- Install K3s ---
-echo "📦 Installing K3s..." | tee -a "$LOG_FILE"
-curl -sfL https://get.k3s.io | sh - >> "$LOG_FILE" 2>&1
-
-# --- Wait for kubeconfig ---
-echo "⏳ Waiting for kubeconfig..." | tee -a "$LOG_FILE"
-for i in {1..30}; do
-  if test -f /etc/rancher/k3s/k3s.yaml; then
-    break
-  fi
+# Wait for kubeconfig
+echo "Waiting for kubeconfig..."
+while [ ! -f /etc/rancher/k3s/k3s.yaml ]; do
+  echo "Kubeconfig not ready, waiting..."
   sleep 5
 done
 
-if ! test -f /etc/rancher/k3s/k3s.yaml; then
-  echo "❌ kubeconfig not found. Exiting." | tee -a "$LOG_FILE"
-  exit 1
-fi
-
-# --- Replace 127.0.0.1 with public IP for external access ---
+# Replace localhost with public IP
+echo "Configuring kubeconfig for external access..."
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+echo "Public IP: $PUBLIC_IP"
 sed -i "s/127.0.0.1/$PUBLIC_IP/g" /etc/rancher/k3s/k3s.yaml
 
-# --- Export kubeconfig ---
+# Test kubectl
+echo "Testing kubectl..."
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl get nodes || echo "kubectl test failed"
 
-# --- Install kubectl ---
-echo "⚙️ Installing kubectl..." | tee -a "$LOG_FILE"
-KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
-curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
-chmod +x kubectl
-mv kubectl /usr/local/bin/kubectl
-
-# --- Validate kubectl works ---
-echo "🧪 Testing kubectl..." | tee -a "$LOG_FILE"
-kubectl get nodes >> "$LOG_FILE" 2>&1 || echo "⚠️ kubectl failed initially."
-
-# --- Signal completion ---
+# Create completion marker
+echo "K3s installation completed at $(date)"
 touch /var/log/k3s-install-complete
-echo "✅ K3s setup complete." | tee -a "$LOG_FILE"
 
 # Create namespaces based on environment
 echo "🏷️ Creating namespaces for $ENVIRONMENT..."

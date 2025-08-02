@@ -165,7 +165,56 @@ resource "aws_instance" "k3s" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
 
-
+# Wait for K3s installation to complete
+resource "null_resource" "wait_for_k3s" {
+  depends_on = [aws_instance.k3s]
+  
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for K3s installation..."
+      
+      # Wait for SSM agent
+      for i in $(seq 1 10); do
+        if aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${aws_instance.k3s.id}" --query "InstanceInformationList[0].PingStatus" --output text | grep -q "Online"; then
+          echo "SSM online"
+          break
+        fi
+        sleep 30
+      done
+      
+      # Wait for completion marker
+      for i in $(seq 1 20); do
+        RESULT=$(aws ssm send-command \
+          --instance-ids "${aws_instance.k3s.id}" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["test -f /var/log/k3s-install-complete && echo READY || echo WAITING"]' \
+          --query "Command.CommandId" --output text)
+        
+        sleep 10
+        
+        STATUS=$(aws ssm get-command-invocation \
+          --command-id "$RESULT" \
+          --instance-id "${aws_instance.k3s.id}" \
+          --query "StandardOutputContent" --output text 2>/dev/null || echo "WAITING")
+        
+        if echo "$STATUS" | grep -q "READY"; then
+          echo "K3s installation complete!"
+          exit 0
+        fi
+        
+        echo "Waiting for K3s... ($i/20)"
+        sleep 30
+      done
+      
+      echo "K3s installation timeout"
+      exit 1
+    EOT
+  }
+  
+  triggers = {
+    instance_id = aws_instance.k3s.id
+  }
+}
 
 # GitHub Runner
 module "github_runner" {

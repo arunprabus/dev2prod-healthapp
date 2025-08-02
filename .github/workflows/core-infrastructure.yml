@@ -487,7 +487,24 @@ jobs:
           echo "SSM Agent Status: $SSM_STATUS"
           
           if [ "$SSM_STATUS" = "Online" ]; then
-            echo "✅ SSM agent is online - completion check will work"
+            echo "✅ SSM agent is online"
+            
+            # Show K3s installation logs
+            echo "📄 K3s Installation Logs:"
+            LOG_CMD=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --parameters 'commands=["cat /var/log/k3s-install.log 2>/dev/null || echo No logs yet"]' \
+              --query "Command.CommandId" --output text)
+            
+            sleep 5
+            
+            LOGS=$(aws ssm get-command-invocation \
+              --command-id "$LOG_CMD" \
+              --instance-id "$INSTANCE_ID" \
+              --query "StandardOutputContent" --output text 2>/dev/null || echo "No logs available")
+            
+            echo "$LOGS"
             
             # Test completion marker
             CMD_ID=$(aws ssm send-command \
@@ -504,12 +521,6 @@ jobs:
               --query "StandardOutputContent" --output text 2>/dev/null || echo "PENDING")
             
             echo "K3s Status: $RESULT"
-            
-            if echo "$RESULT" | grep -q "COMPLETE"; then
-              echo "✅ K3s installation already completed"
-            else
-              echo "⏳ K3s installation in progress (expected for new deployments)"
-            fi
           else
             echo "⚠️ SSM agent offline - may need time to initialize"
           fi
