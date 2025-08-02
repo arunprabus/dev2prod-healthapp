@@ -45,7 +45,7 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 # --- Install kubectl ---
 echo "⚙️ Installing kubectl..." | tee -a "$LOG_FILE"
 KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
-curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+curl -LO "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
 chmod +x kubectl
 mv kubectl /usr/local/bin/kubectl
 
