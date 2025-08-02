@@ -161,6 +161,78 @@ resource "aws_instance" "k3s" {
   })
 }
 
+# Wait for K3s installation to complete using SSM
+resource "null_resource" "wait_for_k3s" {
+  depends_on = [aws_instance.k3s]
+  
+  provisioner "local-exec" {
+    command = <<-EOT
+      echo "Waiting for K3s installation to complete via SSM..."
+      
+      # Wait for SSM agent to be ready
+      for i in {1..20}; do
+        if aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${aws_instance.k3s.id}" --query "InstanceInformationList[0].PingStatus" --output text | grep -q "Online"; then
+          echo "SSM agent is online"
+          break
+        fi
+        echo "Waiting for SSM agent... ($i/20)"
+        sleep 30
+      done
+      
+      # Check for K3s completion marker
+      for i in {1..20}; do
+        RESULT=$(aws ssm send-command \
+          --instance-ids "${aws_instance.k3s.id}" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["test -f /var/log/k3s-install-complete && echo COMPLETE || echo WAITING"]' \
+          --query "Command.CommandId" --output text)
+        
+        sleep 10
+        
+        STATUS=$(aws ssm get-command-invocation \
+          --command-id "$RESULT" \
+          --instance-id "${aws_instance.k3s.id}" \
+          --query "StandardOutputContent" --output text 2>/dev/null || echo "WAITING")
+        
+        if echo "$STATUS" | grep -q "COMPLETE"; then
+          echo "K3s installation completed!"
+          
+          # Verify K3s service
+          VERIFY_CMD=$(aws ssm send-command \
+            --instance-ids "${aws_instance.k3s.id}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters 'commands=["systemctl is-active k3s && kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml"]' \
+            --query "Command.CommandId" --output text)
+          
+          sleep 5
+          
+          VERIFY_RESULT=$(aws ssm get-command-invocation \
+            --command-id "$VERIFY_CMD" \
+            --instance-id "${aws_instance.k3s.id}" \
+            --query "StandardOutputContent" --output text 2>/dev/null || echo "FAILED")
+          
+          if echo "$VERIFY_RESULT" | grep -q "active"; then
+            echo "K3s cluster is ready and operational!"
+            exit 0
+          fi
+        fi
+        
+        echo "K3s installation in progress... ($i/20)"
+        sleep 30
+      done
+      
+      
+      echo "Timeout waiting for K3s installation"
+      exit 1
+    EOT
+  }
+  
+  # Trigger re-provisioning if instance changes
+  triggers = {
+    instance_id = aws_instance.k3s.id
+  }
+}
+
 # Get Ubuntu AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
