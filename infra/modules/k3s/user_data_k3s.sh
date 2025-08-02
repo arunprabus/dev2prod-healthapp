@@ -79,7 +79,7 @@ echo "✅ K3s installation completed and ready"
 
 # Create namespaces based on environment
 echo "🏷️ Creating namespaces for $ENVIRONMENT..."
-if [[ "$ENVIRONMENT" == "lower" ]]; then
+if [[ "$ENVIRONMENT" == "dev" ]] || [[ "$NETWORK_TIER" == "lower" ]]; then
   # Lower network: dev and test environments
   kubectl create namespace health-app-dev || true
   kubectl create namespace health-app-test || true
@@ -104,7 +104,7 @@ if [[ "$ENVIRONMENT" == "lower" ]]; then
   #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
   #   -n health-app-test || true
 
-elif [[ "$ENVIRONMENT" == "higher" ]]; then
+elif [[ "$ENVIRONMENT" == "prod" ]] || [[ "$NETWORK_TIER" == "higher" ]]; then
   # Higher network: production environment
   kubectl create namespace health-app-prod || true
   
@@ -311,12 +311,12 @@ chmod +x /home/ubuntu/monitor-k3s.sh
 chown ubuntu:ubuntu /home/ubuntu/monitor-k3s.sh
 
 # Create cluster info script
-cat > /home/ubuntu/cluster-info.sh << 'INFOEOF'
+cat > /home/ubuntu/cluster-info.sh << INFOEOF
 #!/bin/bash
 echo "=== K3s Cluster Information ==="
-echo "Cluster: ${cluster_name}"
-echo "Environment: ${environment}"
-echo "Network Tier: ${network_tier}"
+echo "Cluster: $CLUSTER_NAME"
+echo "Environment: $ENVIRONMENT"
+echo "Network Tier: $NETWORK_TIER"
 echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
 echo ""
 echo "=== Node Status ==="
