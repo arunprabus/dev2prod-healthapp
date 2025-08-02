@@ -469,35 +469,145 @@ jobs:
         echo "🔧 Applying data transfer optimizations"
         ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} optimize
 
-    - name: Infrastructure Summary
+    - name: Infrastructure Summary & Network Design
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
       working-directory: infra/two-network-setup
       run: |
         echo "✅ Infrastructure deployed successfully for ${{ matrix.env }} environment"
-        echo "📊 Resources created:"
+        echo ""
+        echo "=== 🏢 DEPLOYED RESOURCES ==="
         
-        # Get outputs with error handling
-        K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "Not available")
-        RUNNER_PRIVATE_IP=$(terraform output -raw github_runner_ip 2>/dev/null || echo "Not available")
-        RUNNER_PUBLIC_IP=$(terraform output -raw github_runner_public_ip 2>/dev/null || echo "Not available")
-        RDS_ENDPOINT=$(terraform output -raw rds_endpoint 2>/dev/null || echo "Not available")
+        # Get all EC2 instances for this network tier
+        echo "💻 EC2 Instances:"
+        aws ec2 describe-instances \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=instance-state-name,Values=running" \
+          --query "Reservations[*].Instances[*].[Tags[?Key=='Name'].Value|[0],InstanceType,PublicIpAddress,PrivateIpAddress,State.Name]" \
+          --output table
         
-        echo "- K3s Cluster IP: $K3S_IP"
-        echo "- GitHub Runner Private IP: $RUNNER_PRIVATE_IP"
-        echo "- GitHub Runner Public IP: $RUNNER_PUBLIC_IP"
-        echo "- RDS Endpoint: $RDS_ENDPOINT"
+        # Get RDS instances
+        echo ""
+        echo "💾 RDS Databases:"
+        aws rds describe-db-instances \
+          --query "DBInstances[?contains(DBInstanceIdentifier, 'health-app-${{ matrix.env }}')].[DBInstanceIdentifier,DBInstanceClass,Engine,EngineVersion,Endpoint.Address,Endpoint.Port,DBInstanceStatus]" \
+          --output table 2>/dev/null || echo "No RDS instances found"
+        
+        # Get Security Groups
+        echo ""
+        echo "🔒 Security Groups:"
+        aws ec2 describe-security-groups \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" \
+          --query "SecurityGroups[*].[GroupName,GroupId,Description]" \
+          --output table
+        
+        # Get Key Pairs
+        echo ""
+        echo "🔑 SSH Key Pairs:"
+        aws ec2 describe-key-pairs \
+          --query "KeyPairs[?contains(KeyName, 'health-app-${{ matrix.env }}')].[KeyName,KeyType,KeyFingerprint]" \
+          --output table 2>/dev/null || echo "No key pairs found"
         
         echo ""
-        echo "🔍 All available outputs:"
-        terraform output 2>/dev/null || echo "No outputs available"
+        echo "=== 🌐 NETWORK DESIGN ==="
         
-        echo ""
-        echo "🚀 GitHub Runner is now available with labels: awsrunnerlocal, aws-${{ matrix.env }}"
+        # Get VPC information
+        VPC_ID=$(aws ec2 describe-instances \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].VpcId" --output text 2>/dev/null)
         
-        if [ "$RUNNER_PUBLIC_IP" != "Not available" ]; then
-          echo "📋 SSH to runner: ssh -i ~/.ssh/your-key ubuntu@$RUNNER_PUBLIC_IP"
-          echo "🔧 Debug runner: sudo /home/ubuntu/debug-runner.sh"
+        if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+          echo "🌐 VPC Details:"
+          aws ec2 describe-vpcs --vpc-ids $VPC_ID \
+            --query "Vpcs[*].[VpcId,CidrBlock,State,Tags[?Key=='Name'].Value|[0]]" \
+            --output table
+          
+          echo ""
+          echo "🔌 Subnets:"
+          aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+            --query "Subnets[*].[SubnetId,CidrBlock,AvailabilityZone,MapPublicIpOnLaunch,Tags[?Key=='Name'].Value|[0]]" \
+            --output table
         fi
+        
+        echo ""
+        echo "=== 🔌 PORT CONFIGURATION ==="
+        
+        # Get security group rules
+        SG_IDS=$(aws ec2 describe-security-groups \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" \
+          --query "SecurityGroups[*].GroupId" --output text)
+        
+        for SG_ID in $SG_IDS; do
+          if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+            SG_NAME=$(aws ec2 describe-security-groups --group-ids $SG_ID \
+              --query "SecurityGroups[0].GroupName" --output text)
+            echo "🔒 $SG_NAME ($SG_ID):"
+            
+            echo "  Inbound Rules:"
+            aws ec2 describe-security-groups --group-ids $SG_ID \
+              --query "SecurityGroups[0].IpPermissions[*].[IpProtocol,FromPort,ToPort,IpRanges[0].CidrIp]" \
+              --output table | sed 's/^/    /'
+            
+            echo "  Outbound Rules:"
+            aws ec2 describe-security-groups --group-ids $SG_ID \
+              --query "SecurityGroups[0].IpPermissionsEgress[*].[IpProtocol,FromPort,ToPort,IpRanges[0].CidrIp]" \
+              --output table | sed 's/^/    /'
+            echo ""
+          fi
+        done
+        
+        echo "=== 📊 RESOURCE SUMMARY ==="
+        
+        # Count resources
+        EC2_COUNT=$(aws ec2 describe-instances \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=instance-state-name,Values=running" \
+          --query "length(Reservations[*].Instances[*])" --output text)
+        
+        RDS_COUNT=$(aws rds describe-db-instances \
+          --query "length(DBInstances[?contains(DBInstanceIdentifier, 'health-app-${{ matrix.env }}')])" \
+          --output text 2>/dev/null || echo "0")
+        
+        SG_COUNT=$(aws ec2 describe-security-groups \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" \
+          --query "length(SecurityGroups[*])" --output text)
+        
+        echo "Network Tier: ${{ matrix.env }}"
+        echo "EC2 Instances: $EC2_COUNT"
+        echo "RDS Databases: $RDS_COUNT"
+        echo "Security Groups: $SG_COUNT"
+        echo "Total Resources: $((EC2_COUNT + RDS_COUNT + SG_COUNT))"
+        
+        echo ""
+        echo "=== 🚀 ACCESS INFORMATION ==="
+        
+        # Get connection details
+        K3S_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
+        
+        RUNNER_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=tag:Name,Values=*runner*" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
+        
+        RDS_ENDPOINT=$(aws rds describe-db-instances \
+          --query "DBInstances[?contains(DBInstanceIdentifier, 'health-app-${{ matrix.env }}')].Endpoint.Address" \
+          --output text 2>/dev/null)
+        
+        if [ "$K3S_IP" != "None" ] && [ -n "$K3S_IP" ]; then
+          echo "K3s Cluster: ssh -i ~/.ssh/key ubuntu@$K3S_IP"
+          echo "K3s API: https://$K3S_IP:6443"
+          echo "Kubeconfig: scp -i ~/.ssh/key ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml ./kubeconfig"
+        fi
+        
+        if [ "$RUNNER_IP" != "None" ] && [ -n "$RUNNER_IP" ]; then
+          echo "GitHub Runner: ssh -i ~/.ssh/key ubuntu@$RUNNER_IP"
+          echo "Runner Labels: self-hosted, github-runner-${{ matrix.env }}"
+        fi
+        
+        if [ "$RDS_ENDPOINT" != "None" ] && [ -n "$RDS_ENDPOINT" ]; then
+          echo "Database: $RDS_ENDPOINT:5432 (or :3306)"
+        fi
+        
+        echo ""
+        echo "✅ Network deployment completed for ${{ matrix.env }} tier"
 
 
     - name: Generate Execution Report

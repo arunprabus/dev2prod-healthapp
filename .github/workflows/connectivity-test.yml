@@ -79,13 +79,13 @@ jobs:
           
           case "$NETWORK_TIER" in
             lower)
-              TAG_NAME="health-app-lower-k3s-master"
+              TAG_NAME="health-app-lower-k3s-node"
               ;;
             higher)
-              TAG_NAME="health-app-higher-k3s-master"
+              TAG_NAME="health-app-higher-k3s-node"
               ;;
             monitoring)
-              TAG_NAME="health-app-monitoring-k3s-master"
+              TAG_NAME="health-app-monitoring-k3s-node"
               ;;
           esac
           
@@ -145,15 +145,15 @@ jobs:
           
           case "$NETWORK_TIER" in
             lower)
-              TAG_NAME="health-app-lower-k3s-master"
+              TAG_NAME="health-app-lower-k3s-node"
               SECRET_NAME="KUBECONFIG_DEV"
               ;;
             higher)
-              TAG_NAME="health-app-higher-k3s-master"
+              TAG_NAME="health-app-higher-k3s-node"
               SECRET_NAME="KUBECONFIG_PROD"
               ;;
             monitoring)
-              TAG_NAME="health-app-monitoring-k3s-master"
+              TAG_NAME="health-app-monitoring-k3s-node"
               SECRET_NAME="KUBECONFIG_MONITORING"
               ;;
           esac
