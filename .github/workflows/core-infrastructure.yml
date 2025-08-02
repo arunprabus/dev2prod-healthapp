@@ -76,10 +76,26 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    - name: Cache Terraform
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.terraform.d/plugin-cache
+          infra/two-network-setup/.terraform
+        key: terraform-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('infra/two-network-setup/.terraform.lock.hcl') }}
+        restore-keys: |
+          terraform-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-
+          terraform-${{ runner.os }}-
+
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
+        
+    - name: Configure Terraform Plugin Cache
+      run: |
+        mkdir -p ~/.terraform.d/plugin-cache
+        echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
 
     - name: Pre-deployment Resource Check
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
@@ -274,28 +290,99 @@ jobs:
           exit 1
         fi
 
-    - name: Setup Kubeconfig Secrets
+    - name: Save Terraform Outputs for Ansible
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       working-directory: infra/two-network-setup
       run: |
-        echo "🔑 Setting up kubeconfig secrets..."
+        echo "📋 Saving Terraform outputs for Ansible..."
         
-        # Get K3s cluster IP
-        K3S_IP=$(terraform output -raw k3s_public_ip 2>/dev/null || echo "")
+        # Save outputs to files for Ansible
+        terraform output -raw k3s_public_ip 2>/dev/null > k3s_ip.txt || echo "Not available" > k3s_ip.txt
+        terraform output -raw github_runner_public_ip 2>/dev/null > runner_ip.txt || echo "Not available" > runner_ip.txt
+        terraform output -raw rds_endpoint 2>/dev/null > rds_endpoint.txt || echo "Not available" > rds_endpoint.txt
         
-        if [ -n "$K3S_IP" ] && [ "$K3S_IP" != "Not available" ]; then
-          echo "K3s cluster IP: $K3S_IP"
+        echo "K3s IP: $(cat k3s_ip.txt)"
+        echo "Runner IP: $(cat runner_ip.txt)"
+        echo "RDS Endpoint: $(cat rds_endpoint.txt)"
+        
+        # Create Ansible inventory
+        mkdir -p ansible
+        cat > ansible/inventory.ini << EOF
+        [k3s_masters]
+        k3s-${{ matrix.env }} ansible_host=$(cat k3s_ip.txt) ansible_user=ubuntu
+        
+        [github_runners]
+        runner-${{ matrix.env }} ansible_host=$(cat runner_ip.txt) ansible_user=ubuntu
+        
+        [all:vars]
+        ansible_ssh_private_key_file=~/.ssh/id_rsa
+        ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+        environment=${{ matrix.env }}
+        rds_endpoint=$(cat rds_endpoint.txt)
+        EOF
+        
+        echo "✅ Ansible inventory created"
+        
+    - name: Cache Terraform Outputs
+      uses: actions/cache@v4
+      with:
+        path: |
+          infra/two-network-setup/*.txt
+          infra/two-network-setup/ansible/
+        key: terraform-outputs-${{ matrix.env }}-${{ github.run_id }}
+        restore-keys: terraform-outputs-${{ matrix.env }}-
+        
+    - name: Cache APT packages
+      uses: actions/cache@v4
+      with:
+        path: /var/cache/apt
+        key: apt-${{ runner.os }}-${{ hashFiles('/etc/apt/sources.list') }}
+        restore-keys: apt-${{ runner.os }}-
+        
+    - name: Setup Ansible Configuration
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      run: |
+        echo "🔧 Setting up Ansible configuration..."
+        
+        # Setup SSH key for Ansible (cached)
+        mkdir -p ~/.ssh
+        if [ ! -f ~/.ssh/id_rsa ]; then
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo "SSH key configured"
+        else
+          echo "SSH key already exists"
+        fi
+        
+        # Cache Ansible installation
+        if ! command -v ansible &> /dev/null; then
+          echo "Installing Ansible..."
+          sudo apt-get update
+          sudo apt-get install -y ansible python3-pip
+          pip3 install --user ansible-core
+        else
+          echo "Ansible already installed: $(ansible --version | head -1)"
+        fi
+        
+        echo "✅ Ansible setup completed"
+        
+    - name: Run Ansible K3s Configuration
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      working-directory: infra/two-network-setup
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        echo "🚀 Running Ansible K3s configuration..."
+        
+        # Wait for K3s to be ready before running Ansible
+        K3S_IP=$(cat k3s_ip.txt)
+        if [ "$K3S_IP" != "Not available" ]; then
+          echo "Waiting for K3s at $K3S_IP to be ready..."
           
-          # Download kubeconfig from K3s cluster
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/ssh_key
-          chmod 600 /tmp/ssh_key
-          
-          # Wait for K3s to be ready with retries
-          echo "Waiting for K3s to be ready..."
-          
-          # Wait for SSH to be available first
+          # Wait for SSH to be available
           for i in {1..10}; do
-            if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
+            if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
               echo "SSH connection established (attempt $i)"
               break
             else
@@ -304,62 +391,13 @@ jobs:
             fi
           done
           
-          # Wait for K3s service to be ready
-          for i in {1..15}; do
-            echo "Checking K3s readiness (attempt $i/15)..."
-            if ssh -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "sudo systemctl is-active k3s" 2>/dev/null | grep -q "active"; then
-              echo "K3s service is active"
-              sleep 30  # Give it a bit more time to fully initialize
-              break
-            else
-              echo "K3s not ready yet, waiting..."
-              sleep 30
-            fi
-          done
+          # Run Ansible playbook
+          cd ../../ansible
+          ansible-playbook -i ../infra/two-network-setup/ansible/inventory.ini k3s-setup.yml -v
           
-          # Download kubeconfig with retries
-          for i in {1..5}; do
-            echo "Attempting to download kubeconfig (attempt $i/5)..."
-            if scp -i /tmp/ssh_key -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig 2>/dev/null; then
-              echo "✅ Kubeconfig downloaded successfully"
-              break
-            else
-              echo "Failed to download kubeconfig, retrying in 30s..."
-              sleep 30
-            fi
-          done
-          
-          if [ -f /tmp/kubeconfig ]; then
-            # Update server IP in kubeconfig
-            sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig
-            
-            # Test connection
-            export KUBECONFIG=/tmp/kubeconfig
-            if kubectl cluster-info > /dev/null 2>&1; then
-              echo "✅ Kubeconfig is working"
-              
-              # Create GitHub secret based on environment
-              KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig)
-              
-              if [ "${{ matrix.env }}" = "lower" ]; then
-                # Create secrets for both dev and test
-                echo "KUBECONFIG_DEV=$KUBECONFIG_B64" >> $GITHUB_ENV
-                echo "KUBECONFIG_TEST=$KUBECONFIG_B64" >> $GITHUB_ENV
-                echo "✅ Created KUBECONFIG_DEV and KUBECONFIG_TEST secrets"
-              elif [ "${{ matrix.env }}" = "higher" ]; then
-                echo "KUBECONFIG_PROD=$KUBECONFIG_B64" >> $GITHUB_ENV
-                echo "✅ Created KUBECONFIG_PROD secret"
-              fi
-            else
-              echo "❌ Kubeconfig test failed"
-            fi
-          else
-            echo "❌ Failed to download kubeconfig"
-          fi
-          
-          rm -f /tmp/ssh_key /tmp/kubeconfig
+          echo "✅ Ansible K3s configuration completed"
         else
-          echo "❌ K3s IP not available"
+          echo "❌ K3s IP not available, skipping Ansible configuration"
         fi
         
     - name: Post-Deployment Summary

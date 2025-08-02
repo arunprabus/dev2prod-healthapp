@@ -85,7 +85,8 @@ module "k3s" {
   k3s_instance_type        = var.k3s_instance_type
   environment              = var.environment
   cluster_name             = var.cluster_name
-  db_endpoint              = var.database_config != null ? module.rds[0].db_endpoint : ""
+  db_endpoint              = ""  # Database commented out
+  # db_endpoint              = var.database_config != null ? module.rds[0].db_endpoint : ""
   network_tier             = var.environment
   management_subnet_cidrs  = var.management_subnet_cidrs
   ssh_public_key           = var.ssh_public_key
@@ -93,26 +94,27 @@ module "k3s" {
   tags                     = local.tags
 }
 
-module "rds" {
-  source = "./modules/rds"
-  count  = var.database_config != null ? 1 : 0
-
-  identifier                = var.database_config.identifier
-  vpc_id                   = module.vpc.vpc_id
-  private_subnet_ids       = module.vpc.private_subnet_ids
-  instance_class           = var.database_config.instance_class
-  allocated_storage        = var.database_config.allocated_storage
-  engine                   = var.database_config.engine
-  engine_version          = var.database_config.engine_version
-  db_name                 = var.database_config.db_name
-  username                = var.database_config.username
-  backup_retention_period = var.database_config.backup_retention_period
-  multi_az                = var.database_config.multi_az
-  snapshot_identifier     = var.database_config.snapshot_identifier
-  restore_from_snapshot   = var.restore_from_snapshot
-  environment             = var.environment
-  tags                    = var.tags
-}
+# Database module - commented out for now
+# module "rds" {
+#   source = "./modules/rds"
+#   count  = var.database_config != null ? 1 : 0
+#
+#   identifier                = var.database_config.identifier
+#   vpc_id                   = module.vpc.vpc_id
+#   private_subnet_ids       = module.vpc.private_subnet_ids
+#   instance_class           = var.database_config.instance_class
+#   allocated_storage        = var.database_config.allocated_storage
+#   engine                   = var.database_config.engine
+#   engine_version          = var.database_config.engine_version
+#   db_name                 = var.database_config.db_name
+#   username                = var.database_config.username
+#   backup_retention_period = var.database_config.backup_retention_period
+#   multi_az                = var.database_config.multi_az
+#   snapshot_identifier     = var.database_config.snapshot_identifier
+#   restore_from_snapshot   = var.restore_from_snapshot
+#   environment             = var.environment
+#   tags                    = var.tags
+# }
 
 # Deployment configuration for applications (disabled until K3s is ready)
 # module "deployment" {

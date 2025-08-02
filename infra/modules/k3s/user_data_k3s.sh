@@ -55,14 +55,27 @@ chmod +x /usr/local/bin/docker-compose
 
 # Wait for K3s to be ready
 echo "⏳ Waiting for K3s to be ready..."
-sleep 60
+sleep 30
 
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-# Verify K3s is running
+# Wait for K3s to be fully ready with retries
 echo "🔍 Verifying K3s installation..."
-kubectl get nodes
-kubectl get pods -A
+for i in {1..10}; do
+  if kubectl get nodes > /dev/null 2>&1; then
+    echo "✅ K3s is ready (attempt $i)"
+    kubectl get nodes
+    kubectl get pods -A
+    break
+  else
+    echo "⏳ K3s not ready yet, waiting... (attempt $i/10)"
+    sleep 30
+  fi
+done
+
+# Create completion marker for external scripts
+echo "K3S_READY=$(date)" > /var/log/k3s-ready
+echo "✅ K3s installation completed and ready"
 
 # Create namespaces based on environment
 echo "🏷️ Creating namespaces for $ENVIRONMENT..."
@@ -71,39 +84,40 @@ if [[ "$ENVIRONMENT" == "lower" ]]; then
   kubectl create namespace health-app-dev || true
   kubectl create namespace health-app-test || true
   
-  # Create database secrets for shared DB
-  echo "💾 Creating database secrets for shared DB..."
-  kubectl create secret generic database-config \
-    --from-literal=DB_HOST="$DB_ENDPOINT" \
-    --from-literal=DB_PORT="5432" \
-    --from-literal=DB_NAME="healthapi" \
-    --from-literal=DB_USER="postgres" \
-    --from-literal=DB_PASSWORD="changeme123!" \
-    --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
-    -n health-app-dev || true
-    
-  kubectl create secret generic database-config \
-    --from-literal=DB_HOST="$DB_ENDPOINT" \
-    --from-literal=DB_PORT="5432" \
-    --from-literal=DB_NAME="healthapi" \
-    --from-literal=DB_USER="postgres" \
-    --from-literal=DB_PASSWORD="changeme123!" \
-    --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
-    -n health-app-test || true
+  # Database secrets commented out for now
+  # echo "💾 Creating database secrets for shared DB..."
+  # kubectl create secret generic database-config \
+  #   --from-literal=DB_HOST="$DB_ENDPOINT" \
+  #   --from-literal=DB_PORT="5432" \
+  #   --from-literal=DB_NAME="healthapi" \
+  #   --from-literal=DB_USER="postgres" \
+  #   --from-literal=DB_PASSWORD="changeme123!" \
+  #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
+  #   -n health-app-dev || true
+  #   
+  # kubectl create secret generic database-config \
+  #   --from-literal=DB_HOST="$DB_ENDPOINT" \
+  #   --from-literal=DB_PORT="5432" \
+  #   --from-literal=DB_NAME="healthapi" \
+  #   --from-literal=DB_USER="postgres" \
+  #   --from-literal=DB_PASSWORD="changeme123!" \
+  #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
+  #   -n health-app-test || true
 
 elif [[ "$ENVIRONMENT" == "higher" ]]; then
   # Higher network: production environment
   kubectl create namespace health-app-prod || true
   
-  echo "💾 Creating database secrets for dedicated prod DB..."
-  kubectl create secret generic database-config \
-    --from-literal=DB_HOST="$DB_ENDPOINT" \
-    --from-literal=DB_PORT="5432" \
-    --from-literal=DB_NAME="healthapi" \
-    --from-literal=DB_USER="postgres" \
-    --from-literal=DB_PASSWORD="changeme123!" \
-    --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
-    -n health-app-prod || true
+  # Database secrets commented out for now
+  # echo "💾 Creating database secrets for dedicated prod DB..."
+  # kubectl create secret generic database-config \
+  #   --from-literal=DB_HOST="$DB_ENDPOINT" \
+  #   --from-literal=DB_PORT="5432" \
+  #   --from-literal=DB_NAME="healthapi" \
+  #   --from-literal=DB_USER="postgres" \
+  #   --from-literal=DB_PASSWORD="changeme123!" \
+  #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
+  #   -n health-app-prod || true
 
 elif [[ "$ENVIRONMENT" == "monitoring" ]]; then
   # Monitoring network: monitoring tools
@@ -385,5 +399,11 @@ echo "  - /home/ubuntu/monitor-k3s.sh - Health monitoring (runs every 5 minutes)
 echo "  - /home/ubuntu/restart-k3s.sh - Restart K3s cluster"
 
 echo "SUCCESS" > /var/log/k3s-install-complete
+echo "K3S_INSTALLATION_COMPLETE=$(date)" >> /var/log/k3s-ready
 echo "=== K3S INSTALLATION COMPLETED ==="
 date
+
+# Final verification
+echo "🎉 Final K3s status:"
+kubectl get nodes --no-headers 2>/dev/null | awk '{print "Node: " $1 " Status: " $2}' || echo "K3s not responding"
+echo "📊 System ready for connections"

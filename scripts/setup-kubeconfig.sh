@@ -1,59 +1,52 @@
 #!/bin/bash
-
-# Setup Kubeconfig Script
-# Usage: ./setup-kubeconfig.sh <environment> <public-ip> [ssh-key-path]
-
 set -e
 
+# Usage: ./setup-kubeconfig.sh <environment> <k3s_ip>
 ENVIRONMENT=${1:-dev}
-PUBLIC_IP=${2}
-SSH_KEY=${3:-~/.ssh/k3s-key}
+K3S_IP=${2}
 
-if [ -z "$PUBLIC_IP" ]; then
-    echo "❌ Error: Public IP is required"
-    echo "Usage: $0 <environment> <public-ip> [ssh-key-path]"
-    echo "Example: $0 dev 1.2.3.4 ~/.ssh/k3s-key"
+if [ -z "$K3S_IP" ]; then
+    echo "Usage: $0 <environment> <k3s_ip>"
+    echo "Example: $0 dev 1.2.3.4"
     exit 1
 fi
 
-echo "🔧 Setting up kubeconfig for $ENVIRONMENT environment..."
-echo "📡 Cluster IP: $PUBLIC_IP"
-echo "🔑 SSH Key: $SSH_KEY"
+echo "🔑 Setting up kubeconfig for $ENVIRONMENT environment"
+echo "K3s IP: $K3S_IP"
 
-# Download kubeconfig from K3s cluster
+# Download kubeconfig
 echo "📥 Downloading kubeconfig..."
-scp -i "$SSH_KEY" -o StrictHostKeyChecking=no ubuntu@"$PUBLIC_IP":/etc/rancher/k3s/k3s.yaml "kubeconfig-$ENVIRONMENT.yaml"
+scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml ./kubeconfig-$ENVIRONMENT
 
-# Replace localhost with public IP
-echo "🔄 Updating server IP in kubeconfig..."
-if [[ "$OSTYPE" == "darwin"* ]]; then
-    # macOS
-    sed -i '' "s/127.0.0.1/$PUBLIC_IP/" "kubeconfig-$ENVIRONMENT.yaml"
-else
-    # Linux
-    sed -i "s/127.0.0.1/$PUBLIC_IP/" "kubeconfig-$ENVIRONMENT.yaml"
-fi
-
-# Set permissions
-chmod 600 "kubeconfig-$ENVIRONMENT.yaml"
-
-echo "✅ Kubeconfig setup complete!"
-echo ""
-echo "🚀 To use this kubeconfig:"
-echo "export KUBECONFIG=\$PWD/kubeconfig-$ENVIRONMENT.yaml"
-echo "kubectl get nodes"
-echo ""
-echo "📁 Kubeconfig saved as: kubeconfig-$ENVIRONMENT.yaml"
+# Update server IP
+echo "🔧 Updating server IP..."
+sed -i "s/127.0.0.1/$K3S_IP/g" ./kubeconfig-$ENVIRONMENT
 
 # Test connection
 echo "🧪 Testing connection..."
-export KUBECONFIG="$PWD/kubeconfig-$ENVIRONMENT.yaml"
-if kubectl get nodes --request-timeout=10s > /dev/null 2>&1; then
-    echo "✅ Connection successful!"
+export KUBECONFIG=./kubeconfig-$ENVIRONMENT
+if kubectl cluster-info --request-timeout=10s > /dev/null 2>&1; then
+    echo "✅ Kubeconfig is working"
     kubectl get nodes
 else
-    echo "⚠️  Connection test failed. Please check:"
-    echo "   - SSH key permissions: chmod 600 $SSH_KEY"
-    echo "   - Security group allows port 6443"
-    echo "   - K3s service is running on the cluster"
+    echo "❌ Kubeconfig test failed"
+    exit 1
 fi
+
+# Create GitHub secret
+if [ -n "$GITHUB_TOKEN" ]; then
+    echo "🔐 Creating GitHub secret..."
+    KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-$ENVIRONMENT)
+    
+    curl -X PUT \
+        -H "Authorization: token $GITHUB_TOKEN" \
+        -H "Accept: application/vnd.github.v3+json" \
+        "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/secrets/KUBECONFIG_${ENVIRONMENT^^}" \
+        -d "{\"encrypted_value\":\"$KUBECONFIG_B64\"}"
+    
+    echo "✅ GitHub secret KUBECONFIG_${ENVIRONMENT^^} created"
+else
+    echo "⚠️ GITHUB_TOKEN not set, skipping GitHub secret creation"
+fi
+
+echo "🎉 Kubeconfig setup completed for $ENVIRONMENT"

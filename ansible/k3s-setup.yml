@@ -1,0 +1,153 @@
+---
+- name: Configure K3s and Setup Kubeconfig
+  hosts: k3s_masters
+  become: yes
+  vars:
+    github_repo: "{{ lookup('env', 'GITHUB_REPOSITORY') | default('arunprabus/dev2prod-healthapp') }}"
+    github_token: "{{ lookup('env', 'GITHUB_TOKEN') }}"
+    
+  tasks:
+    - name: Wait for K3s to be ready
+      wait_for:
+        port: 6443
+        host: "{{ ansible_host }}"
+        timeout: 300
+      delegate_to: localhost
+      
+    - name: Check K3s service status
+      systemd:
+        name: k3s
+        state: started
+        enabled: yes
+      register: k3s_status
+      
+    - name: Wait for K3s API to be responsive
+      uri:
+        url: "https://{{ ansible_host }}:6443/readyz"
+        method: GET
+        validate_certs: no
+        timeout: 10
+      register: k3s_api_check
+      until: k3s_api_check.status == 200
+      retries: 30
+      delay: 10
+      delegate_to: localhost
+      
+    - name: Check if kubeconfig already exists
+      stat:
+        path: "./kubeconfig-{{ environment }}"
+      delegate_to: localhost
+      register: kubeconfig_exists
+      
+    - name: Download kubeconfig from K3s cluster
+      fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: "./kubeconfig-{{ environment }}"
+        flat: yes
+      register: kubeconfig_download
+      when: not kubeconfig_exists.stat.exists
+      
+    - name: Update server IP in kubeconfig
+      replace:
+        path: "./kubeconfig-{{ environment }}"
+        regexp: '127\.0\.0\.1'
+        replace: "{{ ansible_host }}"
+      delegate_to: localhost
+      
+    - name: Test kubeconfig connectivity
+      shell: |
+        export KUBECONFIG="./kubeconfig-{{ environment }}"
+        kubectl cluster-info --request-timeout=10s
+      delegate_to: localhost
+      register: kubectl_test
+      
+    - name: Create service account for GitHub Actions
+      shell: |
+        export KUBECONFIG="./kubeconfig-{{ environment }}"
+        kubectl create namespace gha-access --dry-run=client -o yaml | kubectl apply -f -
+        kubectl create serviceaccount gha-deployer -n gha-access --dry-run=client -o yaml | kubectl apply -f -
+      delegate_to: localhost
+      
+    - name: Create cluster role for GitHub Actions
+      shell: |
+        export KUBECONFIG="./kubeconfig-{{ environment }}"
+        cat <<EOF | kubectl apply -f -
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: gha-deployer-role
+        rules:
+        - apiGroups: [""]
+          resources: ["pods", "services", "configmaps", "secrets", "namespaces"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["apps"]
+          resources: ["deployments", "replicasets"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        - apiGroups: ["networking.k8s.io"]
+          resources: ["ingresses"]
+          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+        EOF
+      delegate_to: localhost
+      
+    - name: Create cluster role binding
+      shell: |
+        export KUBECONFIG="./kubeconfig-{{ environment }}"
+        kubectl create clusterrolebinding gha-deployer-binding \
+          --clusterrole=gha-deployer-role \
+          --serviceaccount=gha-access:gha-deployer \
+          --dry-run=client -o yaml | kubectl apply -f -
+      delegate_to: localhost
+      
+    - name: Generate service account token
+      shell: |
+        export KUBECONFIG="./kubeconfig-{{ environment }}"
+        kubectl create token gha-deployer -n gha-access --duration=8760h
+      delegate_to: localhost
+      register: service_account_token
+      
+    - name: Create token-based kubeconfig for GitHub Actions
+      copy:
+        content: |
+          apiVersion: v1
+          kind: Config
+          clusters:
+          - cluster:
+              insecure-skip-tls-verify: true
+              server: https://{{ ansible_host }}:6443
+            name: k3s-cluster
+          contexts:
+          - context:
+              cluster: k3s-cluster
+              namespace: gha-access
+              user: gha-deployer
+            name: gha-context
+          current-context: gha-context
+          users:
+          - name: gha-deployer
+            user:
+              token: {{ service_account_token.stdout }}
+        dest: "./kubeconfig-{{ environment }}-token"
+      delegate_to: localhost
+      
+    - name: Create GitHub Secrets via API
+      uri:
+        url: "https://api.github.com/repos/{{ github_repo }}/actions/secrets/KUBECONFIG_{{ environment | upper }}"
+        method: PUT
+        headers:
+          Authorization: "token {{ github_token }}"
+          Accept: "application/vnd.github.v3+json"
+        body_format: json
+        body:
+          encrypted_value: "{{ lookup('file', './kubeconfig-' + environment + '-token') | b64encode }}"
+          key_id: "{{ github_key_id }}"
+        status_code: [201, 204]
+      delegate_to: localhost
+      when: github_token is defined and github_token != ""
+      
+    - name: Display kubeconfig information
+      debug:
+        msg: |
+          Kubeconfig created for {{ environment }} environment
+          File: ./kubeconfig-{{ environment }}-token
+          Server: https://{{ ansible_host }}:6443
+          Test with: export KUBECONFIG=./kubeconfig-{{ environment }}-token && kubectl get nodes
