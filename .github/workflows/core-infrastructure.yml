@@ -149,7 +149,7 @@ jobs:
           exit 1
         fi
         
-        terraform init \
+        terraform init -reconfigure \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
           -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
           -backend-config="region=$AWS_REGION"
