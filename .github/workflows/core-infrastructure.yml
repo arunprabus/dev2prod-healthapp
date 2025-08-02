@@ -76,16 +76,17 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    - name: Setup Terraform Cache Directory
+      run: |
+        mkdir -p ~/.terraform.d/plugin-cache
+        mkdir -p infra/two-network-setup/.terraform
+        
     - name: Cache Terraform
       uses: actions/cache@v4
       with:
-        path: |
-          ~/.terraform.d/plugin-cache
-          infra/two-network-setup/.terraform
-        key: terraform-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('infra/two-network-setup/.terraform.lock.hcl') }}
-        restore-keys: |
-          terraform-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-
-          terraform-${{ runner.os }}-
+        path: ~/.terraform.d/plugin-cache
+        key: terraform-plugins-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}
+        restore-keys: terraform-plugins-${{ runner.os }}-
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
@@ -339,21 +340,8 @@ jobs:
         
         echo "✅ Ansible inventory created"
         
-    - name: Cache Terraform Outputs
-      uses: actions/cache@v4
-      with:
-        path: |
-          infra/two-network-setup/*.txt
-          infra/two-network-setup/ansible/
-        key: terraform-outputs-${{ matrix.env }}-${{ github.run_id }}
-        restore-keys: terraform-outputs-${{ matrix.env }}-
-        
-    - name: Cache APT packages
-      uses: actions/cache@v4
-      with:
-        path: /var/cache/apt
-        key: apt-${{ runner.os }}-${{ hashFiles('/etc/apt/sources.list') }}
-        restore-keys: apt-${{ runner.os }}-
+
+
         
     - name: Setup Ansible Configuration
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
