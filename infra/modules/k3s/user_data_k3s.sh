@@ -24,14 +24,32 @@ done
 
 # Replace localhost with public IP
 echo "Configuring kubeconfig for external access..."
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "")
 echo "Public IP: $PUBLIC_IP"
-sed -i "s/127.0.0.1/$PUBLIC_IP/g" /etc/rancher/k3s/k3s.yaml
+
+if [[ -n "$PUBLIC_IP" ]]; then
+  sed -i "s/127.0.0.1/$PUBLIC_IP/g" /etc/rancher/k3s/k3s.yaml
+  echo "✅ Kubeconfig updated with public IP: $PUBLIC_IP"
+else
+  echo "⚠️ Could not get public IP, keeping localhost in kubeconfig"
+  echo "This means external access won't work, but local access will"
+fi
 
 # Test kubectl
 echo "Testing kubectl..."
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
-kubectl get nodes || echo "kubectl test failed"
+
+# Wait for K3s to be fully ready
+echo "Waiting for K3s to be ready..."
+for i in {1..30}; do
+  if kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
+    echo "✅ K3s is ready!"
+    kubectl get nodes --insecure-skip-tls-verify
+    break
+  fi
+  echo "Waiting for K3s... ($i/30)"
+  sleep 10
+done
 
 # Create completion marker
 echo "K3s installation completed at $(date)"
@@ -41,8 +59,8 @@ touch /var/log/k3s-install-complete
 echo "🏷️ Creating namespaces for $ENVIRONMENT..."
 if [[ "$ENVIRONMENT" == "dev" ]] || [[ "$NETWORK_TIER" == "lower" ]]; then
   # Lower network: dev and test environments
-  kubectl create namespace health-app-dev || true
-  kubectl create namespace health-app-test || true
+  kubectl create namespace health-app-dev --insecure-skip-tls-verify || true
+  kubectl create namespace health-app-test --insecure-skip-tls-verify || true
   
   # Database secrets commented out for now
   # echo "💾 Creating database secrets for shared DB..."
@@ -66,7 +84,7 @@ if [[ "$ENVIRONMENT" == "dev" ]] || [[ "$NETWORK_TIER" == "lower" ]]; then
 
 elif [[ "$ENVIRONMENT" == "prod" ]] || [[ "$NETWORK_TIER" == "higher" ]]; then
   # Higher network: production environment
-  kubectl create namespace health-app-prod || true
+  kubectl create namespace health-app-prod --insecure-skip-tls-verify || true
   
   # Database secrets commented out for now
   # echo "💾 Creating database secrets for dedicated prod DB..."
@@ -81,17 +99,17 @@ elif [[ "$ENVIRONMENT" == "prod" ]] || [[ "$NETWORK_TIER" == "higher" ]]; then
 
 elif [[ "$ENVIRONMENT" == "monitoring" ]]; then
   # Monitoring network: monitoring tools
-  kubectl create namespace monitoring || true
-  kubectl create namespace health-app-monitoring || true
+  kubectl create namespace monitoring --insecure-skip-tls-verify || true
+  kubectl create namespace health-app-monitoring --insecure-skip-tls-verify || true
 fi
 
 # Create service account for GitHub Actions
 echo "🔐 Creating service account for GitHub Actions..."
-kubectl create namespace gha-access || true
-kubectl create serviceaccount gha-deployer -n gha-access || true
+kubectl create namespace gha-access --insecure-skip-tls-verify || true
+kubectl create serviceaccount gha-deployer -n gha-access --insecure-skip-tls-verify || true
 
 # Create cluster role with necessary permissions
-cat <<EOF | kubectl apply -f -
+cat <<EOF | kubectl apply -f - --insecure-skip-tls-verify
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -111,11 +129,12 @@ EOF
 # Create cluster role binding
 kubectl create clusterrolebinding gha-deployer-binding \
   --clusterrole=gha-deployer-role \
-  --serviceaccount=gha-access:gha-deployer || true
+  --serviceaccount=gha-access:gha-deployer \
+  --insecure-skip-tls-verify || true
 
 # Generate service account token
 echo "🎫 Generating service account token..."
-TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=8760h) # 1 year
+TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=8760h --insecure-skip-tls-verify) # 1 year
 
 if [[ -n "$TOKEN" ]]; then
   PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)

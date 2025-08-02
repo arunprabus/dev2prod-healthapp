@@ -38,13 +38,13 @@ mv kubectl /usr/local/bin/
 
 # Create namespaces based on environment
 if [[ "$ENVIRONMENT" == "lower" ]]; then
-  kubectl create namespace health-app-dev || true
-  kubectl create namespace health-app-test || true
+  kubectl create namespace health-app-dev --insecure-skip-tls-verify || true
+  kubectl create namespace health-app-test --insecure-skip-tls-verify || true
 elif [[ "$ENVIRONMENT" == "higher" ]]; then
-  kubectl create namespace health-app-prod || true
+  kubectl create namespace health-app-prod --insecure-skip-tls-verify || true
 elif [[ "$ENVIRONMENT" == "monitoring" ]]; then
-  kubectl create namespace monitoring || true
-  kubectl create namespace health-app-monitoring || true
+  kubectl create namespace monitoring --insecure-skip-tls-verify || true
+  kubectl create namespace health-app-monitoring --insecure-skip-tls-verify || true
 fi
 
 # Setup local kubeconfig
