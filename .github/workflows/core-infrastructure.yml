@@ -387,14 +387,8 @@ jobs:
         # Update server IP in kubeconfig
         sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig-${{ matrix.env }}.yaml
         
-        # Test kubeconfig
-        if kubectl --kubeconfig=/tmp/kubeconfig-${{ matrix.env }}.yaml get nodes > /dev/null 2>&1; then
-          echo "✅ Kubeconfig is valid"
-        else
-          echo "❌ Kubeconfig validation failed"
-          cat /tmp/kubeconfig-${{ matrix.env }}.yaml
-          exit 1
-        fi
+        # Note: Skip kubectl validation since GitHub runners can't reach private K3s clusters
+        echo "ℹ️ Kubeconfig generated (validation skipped - GitHub runner can't reach private cluster)"
         
         # Base64 encode kubeconfig for GitHub secret
         KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig-${{ matrix.env }}.yaml)
