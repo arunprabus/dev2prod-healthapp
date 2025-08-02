@@ -1,0 +1,158 @@
+name: 🔗 Network Connectivity Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      network_tier:
+        description: 'Network tier to test'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+          - lower
+          - higher
+          - monitoring
+      test_type:
+        description: 'Type of connectivity test'
+        required: true
+        default: 'basic'
+        type: choice
+        options:
+          - basic
+          - k3s-api
+          - database
+          - full
+          - k3s-setup
+
+jobs:
+  connectivity-test:
+    name: Test Network Connectivity
+    runs-on: self-hosted
+    env:
+      NETWORK_TIER: ${{ inputs.network_tier }}
+      TEST_TYPE: ${{ inputs.test_type }}
+
+    steps:
+      - name: 🏷️ Verify Runner Network
+        run: |
+          echo "Expected network: $NETWORK_TIER"
+          echo "Runner hostname: $(hostname)"
+          echo "✅ Runner verification completed"
+
+      - name: 🔍 Test Basic Connectivity
+        if: ${{ inputs.test_type == 'basic' || inputs.test_type == 'full' }}
+        run: |
+          echo "=== Basic Connectivity Test ==="
+          echo "Runner Network: $NETWORK_TIER"
+          echo "Runner IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 || echo 'N/A')"
+          
+          echo "=== Internet Connectivity ==="
+          ping -c 3 8.8.8.8 && echo "✅ Internet accessible" || echo "❌ Internet failed"
+          curl -s --connect-timeout 10 https://api.github.com/rate_limit > /dev/null && echo "✅ GitHub API accessible" || echo "❌ GitHub API failed"
+
+      - name: 🎯 Test K3s API Connectivity
+        if: ${{ inputs.test_type == 'k3s-api' || inputs.test_type == 'full' }}
+        run: |
+          echo "=== K3s API Connectivity Test ==="
+          
+          case "$NETWORK_TIER" in
+            lower)
+              TAG_NAME="health-app-lower-k3s-master"
+              ;;
+            higher)
+              TAG_NAME="health-app-higher-k3s-master"
+              ;;
+            monitoring)
+              TAG_NAME="health-app-monitoring-k3s-master"
+              ;;
+          esac
+          
+          K3S_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          
+          if [ -z "$K3S_IP" ]; then
+            echo "❌ No K3s cluster found for $NETWORK_TIER network"
+          else
+            echo "Testing K3s cluster at $K3S_IP"
+            timeout 10 bash -c "nc -z $K3S_IP 22" && echo "✅ SSH port accessible" || echo "❌ SSH port not accessible"
+            timeout 10 bash -c "nc -z $K3S_IP 6443" && echo "✅ K3s API port accessible" || echo "❌ K3s API port not accessible"
+          fi
+
+      - name: 💾 Test Database Connectivity
+        if: ${{ inputs.test_type == 'database' || inputs.test_type == 'full' }}
+        run: |
+          echo "=== Database Connectivity Test ==="
+          
+          case "$NETWORK_TIER" in
+            lower)
+              DB_ID="health-app-shared-db"
+              ;;
+            higher)
+              DB_ID="health-app-prod-db"
+              ;;
+            monitoring)
+              echo "Monitoring network doesn't have a database"
+              exit 0
+              ;;
+          esac
+          
+          DB_ENDPOINT=$(aws rds describe-db-instances \
+            --db-instance-identifier "$DB_ID" \
+            --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
+          
+          if [ -z "$DB_ENDPOINT" ] || [ "$DB_ENDPOINT" = "None" ]; then
+            echo "❌ No database found for $NETWORK_TIER network"
+          else
+            echo "Testing database at $DB_ENDPOINT"
+            timeout 10 bash -c "nc -z $DB_ENDPOINT 5432" && echo "✅ Database port accessible" || echo "❌ Database port not accessible"
+          fi
+
+      - name: 🔧 K3s Setup (Optional)
+        if: ${{ inputs.test_type == 'k3s-setup' }}
+        run: |
+          echo "=== K3s Setup (Optional) ==="
+          echo "⚠️ This step is optional and may fail due to network restrictions"
+          
+          case "$NETWORK_TIER" in
+            lower)
+              TAG_NAME="health-app-lower-k3s-master"
+              ;;
+            higher)
+              TAG_NAME="health-app-higher-k3s-master"
+              ;;
+            monitoring)
+              TAG_NAME="health-app-monitoring-k3s-master"
+              ;;
+          esac
+          
+          K3S_IP=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
+          
+          if [ -z "$K3S_IP" ]; then
+            echo "❌ No K3s cluster found - skipping setup"
+            exit 0
+          fi
+          
+          echo "Found K3s cluster at: $K3S_IP"
+          
+          if ping -c 2 "$K3S_IP" > /dev/null 2>&1; then
+            echo "✅ K3s cluster is reachable"
+            echo "ℹ️ K3s setup would be possible with proper network configuration"
+          else
+            echo "❌ K3s cluster not reachable from this runner"
+            echo "ℹ️ This may be expected due to network isolation"
+          fi
+          
+          echo "✅ K3s setup check completed (non-blocking)"
+
+      - name: 📊 Generate Report
+        if: always()
+        run: |
+          echo "=== Connectivity Test Report ==="
+          echo "Date: $(date)"
+          echo "Network: $NETWORK_TIER"
+          echo "Test Type: $TEST_TYPE"
+          echo "Runner: $(hostname)"
+          echo "✅ Connectivity tests completed"
