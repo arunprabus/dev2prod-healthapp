@@ -8,10 +8,10 @@ on:
         required: true
         type: choice
         options:
+        - redeploy
         - deploy
         - destroy
         - plan
-        - redeploy
       environment:
         description: 'Network/Environment'
         required: true
@@ -38,8 +38,8 @@ on:
         default: 'aws'
         type: choice
         options:
-        - aws
         - github
+        - aws
       optimize_data_transfer:
         description: 'Run data transfer optimization'
         required: false
