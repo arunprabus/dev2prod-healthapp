@@ -9,6 +9,12 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl wget git jq unzip zip python3 python3-pip docker.io
 
+# Install/Update SSM Agent
+echo "Installing SSM Agent..."
+snap install amazon-ssm-agent --classic
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+
 # Install AWS CLI v2
 echo "Installing AWS CLI v2..."
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
@@ -81,6 +87,11 @@ gh --version
 git --version
 jq --version
 python3 --version
+
+# Verify SSM Agent
+echo "=== VERIFYING SSM AGENT ==="
+systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager
+echo "SSM Agent Status: $(systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service)"
 
 echo "SUCCESS" > /var/log/user-data-complete
 echo "=== USER DATA COMPLETED ==="

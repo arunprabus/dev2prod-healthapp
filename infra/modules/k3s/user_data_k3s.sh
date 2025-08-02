@@ -22,6 +22,12 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y curl wget git jq docker.io mysql-client awscli unzip
 
+# Install/Update SSM Agent
+echo "Installing SSM Agent..."
+snap install amazon-ssm-agent --classic
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+
 # Install K3s with proper permissions
 echo "📦 Installing K3s..."
 curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --disable traefik" sh -
@@ -188,6 +194,18 @@ KUBE_EOF
     aws s3 cp /tmp/gha-kubeconfig.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml
     echo "✅ GitHub Actions kubeconfig uploaded to S3"
   fi
+fi
+
+# Also upload standard kubeconfig to S3 for easy access
+if [[ -n "$S3_BUCKET" ]]; then
+  echo "📤 Uploading standard kubeconfig to S3..."
+  # Create standard kubeconfig with public IP
+  PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+  cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig-standard.yaml
+  sed -i "s/127.0.0.1/$PUBLIC_IP/g" /tmp/kubeconfig-standard.yaml
+  aws s3 cp /tmp/kubeconfig-standard.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml
+  echo "✅ Standard kubeconfig uploaded to S3"
+fi
 else
   echo "❌ Failed to generate service account token"
 fi
