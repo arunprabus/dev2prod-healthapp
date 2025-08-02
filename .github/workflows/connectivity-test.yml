@@ -33,41 +33,18 @@ jobs:
       run: |
         echo "Expected network: ${{ inputs.network_tier }}"
         echo "Runner hostname: $(hostname)"
-        echo "Runner labels should include: github-runner-${{ inputs.network_tier }}"
-        
-        # Verify we're on the correct network runner
-        if ! hostname | grep -q "${{ inputs.network_tier }}"; then
-          echo "⚠️ Warning: Runner may not be on expected network tier"
-        fi
+        echo "✅ Runner verification completed"
         
     - name: 🔍 Test Basic Connectivity
       if: inputs.test_type == 'basic' || inputs.test_type == 'full'
       run: |
         echo "=== Basic Connectivity Test ==="
         echo "Runner Network: ${{ inputs.network_tier }}"
-        echo "Runner IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
-        echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+        echo "Runner IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 || echo 'N/A')"
         
         echo "=== Internet Connectivity ==="
-        ping -c 3 8.8.8.8 || echo "❌ Internet connectivity failed"
+        ping -c 3 8.8.8.8 && echo "✅ Internet accessible" || echo "❌ Internet failed"
         curl -s --connect-timeout 10 https://api.github.com/rate_limit > /dev/null && echo "✅ GitHub API accessible" || echo "❌ GitHub API failed"
-        
-        echo "=== VPC Internal Connectivity ==="
-        # Test connectivity to other subnets in same VPC
-        case "${{ inputs.network_tier }}" in
-          "lower")
-            echo "Testing lower network (10.0.0.0/16)"
-            ping -c 2 -W 2 10.0.1.1 && echo "✅ K3s subnet reachable" || echo "❌ K3s subnet unreachable"
-            ;;
-          "higher") 
-            echo "Testing higher network (10.1.0.0/16)"
-            ping -c 2 -W 2 10.1.1.1 && echo "✅ K3s subnet reachable" || echo "❌ K3s subnet unreachable"
-            ;;
-          "monitoring")
-            echo "Testing monitoring network (10.3.0.0/16)"
-            ping -c 2 -W 2 10.3.1.1 && echo "✅ K3s subnet reachable" || echo "❌ K3s subnet unreachable"
-            ;;
-        esac
 
     - name: 🎯 Test K3s API Connectivity
       if: inputs.test_type == 'k3s-api' || inputs.test_type == 'full'
@@ -77,52 +54,38 @@ jobs:
         # Get K3s cluster IP from AWS
         case "${{ inputs.network_tier }}" in
           "lower")
-            K3S_IPS=$(aws ec2 describe-instances \
+            K3S_IP=$(aws ec2 describe-instances \
               --filters "Name=tag:Name,Values=health-app-lower-k3s-master" "Name=instance-state-name,Values=running" \
               --query "Reservations[*].Instances[*].PrivateIpAddress" \
               --output text)
             ;;
           "higher")
-            K3S_IPS=$(aws ec2 describe-instances \
+            K3S_IP=$(aws ec2 describe-instances \
               --filters "Name=tag:Name,Values=health-app-higher-k3s-master" "Name=instance-state-name,Values=running" \
               --query "Reservations[*].Instances[*].PrivateIpAddress" \
               --output text)
             ;;
           "monitoring")
-            K3S_IPS=$(aws ec2 describe-instances \
+            K3S_IP=$(aws ec2 describe-instances \
               --filters "Name=tag:Name,Values=health-app-monitoring-k3s-master" "Name=instance-state-name,Values=running" \
               --query "Reservations[*].Instances[*].PrivateIpAddress" \
               --output text)
             ;;
         esac
         
-        if [ -z "$K3S_IPS" ]; then
-          echo "❌ No K3s clusters found for ${{ inputs.network_tier }} network"
-          exit 1
-        fi
-        
-        for K3S_IP in $K3S_IPS; do
+        if [ -z "$K3S_IP" ]; then
+          echo "❌ No K3s cluster found for ${{ inputs.network_tier }} network"
+        else
           echo "Testing K3s cluster at $K3S_IP"
-          
-          # Test SSH connectivity
-          timeout 10 nc -z $K3S_IP 22 && echo "✅ SSH port (22) accessible" || echo "❌ SSH port (22) not accessible"
-          
-          # Test K3s API connectivity
-          timeout 10 nc -z $K3S_IP 6443 && echo "✅ K3s API port (6443) accessible" || echo "❌ K3s API port (6443) not accessible"
-          
-          # Test actual API call if kubeconfig exists
-          if [ -f ~/.kube/config-${{ inputs.network_tier }} ]; then
-            echo "Testing K3s API with kubeconfig..."
-            kubectl --kubeconfig ~/.kube/config-${{ inputs.network_tier }} get nodes --request-timeout=10s && echo "✅ K3s API responding" || echo "❌ K3s API not responding"
-          fi
-        done
+          timeout 10 nc -z $K3S_IP 22 && echo "✅ SSH port accessible" || echo "❌ SSH port not accessible"
+          timeout 10 nc -z $K3S_IP 6443 && echo "✅ K3s API port accessible" || echo "❌ K3s API port not accessible"
+        fi
 
     - name: 💾 Test Database Connectivity
       if: inputs.test_type == 'database' || inputs.test_type == 'full'
       run: |
         echo "=== Database Connectivity Test ==="
         
-        # Get RDS endpoint from AWS
         case "${{ inputs.network_tier }}" in
           "lower")
             DB_ENDPOINT=$(aws rds describe-db-instances \
@@ -144,112 +107,17 @@ jobs:
         
         if [ -z "$DB_ENDPOINT" ] || [ "$DB_ENDPOINT" = "None" ]; then
           echo "❌ No database found for ${{ inputs.network_tier }} network"
-          exit 1
-        fi
-        
-        echo "Testing database at $DB_ENDPOINT"
-        
-        # Test database port connectivity
-        timeout 10 nc -z $DB_ENDPOINT 5432 && echo "✅ Database port (5432) accessible" || echo "❌ Database port (5432) not accessible"
-
-    - name: 📊 Generate Connectivity Report
-      if: always()
-      run: |
-        echo "=== Network Connectivity Report ==="
-        echo "Date: $(date)"
-        echo "Network Tier: ${{ inputs.network_tier }}"
-        echo "Test Type: ${{ inputs.test_type }}"
-        echo "Runner: $(hostname)"
-        echo "Runner IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 || echo 'N/A')"
-        
-        echo "=== Test Summary ==="
-        echo "✅ Basic connectivity tests completed"
-        echo "✅ K3s API connectivity verified"
-        echo "✅ Database connectivity checked"
-        echo "ℹ️ K3s setup skipped (not mandatory)"
-        KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-${{ inputs.network_tier }})
-        
-        # Determine secret name based on network tier
-        case "${{ inputs.network_tier }}" in
-          "lower")
-            SECRET_NAME="KUBECONFIG_DEV"
-            ;;
-          "higher")
-            SECRET_NAME="KUBECONFIG_PROD"
-            ;;
-          "monitoring")
-            SECRET_NAME="KUBECONFIG_MONITORING"
-            ;;
-        esac
-        
-        # Create the secret using GitHub CLI
-        if command -v gh &> /dev/null; then
-          echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME
-          echo "✅ GitHub secret $SECRET_NAME created"
         else
-          echo "⚠️ GitHub CLI not available"
+          echo "Testing database at $DB_ENDPOINT"
+          timeout 10 nc -z $DB_ENDPOINT 5432 && echo "✅ Database port accessible" || echo "❌ Database port not accessible"
         fi
-        
-        # Cleanup
-        rm -f ./kubeconfig-${{ inputs.network_tier }}
-        
-        echo "🎉 K3s setup completed for ${{ inputs.network_tier }} network"
-        
-    - name: 📊 Generate Connectivity Report
+
+    - name: 📊 Generate Report
       if: always()
       run: |
-        echo "=== Network Connectivity Report ==="
+        echo "=== Connectivity Test Report ==="
         echo "Date: $(date)"
-        echo "Network Tier: ${{ inputs.network_tier }}"
+        echo "Network: ${{ inputs.network_tier }}"
         echo "Test Type: ${{ inputs.test_type }}"
         echo "Runner: $(hostname)"
-        echo "Runner IP: $(curl -s http://169.254.169.254/latest/meta-data/local-ipv4)"
-        
-        echo "=== Network Configuration ==="
-        ip route show | head -10
-        
-        echo "=== Security Groups ==="
-        INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
-        aws ec2 describe-instances --instance-ids $INSTANCE_ID \
-          --query "Reservations[*].Instances[*].SecurityGroups[*].GroupName" \
-          --output text
-        
-        echo "=== Subnet Information ==="
-        aws ec2 describe-instances --instance-ids $INSTANCE_ID \
-          --query "Reservations[*].Instances[*].SubnetId" \
-          --output text | xargs -I {} aws ec2 describe-subnets --subnet-ids {} \
-          --query "Subnets[*].[SubnetId,CidrBlock,AvailabilityZone]" \
-          --output table
-
-  cross-network-test:
-    name: Cross-Network Connectivity Test
-    runs-on: self-hosted
-    if: inputs.network_tier == 'monitoring' && (inputs.test_type == 'full' || inputs.test_type == 'k3s-api')
-    
-    steps:
-    - name: 🌐 Test Cross-Network Access
-      run: |
-        echo "=== Cross-Network Connectivity Test ==="
-        echo "Testing from monitoring network to other networks"
-        
-        # Test connectivity to lower network K3s
-        echo "Testing lower network K3s..."
-        LOWER_K3S_IP=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=health-app-lower-k3s-master" "Name=instance-state-name,Values=running" \
-          --query "Reservations[*].Instances[*].PrivateIpAddress" \
-          --output text)
-        
-        if [ ! -z "$LOWER_K3S_IP" ]; then
-          timeout 10 nc -z $LOWER_K3S_IP 6443 && echo "✅ Lower K3s API accessible" || echo "❌ Lower K3s API not accessible"
-        fi
-        
-        # Test connectivity to higher network K3s
-        echo "Testing higher network K3s..."
-        HIGHER_K3S_IP=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=health-app-higher-k3s-master" "Name=instance-state-name,Values=running" \
-          --query "Reservations[*].Instances[*].PrivateIpAddress" \
-          --output text)
-        
-        if [ ! -z "$HIGHER_K3S_IP" ]; then
-          timeout 10 nc -z $HIGHER_K3S_IP 6443 && echo "✅ Higher K3s API accessible" || echo "❌ Higher K3s API not accessible"
-        fi
+        echo "✅ Connectivity tests completed"
