@@ -33,6 +33,25 @@ jobs:
       TEST_TYPE: ${{ inputs.test_type }}
 
     steps:
+      - name: 🔧 Setup AWS CLI
+        run: |
+          if ! command -v aws &> /dev/null; then
+            echo "Installing AWS CLI..."
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip -q awscliv2.zip
+            sudo ./aws/install
+            rm -rf aws awscliv2.zip
+          else
+            echo "AWS CLI already installed: $(aws --version)"
+          fi
+
+      - name: 🔑 Configure AWS Credentials
+        run: |
+          aws configure set aws_access_key_id "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          aws configure set aws_secret_access_key "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          aws configure set default.region "ap-south-1"
+          echo "✅ AWS credentials configured"
+
       - name: 🏷️ Verify Runner Network
         run: |
           echo "Expected network: $NETWORK_TIER"
@@ -67,16 +86,20 @@ jobs:
               ;;
           esac
           
-          K3S_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
-            --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          
-          if [ -z "$K3S_IP" ]; then
-            echo "❌ No K3s cluster found for $NETWORK_TIER network"
+          if command -v aws &> /dev/null; then
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" --output text 2>/dev/null || echo "")
+            
+            if [ -z "$K3S_IP" ] || [ "$K3S_IP" = "None" ]; then
+              echo "❌ No K3s cluster found for $NETWORK_TIER network"
+            else
+              echo "Testing K3s cluster at $K3S_IP"
+              timeout 10 bash -c "nc -z $K3S_IP 22" && echo "✅ SSH port accessible" || echo "❌ SSH port not accessible"
+              timeout 10 bash -c "nc -z $K3S_IP 6443" && echo "✅ K3s API port accessible" || echo "❌ K3s API port not accessible"
+            fi
           else
-            echo "Testing K3s cluster at $K3S_IP"
-            timeout 10 bash -c "nc -z $K3S_IP 22" && echo "✅ SSH port accessible" || echo "❌ SSH port not accessible"
-            timeout 10 bash -c "nc -z $K3S_IP 6443" && echo "✅ K3s API port accessible" || echo "❌ K3s API port not accessible"
+            echo "❌ AWS CLI not available - skipping K3s connectivity test"
           fi
 
       - name: 💾 Test Database Connectivity
@@ -97,15 +120,19 @@ jobs:
               ;;
           esac
           
-          DB_ENDPOINT=$(aws rds describe-db-instances \
-            --db-instance-identifier "$DB_ID" \
-            --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
-          
-          if [ -z "$DB_ENDPOINT" ] || [ "$DB_ENDPOINT" = "None" ]; then
-            echo "❌ No database found for $NETWORK_TIER network"
+          if command -v aws &> /dev/null; then
+            DB_ENDPOINT=$(aws rds describe-db-instances \
+              --db-instance-identifier "$DB_ID" \
+              --query "DBInstances[0].Endpoint.Address" --output text 2>/dev/null || echo "")
+            
+            if [ -z "$DB_ENDPOINT" ] || [ "$DB_ENDPOINT" = "None" ]; then
+              echo "❌ No database found for $NETWORK_TIER network"
+            else
+              echo "Testing database at $DB_ENDPOINT"
+              timeout 10 bash -c "nc -z $DB_ENDPOINT 5432" && echo "✅ Database port accessible" || echo "❌ Database port not accessible"
+            fi
           else
-            echo "Testing database at $DB_ENDPOINT"
-            timeout 10 bash -c "nc -z $DB_ENDPOINT 5432" && echo "✅ Database port accessible" || echo "❌ Database port not accessible"
+            echo "❌ AWS CLI not available - skipping database connectivity test"
           fi
 
       - name: 🔧 K3s Setup (Optional)
@@ -126,23 +153,27 @@ jobs:
               ;;
           esac
           
-          K3S_IP=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
-            --query "Reservations[*].Instances[*].PrivateIpAddress" --output text)
-          
-          if [ -z "$K3S_IP" ]; then
-            echo "❌ No K3s cluster found - skipping setup"
-            exit 0
-          fi
-          
-          echo "Found K3s cluster at: $K3S_IP"
-          
-          if ping -c 2 "$K3S_IP" > /dev/null 2>&1; then
-            echo "✅ K3s cluster is reachable"
-            echo "ℹ️ K3s setup would be possible with proper network configuration"
+          if command -v aws &> /dev/null; then
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" --output text 2>/dev/null || echo "")
+            
+            if [ -z "$K3S_IP" ] || [ "$K3S_IP" = "None" ]; then
+              echo "❌ No K3s cluster found - skipping setup"
+              exit 0
+            fi
+            
+            echo "Found K3s cluster at: $K3S_IP"
+            
+            if ping -c 2 "$K3S_IP" > /dev/null 2>&1; then
+              echo "✅ K3s cluster is reachable"
+              echo "ℹ️ K3s setup would be possible with proper network configuration"
+            else
+              echo "❌ K3s cluster not reachable from this runner"
+              echo "ℹ️ This may be expected due to network isolation"
+            fi
           else
-            echo "❌ K3s cluster not reachable from this runner"
-            echo "ℹ️ This may be expected due to network isolation"
+            echo "❌ AWS CLI not available - skipping K3s setup test"
           fi
           
           echo "✅ K3s setup check completed (non-blocking)"
