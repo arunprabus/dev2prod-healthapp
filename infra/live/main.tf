@@ -182,68 +182,36 @@ resource "null_resource" "wait_for_k3s" {
         sleep 30
       done
       
-      # Check for K3s completion marker with debugging
-      for i in $(seq 1 30); do
-        echo "Checking K3s status (attempt $i/30)..."
+      # Check for K3s service directly
+      for i in $(seq 1 20); do
+        echo "Checking K3s service (attempt $i/20)..."
         
-        # Debug: Check what's happening
-        DEBUG_CMD=$(aws ssm send-command \
-          --instance-ids "${aws_instance.k3s.id}" \
-          --document-name "AWS-RunShellScript" \
-          --parameters 'commands=["ls -la /var/log/ | grep k3s; tail -10 /var/log/k3s-install.log 2>/dev/null || echo No install log"]' \
-          --query "Command.CommandId" --output text)
-        
-        sleep 5
-        
-        DEBUG_OUTPUT=$(aws ssm get-command-invocation \
-          --command-id "$DEBUG_CMD" \
-          --instance-id "${aws_instance.k3s.id}" \
-          --query "StandardOutputContent" --output text 2>/dev/null || echo "No debug output")
-        
-        echo "Debug: $DEBUG_OUTPUT"
-        
-        # Check completion marker
+        # Check K3s service status
         RESULT=$(aws ssm send-command \
           --instance-ids "${aws_instance.k3s.id}" \
           --document-name "AWS-RunShellScript" \
-          --parameters 'commands=["test -f /var/log/k3s-install-complete && echo COMPLETE || echo WAITING"]' \
+          --parameters 'commands=["systemctl is-active k3s 2>/dev/null && kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml 2>/dev/null && echo READY || echo WAITING"]' \
           --query "Command.CommandId" --output text)
         
-        sleep 5
+        sleep 10
         
         STATUS=$(aws ssm get-command-invocation \
           --command-id "$RESULT" \
           --instance-id "${aws_instance.k3s.id}" \
           --query "StandardOutputContent" --output text 2>/dev/null || echo "WAITING")
         
-        if echo "$STATUS" | grep -q "COMPLETE"; then
-          echo "K3s installation completed!"
-          
-          # Verify K3s service
-          VERIFY_CMD=$(aws ssm send-command \
-            --instance-ids "${aws_instance.k3s.id}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["systemctl is-active k3s 2>/dev/null || echo inactive"]' \
-            --query "Command.CommandId" --output text)
-          
-          sleep 5
-          
-          VERIFY_RESULT=$(aws ssm get-command-invocation \
-            --command-id "$VERIFY_CMD" \
-            --instance-id "${aws_instance.k3s.id}" \
-            --query "StandardOutputContent" --output text 2>/dev/null || echo "FAILED")
-          
-          if echo "$VERIFY_RESULT" | grep -q "active"; then
-            echo "K3s cluster is ready and operational!"
-            exit 0
-          fi
+        echo "Status: $STATUS"
+        
+        if echo "$STATUS" | grep -q "READY"; then
+          echo "K3s cluster is ready and operational!"
+          exit 0
         fi
         
-        echo "K3s installation in progress... waiting 30s"
-        sleep 30
+        echo "K3s not ready yet, waiting 60s..."
+        sleep 60
       done
       
-      echo "Timeout waiting for K3s installation after 15 minutes"
+      echo "Timeout waiting for K3s service after 20 minutes"
       exit 1
     EOT
   }
