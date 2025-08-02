@@ -22,6 +22,7 @@ on:
         - k3s-api
         - database
         - full
+        - k3s-setup
 
 jobs:
   connectivity-test:
@@ -152,6 +153,109 @@ jobs:
         # Test database port connectivity
         timeout 10 nc -z $DB_ENDPOINT 5432 && echo "✅ Database port (5432) accessible" || echo "❌ Database port (5432) not accessible"
 
+    - name: 🔧 K3s Setup and Configuration
+      if: inputs.test_type == 'k3s-setup'
+      run: |
+        echo "=== K3s Setup and Configuration ==="
+        
+        # Get K3s cluster IP from AWS
+        case "${{ inputs.network_tier }}" in
+          "lower")
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-lower-k3s-master" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" \
+              --output text)
+            ;;
+          "higher")
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-higher-k3s-master" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" \
+              --output text)
+            ;;
+          "monitoring")
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=health-app-monitoring-k3s-master" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" \
+              --output text)
+            ;;
+        esac
+        
+        if [ -z "$K3S_IP" ]; then
+          echo "❌ No K3s cluster found for ${{ inputs.network_tier }} network"
+          exit 1
+        fi
+        
+        echo "Found K3s cluster at: $K3S_IP"
+        
+        # Test connectivity first
+        echo "Testing connectivity to K3s cluster..."
+        if ! ping -c 3 $K3S_IP > /dev/null 2>&1; then
+          echo "❌ Cannot ping K3s cluster at $K3S_IP"
+          exit 1
+        fi
+        echo "✅ Ping successful"
+        
+        # Wait for SSH to be ready
+        echo "Waiting for SSH to be ready..."
+        for i in {1..10}; do
+          if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 ubuntu@$K3S_IP "echo 'SSH ready'" 2>/dev/null; then
+            echo "✅ SSH connection established (attempt $i)"
+            break
+          else
+            echo "SSH not ready, waiting... (attempt $i/10)"
+            if [ $i -eq 10 ]; then
+              echo "❌ SSH connection failed after 10 attempts"
+              exit 1
+            fi
+            sleep 30
+          fi
+        done
+        
+        # Download kubeconfig
+        echo "Downloading kubeconfig..."
+        scp -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml ./kubeconfig-${{ inputs.network_tier }}
+        
+        # Update server IP
+        sed -i "s/127.0.0.1/$K3S_IP/g" ./kubeconfig-${{ inputs.network_tier }}
+        
+        # Test kubeconfig
+        export KUBECONFIG=./kubeconfig-${{ inputs.network_tier }}
+        if kubectl cluster-info --request-timeout=10s > /dev/null 2>&1; then
+          echo "✅ Kubeconfig is working"
+          kubectl get nodes
+        else
+          echo "❌ Kubeconfig test failed"
+          exit 1
+        fi
+        
+        # Create GitHub secret
+        echo "Creating GitHub secret..."
+        KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-${{ inputs.network_tier }})
+        
+        # Determine secret name based on network tier
+        case "${{ inputs.network_tier }}" in
+          "lower")
+            SECRET_NAME="KUBECONFIG_DEV"
+            ;;
+          "higher")
+            SECRET_NAME="KUBECONFIG_PROD"
+            ;;
+          "monitoring")
+            SECRET_NAME="KUBECONFIG_MONITORING"
+            ;;
+        esac
+        
+        # Create the secret using GitHub CLI or API
+        if command -v gh &> /dev/null; then
+          echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME
+          echo "✅ GitHub secret $SECRET_NAME created using GitHub CLI"
+        else
+          echo "⚠️ GitHub CLI not available, kubeconfig saved locally as ./kubeconfig-${{ inputs.network_tier }}"
+          echo "Manual step: Create GitHub secret $SECRET_NAME with the base64 content"
+        fi
+        
+        echo "🎉 K3s setup completed for ${{ inputs.network_tier }} environment"
+        
     - name: 📊 Generate Connectivity Report
       if: always()
       run: |
