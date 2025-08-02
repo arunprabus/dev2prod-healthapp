@@ -3,6 +3,15 @@ resource "aws_security_group" "k3s" {
   name_prefix = "${var.name_prefix}-k3s-"
   vpc_id      = var.vpc_id
 
+  # ICMP (ping) access for connectivity testing
+  ingress {
+    from_port   = -1
+    to_port     = -1
+    protocol    = "icmp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "ICMP ping access for connectivity testing"
+  }
+
   # SSH access from management subnets and public (for initial setup)
   ingress {
     from_port   = 22
@@ -132,6 +141,9 @@ resource "aws_instance" "k3s" {
   subnet_id                  = var.subnet_id
   iam_instance_profile       = aws_iam_instance_profile.k3s_profile.name
   associate_public_ip_address = true
+  
+  # Ensure instance is in public subnet with internet access
+  depends_on = [aws_key_pair.main]
   
   user_data_replace_on_change = true
   user_data = base64encode(templatefile("${path.module}/user_data_k3s.sh", {

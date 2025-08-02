@@ -305,6 +305,22 @@ jobs:
         echo "Runner IP: $(cat runner_ip.txt)"
         echo "RDS Endpoint: $(cat rds_endpoint.txt)"
         
+        # Debug network information
+        K3S_IP=$(cat k3s_ip.txt)
+        if [ "$K3S_IP" != "Not available" ]; then
+          echo "Debugging K3s network configuration..."
+          aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].[InstanceId,SubnetId,VpcId,PublicIpAddress,PrivateIpAddress,State.Name]" --output table
+          
+          # Get subnet info
+          SUBNET_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].SubnetId" --output text)
+          echo "K3s Subnet Info:"
+          aws ec2 describe-subnets --subnet-ids $SUBNET_ID --query "Subnets[*].[SubnetId,CidrBlock,MapPublicIpOnLaunch,AvailabilityZone]" --output table
+          
+          # Get security groups
+          echo "K3s Security Groups:"
+          aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].SecurityGroups[*].[GroupId,GroupName]" --output table
+        fi
+        
         # Create Ansible inventory
         mkdir -p ansible
         cat > ansible/inventory.ini << EOF
