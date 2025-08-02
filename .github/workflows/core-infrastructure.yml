@@ -449,14 +449,19 @@ jobs:
           ansible-playbook -i ../infra/two-network-setup/ansible/inventory.ini k3s-setup.yml -v --timeout=60
           
           # Wait for K3s to be ready before running configuration
-        K3S_IP=$(cat k3s_ip.txt)
-        if [ "$K3S_IP" != "Not available" ]; then
-          echo "K3s cluster deployed at: $K3S_IP"
-          echo "Next step: Run K3s configuration using self-hosted runner"
-          echo "Use: Actions → Network Connectivity Test → network_tier: '${{ matrix.env }}' → test_type: 'k3s-setup'"
+          K3S_IP=$(cat k3s_ip.txt)
+          if [ "$K3S_IP" != "Not available" ]; then
+            echo "K3s cluster deployed at: $K3S_IP"
+            echo "Next step: Run K3s configuration using self-hosted runner"
+            echo "Use: Actions → Network Connectivity Test → network_tier: '${{ matrix.env }}' → test_type: 'k3s-setup'"
+          else
+            echo "❌ K3s IP not available"
+          fi
         else
-          echo "❌ K3s IP not available"
+          echo "❌ K3s IP not available - skipping Ansible configuration"
         fi
+        
+        echo "✅ K3s configuration step completed"
         
     - name: Post-Deployment Summary
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
