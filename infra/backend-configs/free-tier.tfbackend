@@ -1,3 +1,0 @@
-bucket = "health-app-terraform-state"
-key    = "envs/free-tier/terraform.tfstate"
-region = "ap-south-1"

@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read
       actions: write
+      secrets: write
     strategy:
       matrix:
         env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || github.event.inputs.environment == 'cleanup-all' && fromJson('["cleanup"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
@@ -79,7 +80,7 @@ jobs:
     - name: Setup Terraform Cache Directory
       run: |
         mkdir -p ~/.terraform.d/plugin-cache
-        mkdir -p infra/two-network-setup/.terraform
+        mkdir -p infra/live/.terraform
         
     - name: Cache Terraform
       uses: actions/cache@v4
@@ -136,7 +137,7 @@ jobs:
         echo "✅ Naming convention verified"
 
     - name: Terraform Init
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       run: |
         echo "🔍 Backend Configuration:"
         echo "- Bucket: ${{ secrets.TF_STATE_BUCKET }}"
@@ -170,10 +171,8 @@ jobs:
           echo "❌ S3 bucket not accessible - check bucket name and permissions"
         fi
 
-
-
     - name: Terraform Plan
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       if: github.event.inputs.action == 'plan' || github.event.inputs.action == 'deploy'
       run: |
         echo "📋 Planning infrastructure changes..."
@@ -219,7 +218,7 @@ jobs:
         terraform show -no-color tfplan | grep -E "Plan:|No changes|will be created|will be updated|will be destroyed" | head -20
 
     - name: Terraform Destroy (for redeploy)
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       if: github.event.inputs.action == 'redeploy'
       run: |
         echo "🧹 Destroying existing resources first..."
@@ -260,7 +259,7 @@ jobs:
 
     - name: Terraform Apply
       id: terraform-apply
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       continue-on-error: false
       run: |
@@ -291,175 +290,35 @@ jobs:
           exit 1
         fi
 
-    - name: Save Terraform Outputs for Ansible
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      working-directory: infra/two-network-setup
+    - name: Setup SSH Key and GitHub CLI
+      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
       run: |
-        echo "📋 Saving Terraform outputs for Ansible..."
-        
-        # Save outputs to files for Ansible
-        terraform output -raw k3s_public_ip 2>/dev/null > k3s_ip.txt || echo "Not available" > k3s_ip.txt
-        terraform output -raw github_runner_public_ip 2>/dev/null > runner_ip.txt || echo "Not available" > runner_ip.txt
-        terraform output -raw rds_endpoint 2>/dev/null > rds_endpoint.txt || echo "Not available" > rds_endpoint.txt
-        
-        echo "K3s IP: $(cat k3s_ip.txt)"
-        echo "Runner IP: $(cat runner_ip.txt)"
-        echo "RDS Endpoint: $(cat rds_endpoint.txt)"
-        
-        # Debug network information
-        K3S_IP=$(cat k3s_ip.txt)
-        if [ "$K3S_IP" != "Not available" ]; then
-          echo "Debugging K3s network configuration..."
-          aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].[InstanceId,SubnetId,VpcId,PublicIpAddress,PrivateIpAddress,State.Name]" --output table
-          
-          # Get subnet info
-          SUBNET_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].SubnetId" --output text)
-          echo "K3s Subnet Info:"
-          aws ec2 describe-subnets --subnet-ids $SUBNET_ID --query "Subnets[*].[SubnetId,CidrBlock,MapPublicIpOnLaunch,AvailabilityZone]" --output table
-          
-          # Get security groups
-          echo "K3s Security Groups:"
-          aws ec2 describe-instances --filters "Name=ip-address,Values=$K3S_IP" --query "Reservations[*].Instances[*].SecurityGroups[*].[GroupId,GroupName]" --output table
-        fi
-        
-        # Create Ansible inventory
-        mkdir -p ansible
-        cat > ansible/inventory.ini << EOF
-        [k3s_masters]
-        k3s-${{ matrix.env }} ansible_host=$(cat k3s_ip.txt) ansible_user=ubuntu
-        
-        [github_runners]
-        runner-${{ matrix.env }} ansible_host=$(cat runner_ip.txt) ansible_user=ubuntu
-        
-        [all:vars]
-        ansible_ssh_private_key_file=~/.ssh/id_rsa
-        ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-        environment=${{ matrix.env }}
-        rds_endpoint=$(cat rds_endpoint.txt)
-        EOF
-        
-        echo "✅ Ansible inventory created"
-        
-
-
-        
-    - name: Setup Ansible Configuration
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      run: |
-        echo "🔧 Setting up Ansible configuration..."
-        
-        # Setup SSH key for Ansible (cached)
+        # Setup SSH key
         mkdir -p ~/.ssh
-        if [ ! -f ~/.ssh/id_rsa ]; then
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          echo "SSH key configured"
-        else
-          echo "SSH key already exists"
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H github.com >> ~/.ssh/known_hosts
+        
+        # Install GitHub CLI if not present
+        if ! command -v gh &> /dev/null; then
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+          sudo apt update
+          sudo apt install gh -y
         fi
         
-        # Cache Ansible installation
-        if ! command -v ansible &> /dev/null; then
-          echo "Installing Ansible..."
-          sudo apt-get update
-          sudo apt-get install -y ansible python3-pip
-          pip3 install --user ansible-core
-        else
-          echo "Ansible already installed: $(ansible --version | head -1)"
+        # Authenticate GitHub CLI
+        echo "${{ secrets.GITHUB_TOKEN }}" | gh auth login --with-token
+        
+        # Install kubectl if not present
+        if ! command -v kubectl &> /dev/null; then
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
         fi
-        
-        echo "✅ Ansible setup completed"
-        
-
-    - name: Post-Deployment Summary
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      working-directory: infra/two-network-setup
-      run: |
-        echo "✅ Infrastructure deployment completed"
-        
-        # Show final state
-        echo "📋 Final state summary:"
-        terraform state list | wc -l | xargs echo "Total resources managed:"
-        
-        # Verify state is in S3
-        echo ""
-        echo "🔍 Verifying state storage..."
-        if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate > /dev/null 2>&1; then
-          STATE_SIZE=$(aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ matrix.env }}.tfstate --human-readable | awk '{print $3 " " $4}')
-          echo "✅ State file saved to S3 (Size: $STATE_SIZE)"
-        else
-          echo "⚠️ Warning: State file not found in S3"
-        fi
-
-    - name: Terraform Destroy
-      working-directory: infra/two-network-setup
-      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
-      run: |
-        echo "🧹 Starting Terraform destroy for ${{ matrix.env }} environment"
-        
-        # Check if state exists
-        if terraform state list > /dev/null 2>&1; then
-          echo "📋 Resources to be destroyed:"
-          terraform state list | head -10
-          RESOURCE_COUNT=$(terraform state list | wc -l)
-          echo "Total: $RESOURCE_COUNT resources"
-          
-          # Run Terraform destroy
-          terraform destroy \
-            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-            -var="network_tier=${{ matrix.env }}" \
-            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-            -var="repo_pat=${{ secrets.REPO_PAT }}" \
-            -var="repo_name=${{ secrets.REPO_NAME }}" \
-            -var="restore_from_snapshot=false" \
-            -var="snapshot_identifier=null" \
-            -auto-approve || echo "⚠️ Terraform destroy completed with warnings"
-          
-          # Verify cleanup
-          REMAINING=$(terraform state list 2>/dev/null | wc -l)
-          if [ "$REMAINING" -eq 0 ]; then
-            echo "✅ All resources destroyed successfully"
-          else
-            echo "⚠️ Warning: $REMAINING resources remain in state"
-          fi
-        else
-          echo "ℹ️ No Terraform state found - nothing to destroy"
-        fi
-        
-        echo "✅ Terraform destroy completed for ${{ matrix.env }} environment"
-        
-    - name: Enhanced Cleanup
-      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
-      run: |
-        echo "🧹 Running enhanced cleanup..."
-        
-        # Use enhanced cleanup script
-        chmod +x scripts/enhanced-cleanup.sh
-        
-        if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
-          echo "🌍 Cleaning all network tiers..."
-          ./scripts/enhanced-cleanup.sh ${{ env.AWS_REGION }} all true
-        else
-          echo "📍 Cleaning specific network tier: ${{ matrix.env }}"
-          ./scripts/enhanced-cleanup.sh ${{ env.AWS_REGION }} ${{ matrix.env }} true
-        fi
-        
-        echo "✅ Enhanced cleanup completed"
-
-    - name: Optimize Data Transfer
-      if: github.event.inputs.optimize_data_transfer == 'true'
-      run: |
-        echo "📊 Optimizing data transfer to stay within free tier"
-        echo "⚠️ WARNING: This will stop non-production resources!"
-        chmod +x scripts/data-transfer-optimizer.sh
-        ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} monitor
-        
-        echo "🔧 Applying data transfer optimizations"
-        ./scripts/data-transfer-optimizer.sh ${{ env.AWS_REGION }} optimize
 
     - name: Verify K3s Installation
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       run: |
         echo "🔍 Verifying K3s installation..."
         
@@ -515,17 +374,116 @@ jobs:
           ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo journalctl -u k3s --no-pager -n 20" || echo "Could not retrieve logs"
         fi
 
+    - name: Generate and Update Kubeconfig
+      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
+      working-directory: infra/live
+      run: |
+        echo "🔧 Generating kubeconfig for ${{ matrix.env }} environment..."
+        
+        # Get K3s instance IP
+        K3S_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
+        
+        if [ "$K3S_IP" = "None" ] || [ -z "$K3S_IP" ]; then
+          echo "❌ No K3s instance found for kubeconfig generation"
+          exit 1
+        fi
+        
+        # Download kubeconfig from K3s node
+        echo "📥 Downloading kubeconfig from K3s node..."
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig-${{ matrix.env }}.yaml
+        
+        # Update server IP in kubeconfig
+        sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig-${{ matrix.env }}.yaml
+        
+        # Test kubeconfig
+        if kubectl --kubeconfig=/tmp/kubeconfig-${{ matrix.env }}.yaml get nodes > /dev/null 2>&1; then
+          echo "✅ Kubeconfig is valid"
+        else
+          echo "❌ Kubeconfig validation failed"
+          cat /tmp/kubeconfig-${{ matrix.env }}.yaml
+          exit 1
+        fi
+        
+        # Base64 encode kubeconfig for GitHub secret
+        KUBECONFIG_B64=$(base64 -w 0 /tmp/kubeconfig-${{ matrix.env }}.yaml)
+        
+        # Determine secret name based on environment
+        case "${{ matrix.env }}" in
+          "lower")
+            SECRET_NAME="KUBECONFIG_DEV"
+            ;;
+          "higher")
+            SECRET_NAME="KUBECONFIG_PROD"
+            ;;
+          "monitoring")
+            SECRET_NAME="KUBECONFIG_MONITORING"
+            ;;
+          *)
+            SECRET_NAME="KUBECONFIG_$(echo ${{ matrix.env }} | tr '[:lower:]' '[:upper:]')"
+            ;;
+        esac
+        
+        echo "🔐 Updating GitHub secret: $SECRET_NAME"
+        
+        # Use GitHub CLI to update secret (simpler than API)
+        echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME --repo ${{ github.repository }}
+        
+        echo "✅ Updated GitHub secret: $SECRET_NAME"
+        
+        # Cleanup
+        rm -f /tmp/kubeconfig-${{ matrix.env }}.yaml
+        
+        echo "🎉 Kubeconfig setup completed for ${{ matrix.env }} environment"
+
     - name: Infrastructure Summary
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       run: |
         echo "✅ Infrastructure deployed successfully for ${{ matrix.env }} environment"
         echo "📊 See detailed network design and access info in the job summary tab"
 
+    - name: Terraform Destroy
+      working-directory: infra/live
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
+      run: |
+        echo "🧹 Starting Terraform destroy for ${{ matrix.env }} environment"
+        
+        # Check if state exists
+        if terraform state list > /dev/null 2>&1; then
+          echo "📋 Resources to be destroyed:"
+          terraform state list | head -10
+          RESOURCE_COUNT=$(terraform state list | wc -l)
+          echo "Total: $RESOURCE_COUNT resources"
+          
+          # Run Terraform destroy
+          terraform destroy \
+            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+            -var="network_tier=${{ matrix.env }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="repo_pat=${{ secrets.REPO_PAT }}" \
+            -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -var="restore_from_snapshot=false" \
+            -var="snapshot_identifier=null" \
+            -auto-approve || echo "⚠️ Terraform destroy completed with warnings"
+          
+          # Verify cleanup
+          REMAINING=$(terraform state list 2>/dev/null | wc -l)
+          if [ "$REMAINING" -eq 0 ]; then
+            echo "✅ All resources destroyed successfully"
+          else
+            echo "⚠️ Warning: $REMAINING resources remain in state"
+          fi
+        else
+          echo "ℹ️ No Terraform state found - nothing to destroy"
+        fi
+        
+        echo "✅ Terraform destroy completed for ${{ matrix.env }} environment"
 
     - name: Generate Execution Report
       if: always()
-      working-directory: infra/two-network-setup
+      working-directory: infra/live
       run: |
         echo "## 🏗️ Infrastructure Execution Report" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -535,41 +493,8 @@ jobs:
         echo "**Action:** ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
         echo "**Network Tier:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
         echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Started:** $(date -d '5 minutes ago' '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
         echo "**Completed:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
         echo "**Runner:** ${{ github.event.inputs.runner_type }}" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # What actually happened
-        echo "### 🔄 Actions Performed" >> $GITHUB_STEP_SUMMARY
-        
-        if [ "${{ github.event.inputs.action }}" = "plan" ]; then
-          echo "- ✅ Terraform initialized" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Infrastructure plan generated" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Policy validation completed" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "deploy" ]; then
-          echo "- ✅ Pre-deployment checks completed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Terraform initialized" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Infrastructure plan created" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Resources deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Post-deployment summary generated" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
-          echo "- ✅ Pre-deployment checks completed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Existing resources destroyed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Fresh infrastructure plan created" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ New resources deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Post-deployment summary generated" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
-          if [ "${{ github.event.inputs.confirm_destroy }}" = "DESTROY" ]; then
-            echo "- ✅ Destroy confirmation validated" >> $GITHUB_STEP_SUMMARY
-            echo "- ✅ Resources destroyed" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ github.event.inputs.cleanup_all_regions }}" = "true" ]; then
-              echo "- ✅ Additional cleanup performed" >> $GITHUB_STEP_SUMMARY
-            fi
-          else
-            echo "- ❌ Destroy not confirmed - no action taken" >> $GITHUB_STEP_SUMMARY
-          fi
-        fi
         echo "" >> $GITHUB_STEP_SUMMARY
         
         # Current state and detailed infrastructure info
@@ -578,19 +503,6 @@ jobs:
           RESOURCE_COUNT=$(wc -l < /tmp/resources.txt)
           echo "**Total Resources:** $RESOURCE_COUNT" >> $GITHUB_STEP_SUMMARY
           
-          # Resource breakdown
-          EC2_COUNT=$(grep -c "aws_instance" /tmp/resources.txt || echo "0")
-          RDS_COUNT=$(grep -c "aws_db_instance" /tmp/resources.txt || echo "0")
-          SG_COUNT=$(grep -c "aws_security_group" /tmp/resources.txt || echo "0")
-          KEY_COUNT=$(grep -c "aws_key_pair" /tmp/resources.txt || echo "0")
-          
-          echo "**EC2 Instances:** $EC2_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "**RDS Instances:** $RDS_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "**Security Groups:** $SG_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "**Key Pairs:** $KEY_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          # Add detailed resource information to job summary
           # Generate network diagram with actual IPs
           K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null || echo "N/A")
           RUNNER_IP=$(aws ec2 describe-instances --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=tag:Name,Values=*runner*" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null || echo "N/A")
@@ -651,21 +563,9 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "#### 💾 RDS Databases" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          aws rds describe-db-instances --query "DBInstances[?contains(DBInstanceIdentifier, 'health-app-${{ matrix.env }}')].[DBInstanceIdentifier,DBInstanceClass,Engine,Endpoint.Address,Endpoint.Port,DBInstanceStatus]" --output table >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "No RDS instances found" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
           # Connection details if resources exist
           if [ "$RESOURCE_COUNT" -gt 0 ]; then
             echo "#### 🚀 Access Information" >> $GITHUB_STEP_SUMMARY
-            
-            K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
-            
-            RUNNER_IP=$(aws ec2 describe-instances --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=tag:Name,Values=*runner*" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null)
-            
-            RDS_ENDPOINT=$(aws rds describe-db-instances --query "DBInstances[?contains(DBInstanceIdentifier, 'health-app-${{ matrix.env }}')].Endpoint.Address" --output text 2>/dev/null)
             
             if [ "$K3S_IP" != "None" ] && [ -n "$K3S_IP" ]; then
               echo "**K3s Cluster:** \`ssh -i ~/.ssh/key ubuntu@$K3S_IP\`" >> $GITHUB_STEP_SUMMARY
@@ -683,26 +583,4 @@ jobs:
           fi
         else
           echo "**Status:** No infrastructure deployed" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 💰 Cost Impact" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event.inputs.action }}" = "destroy" ] && [ "${{ github.event.inputs.confirm_destroy }}" = "DESTROY" ]; then
-          echo "**Monthly Cost:** $0 (resources destroyed)" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "**Instance Types:** t2.micro (Free Tier eligible)" >> $GITHUB_STEP_SUMMARY
-          echo "**Expected Monthly Cost:** $0 (within Free Tier limits)" >> $GITHUB_STEP_SUMMARY
-        fi
-        
-        # Next steps
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ github.event.inputs.action }}" = "plan" ]; then
-          echo "- Run **deploy** action to apply the planned changes" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "deploy" ] || [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
-          echo "- Run **Platform Readiness Check** to verify deployment" >> $GITHUB_STEP_SUMMARY
-          echo "- Deploy applications using **Core Deployment** workflow" >> $GITHUB_STEP_SUMMARY
-        elif [ "${{ github.event.inputs.action }}" = "destroy" ]; then
-          echo "- Infrastructure cleanup completed" >> $GITHUB_STEP_SUMMARY
-          echo "- Ready for fresh deployment if needed" >> $GITHUB_STEP_SUMMARY
         fi

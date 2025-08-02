@@ -169,14 +169,15 @@ resource "aws_instance" "k3s" {
 module "github_runner" {
   source = "../modules/github-runner"
   
-  network_tier     = var.network_tier
-  vpc_id           = data.aws_vpc.first.id
-  subnet_id        = data.aws_subnet.public.id
-  ssh_public_key   = var.ssh_public_key
-  repo_pat         = var.repo_pat
-  repo_name        = var.repo_name
-  s3_bucket        = "health-app-terraform-state"
-  aws_region       = var.aws_region
+  network_tier       = var.network_tier
+  vpc_id             = data.aws_vpc.first.id
+  subnet_id          = data.aws_subnet.public.id
+  ssh_public_key     = var.ssh_public_key
+  repo_pat           = var.repo_pat
+  repo_name          = var.repo_name
+  s3_bucket          = "health-app-terraform-state"
+  aws_region         = var.aws_region
+  k3s_subnet_cidrs   = [data.aws_subnet.public.cidr_block]
   
   depends_on = [aws_key_pair.main]
 }
