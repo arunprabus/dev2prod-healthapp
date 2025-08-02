@@ -464,6 +464,47 @@ jobs:
         docker --version
         gh --version
 
+    - name: Debug K3s Installation
+      run: |
+        echo "🔍 Debugging K3s installation for ${{ matrix.env }} environment..."
+        
+        # Get K3s instance details
+        K3S_DETAILS=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress]" --output text)
+        
+        K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
+        K3S_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
+        
+        echo "🔍 Checking installation status: $K3S_INSTANCE_ID"
+        
+        # Check user-data logs
+        echo "=== USER DATA LOGS ==="
+        COMMAND_ID=$(aws ssm send-command \
+          --instance-ids "$K3S_INSTANCE_ID" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["tail -100 /var/log/cloud-init-output.log"]' \
+          --query "Command.CommandId" --output text)
+        
+        sleep 10
+        aws ssm get-command-invocation \
+          --command-id "$COMMAND_ID" \
+          --instance-id "$K3S_INSTANCE_ID" \
+          --query "StandardOutputContent" --output text
+        
+        echo "=== K3S INSTALL LOG ==="
+        COMMAND_ID=$(aws ssm send-command \
+          --instance-ids "$K3S_INSTANCE_ID" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["cat /var/log/k3s-install.log 2>/dev/null || echo No K3s install log found"]' \
+          --query "Command.CommandId" --output text)
+        
+        sleep 10
+        aws ssm get-command-invocation \
+          --command-id "$COMMAND_ID" \
+          --instance-id "$K3S_INSTANCE_ID" \
+          --query "StandardOutputContent" --output text
+
     - name: Setup kubeconfig via Systems Manager
       run: |
         echo "🔧 Setting up kubeconfig for ${{ matrix.env }} environment..."
