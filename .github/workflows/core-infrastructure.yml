@@ -445,7 +445,7 @@ jobs:
     if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && needs.infrastructure.result == 'success'
     strategy:
       matrix:
-        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{ 0}"]', github.event.inputs.environment)) }}
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
     
     steps:
     - name: Configure AWS credentials
