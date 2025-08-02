@@ -22,17 +22,20 @@ while [ ! -f /etc/rancher/k3s/k3s.yaml ]; do
   sleep 5
 done
 
-# Replace localhost with public IP
-echo "Configuring kubeconfig for external access..."
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "")
-echo "Public IP: $PUBLIC_IP"
+# --- Replace 127.0.0.1 with public IP for external access ---
+echo "🌐 Fetching public IP..." | tee -a /var/log/k3s-install.log
+TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 
-if [[ -n "$PUBLIC_IP" ]]; then
-  sed -i "s/127.0.0.1/$PUBLIC_IP/g" /etc/rancher/k3s/k3s.yaml
-  echo "✅ Kubeconfig updated with public IP: $PUBLIC_IP"
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4)
+
+if [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "✅ Public IP is $PUBLIC_IP" | tee -a /var/log/k3s-install.log
+  sed -i "s|127.0.0.1|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
 else
-  echo "⚠️ Could not get public IP, keeping localhost in kubeconfig"
-  echo "This means external access won't work, but local access will"
+  echo "❌ Failed to fetch valid public IP. Got: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
+  exit 1
 fi
 
 # Test kubectl
