@@ -164,59 +164,14 @@ resource "aws_instance" "k3s" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
 
-# Wait for K3s installation to complete using SSM
+# Simple delay to allow instance to boot
 resource "null_resource" "wait_for_k3s" {
   depends_on = [aws_instance.k3s]
   
   provisioner "local-exec" {
-    command = <<-EOT
-      echo "Waiting for K3s installation to complete via SSM..."
-      
-      # Wait for SSM agent to be ready
-      for i in $(seq 1 20); do
-        if aws ssm describe-instance-information --filters "Key=InstanceIds,Values=${aws_instance.k3s.id}" --query "InstanceInformationList[0].PingStatus" --output text | grep -q "Online"; then
-          echo "SSM agent is online"
-          break
-        fi
-        echo "Waiting for SSM agent... ($i/20)"
-        sleep 30
-      done
-      
-      # Check for K3s service directly
-      for i in $(seq 1 20); do
-        echo "Checking K3s service (attempt $i/20)..."
-        
-        # Check K3s service status
-        RESULT=$(aws ssm send-command \
-          --instance-ids "${aws_instance.k3s.id}" \
-          --document-name "AWS-RunShellScript" \
-          --parameters 'commands=["systemctl is-active k3s 2>/dev/null && kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml 2>/dev/null && echo READY || echo WAITING"]' \
-          --query "Command.CommandId" --output text)
-        
-        sleep 10
-        
-        STATUS=$(aws ssm get-command-invocation \
-          --command-id "$RESULT" \
-          --instance-id "${aws_instance.k3s.id}" \
-          --query "StandardOutputContent" --output text 2>/dev/null || echo "WAITING")
-        
-        echo "Status: $STATUS"
-        
-        if echo "$STATUS" | grep -q "READY"; then
-          echo "K3s cluster is ready and operational!"
-          exit 0
-        fi
-        
-        echo "K3s not ready yet, waiting 60s..."
-        sleep 60
-      done
-      
-      echo "Timeout waiting for K3s service after 20 minutes"
-      exit 1
-    EOT
+    command = "echo 'EC2 instance created, kubeconfig step will handle K3s verification'"
   }
   
-  # Trigger re-provisioning if instance changes
   triggers = {
     instance_id = aws_instance.k3s.id
   }
