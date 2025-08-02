@@ -163,10 +163,21 @@ jobs:
             exit 0
           fi
           
-          # Get K3s cluster IP
+          # Debug: Check what instances exist
+          echo "Looking for instances with tag: $TAG_NAME"
+          aws ec2 describe-instances --filters "Name=tag:Name,Values=$TAG_NAME" --query "Reservations[*].Instances[*].[InstanceId,State.Name,PublicIpAddress,PrivateIpAddress]" --output table
+          
+          # Get K3s cluster IP (try public first, then private)
           K3S_IP=$(aws ec2 describe-instances \
             --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
             --query "Reservations[*].Instances[*].PublicIpAddress" --output text 2>/dev/null || echo "")
+          
+          if [ -z "$K3S_IP" ] || [ "$K3S_IP" = "None" ]; then
+            echo "No public IP found, trying private IP..."
+            K3S_IP=$(aws ec2 describe-instances \
+              --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running" \
+              --query "Reservations[*].Instances[*].PrivateIpAddress" --output text 2>/dev/null || echo "")
+          fi
           
           if [ -z "$K3S_IP" ] || [ "$K3S_IP" = "None" ]; then
             echo "❌ No K3s cluster found - skipping setup"
