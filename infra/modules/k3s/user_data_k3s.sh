@@ -8,7 +8,7 @@ exec > >(tee -a /var/log/k3s-install.log) 2>&1
 # Variables from Terraform
 ENVIRONMENT="${environment}"
 CLUSTER_NAME="${cluster_name}"
-# DB_ENDPOINT="${db_endpoint}"  # Commented out for now
+# DB_ENDPOINT="dummy"  # Commented out for now
 S3_BUCKET="${s3_bucket}"
 NETWORK_TIER="${network_tier}"
 
