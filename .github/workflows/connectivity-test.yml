@@ -232,17 +232,6 @@ jobs:
         echo "Creating GitHub secret..."
         KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-${{ inputs.network_tier }})
         
-        # Use GitHub CLI to create secret
-        echo "$KUBECONFIG_B64" | gh secret set KUBECONFIG_$(echo ${{ inputs.network_tier }} | tr '[:lower:]' '[:upper:]') --body -
-        
-        echo "✅ GitHub secret KUBECONFIG_$(echo ${{ inputs.network_tier }} | tr '[:lower:]' '[:upper:]') created"
-        
-        # Cleanup
-        rm -f ./kubeconfig-${{ inputs.network_tier }}
-        
-        echo "🎉 K3s setup completed successfully for ${{ inputs.network_tier }} network"
-        KUBECONFIG_B64=$(base64 -w 0 ./kubeconfig-${{ inputs.network_tier }})
-        
         # Determine secret name based on network tier
         case "${{ inputs.network_tier }}" in
           "lower")
@@ -256,16 +245,18 @@ jobs:
             ;;
         esac
         
-        # Create the secret using GitHub CLI or API
+        # Create the secret using GitHub CLI
         if command -v gh &> /dev/null; then
           echo "$KUBECONFIG_B64" | gh secret set $SECRET_NAME
-          echo "✅ GitHub secret $SECRET_NAME created using GitHub CLI"
+          echo "✅ GitHub secret $SECRET_NAME created"
         else
-          echo "⚠️ GitHub CLI not available, kubeconfig saved locally as ./kubeconfig-${{ inputs.network_tier }}"
-          echo "Manual step: Create GitHub secret $SECRET_NAME with the base64 content"
+          echo "⚠️ GitHub CLI not available"
         fi
         
-        echo "🎉 K3s setup completed for ${{ inputs.network_tier }} environment"
+        # Cleanup
+        rm -f ./kubeconfig-${{ inputs.network_tier }}
+        
+        echo "🎉 K3s setup completed for ${{ inputs.network_tier }} network"
         
     - name: 📊 Generate Connectivity Report
       if: always()
