@@ -458,6 +458,44 @@ jobs:
             if [ "$RDS_ENDPOINT" != "None" ] && [ -n "$RDS_ENDPOINT" ]; then
               echo "**Database:** $RDS_ENDPOINT:5432" >> $GITHUB_STEP_SUMMARY
             fi
+            
+            # DNS Setup Instructions
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🌐 DNS Setup Required (sharpzeal.com)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "${{ matrix.env }}" = "lower" ] && [ "$K3S_IP" != "None" ]; then
+              echo "**📋 Add these A records in Namecheap:**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Host | Value | TTL |" >> $GITHUB_STEP_SUMMARY
+              echo "|------|-------|-----|" >> $GITHUB_STEP_SUMMARY
+              echo "| \`dev\` | \`$K3S_IP\` | 300 |" >> $GITHUB_STEP_SUMMARY
+              echo "| \`test\` | \`$K3S_IP\` | 300 |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**🎯 Result URLs:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Development: https://dev.sharpzeal.com" >> $GITHUB_STEP_SUMMARY
+              echo "- Test: https://test.sharpzeal.com" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ matrix.env }}" = "higher" ] && [ "$K3S_IP" != "None" ]; then
+              echo "**📋 Add this A record in Namecheap:**" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "| Host | Value | TTL |" >> $GITHUB_STEP_SUMMARY
+              echo "|------|-------|-----|" >> $GITHUB_STEP_SUMMARY
+              echo "| \`health-api\` | \`$K3S_IP\` | 300 |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**🎯 Result URL:**" >> $GITHUB_STEP_SUMMARY
+              echo "- Production: https://health-api.sharpzeal.com" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ matrix.env }}" = "monitoring" ] && [ "$K3S_IP" != "None" ]; then
+              echo "**📋 Monitoring cluster deployed:**" >> $GITHUB_STEP_SUMMARY
+              echo "- IP: $K3S_IP" >> $GITHUB_STEP_SUMMARY
+              echo "- Used for centralized monitoring and GitHub runners" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Setup DNS** - Add A records in Namecheap (see table above)" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Setup Ingress** - SSH to cluster and run: \`./scripts/setup-ingress.sh ${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Deploy Apps** - Run Core Deployment workflow" >> $GITHUB_STEP_SUMMARY
+            echo "4. **Verify SSL** - Check https URLs after DNS propagation (5-10 min)" >> $GITHUB_STEP_SUMMARY
           fi
         else
           echo "**Status:** No infrastructure deployed" >> $GITHUB_STEP_SUMMARY
