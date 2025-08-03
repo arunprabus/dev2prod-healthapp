@@ -9,7 +9,7 @@ variable "domain_name" {
   default     = "healthapp.local"
 }
 
-varget "aws_region" {
+variable "aws_region" {
   description = "AWS region"
   type        = string
   default     = "ap-south-1"

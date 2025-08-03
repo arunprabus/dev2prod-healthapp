@@ -114,7 +114,7 @@ Attach this comprehensive policy to your AWS user/group:
                 "rds:*",
                 "ssm:*",
                 "dynamodb:*",
-                "s3:*",
+                "s3:*"
                 "budgets:*",
                 "logs:*",
                 "cognito-idp:*",
