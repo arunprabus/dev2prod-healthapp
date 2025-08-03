@@ -80,6 +80,8 @@ resource "aws_security_group" "alb_sg" {
 
   tags = {
     Name = "health-app-${var.environment}-alb-sg"
+    Project = "health-app"
+    Environment = var.environment
   }
 }
 

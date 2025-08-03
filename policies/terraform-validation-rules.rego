@@ -59,8 +59,10 @@ deny[msg] {
     msg := "NAT Gateway creation is prohibited (cost optimization)"
 }
 
-# Rule 8: Prevent Load Balancer creation
+# Rule 8: Allow ALB for SSL termination (within free tier limits)
+# ALBs have free tier: 750 hours/month + 15 LCUs
+# Only prevent Classic ELB which has no free tier
 deny[msg] {
-    input.resource_changes[_].type in ["aws_lb", "aws_alb", "aws_elb"]
-    msg := "Load Balancer creation is prohibited (cost optimization)"
+    input.resource_changes[_].type == "aws_elb"
+    msg := "Classic ELB creation is prohibited (no free tier). Use ALB instead"
 }
