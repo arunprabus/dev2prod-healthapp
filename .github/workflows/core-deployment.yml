@@ -102,6 +102,8 @@ jobs:
           
           if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_KEY ~/.kube/config; then
             echo "✅ Downloaded kubeconfig from S3: $KUBECONFIG_KEY"
+            echo "📄 Kubeconfig contents:"
+            cat ~/.kube/config
           else
             echo "❌ Failed to download kubeconfig from S3"
             echo "💡 Please run Core Infrastructure deployment first"
