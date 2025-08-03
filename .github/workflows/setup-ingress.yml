@@ -117,8 +117,13 @@ jobs:
           fi
         done
         
-        # Update server IP
+        # Update server IP - fix both 127.0.0.1 and 0.0.0.0
         sed -i "s/127.0.0.1/${{ steps.cluster-ip.outputs.cluster_ip }}/g" /tmp/kubeconfig.yaml
+        sed -i "s/0.0.0.0/${{ steps.cluster-ip.outputs.cluster_ip }}/g" /tmp/kubeconfig.yaml
+        
+        # Verify the kubeconfig has correct IP
+        echo "📋 Kubeconfig server URL:"
+        grep "server:" /tmp/kubeconfig.yaml
         
         # Set kubeconfig
         export KUBECONFIG=/tmp/kubeconfig.yaml

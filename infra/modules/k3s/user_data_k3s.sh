@@ -18,7 +18,7 @@ echo "✅ Public IP: $PUBLIC_IP"
 
 # Install K3s with proper external access configuration
 echo "Installing K3s..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --bind-address 0.0.0.0 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --bind-address 0.0.0.0 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP" sh -
 
 # Wait for service to be ready
 echo "Starting K3s service..."
