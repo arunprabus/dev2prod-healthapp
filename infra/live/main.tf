@@ -63,23 +63,14 @@ resource "aws_security_group" "k3s" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Remove direct internet access to K3s API - only via ALB
-  # ingress {
-  #   from_port   = 6443
-  #   to_port     = 6443
-  #   protocol    = "tcp"
-  #   cidr_blocks = ["0.0.0.0/0"]
-  #   description = "K3s API access"
-  # }
-
-  # Allow ALB to access K3s API - will be added after ALB creation
-  # ingress {
-  #   from_port       = 6443
-  #   to_port         = 6443
-  #   protocol        = "tcp"
-  #   security_groups = [module.alb_ssl.alb_security_group_id]
-  #   description     = "ALB to K3s API"
-  # }
+  # K3s API server - Direct access (FREE option)
+  ingress {
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "K3s API server direct access"
+  }
 
   ingress {
     from_port   = 80
