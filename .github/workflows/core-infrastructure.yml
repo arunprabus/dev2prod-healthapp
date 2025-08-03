@@ -322,6 +322,93 @@ jobs:
         echo "✅ Infrastructure deployed successfully for ${{ matrix.env }} environment"
         echo "📊 See detailed network design and access info in the job summary tab"
 
+    - name: Multi-Region Cleanup (if enabled)
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.cleanup_all_regions == 'true'
+      run: |
+        echo "🌍 Starting multi-region cleanup..."
+        
+        REGIONS="us-east-1 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-south-1 ap-southeast-1 ap-southeast-2 ap-northeast-1 ca-central-1 sa-east-1"
+        
+        for REGION in $REGIONS; do
+          echo "🧹 Cleaning region: $REGION"
+          
+          # Terminate EC2 instances
+          INSTANCES=$(aws ec2 describe-instances --region $REGION \
+            --filters "Name=tag:Project,Values=health-app" "Name=instance-state-name,Values=running,stopped,stopping" \
+            --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
+          
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "Terminating instances in $REGION: $INSTANCES"
+            echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
+            sleep 10
+          fi
+          
+          # Delete RDS instances
+          RDS_INSTANCES=$(aws rds describe-db-instances --region $REGION \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'health-app')].DBInstanceIdentifier" --output text 2>/dev/null || echo "")
+          
+          if [ -n "$RDS_INSTANCES" ] && [ "$RDS_INSTANCES" != "None" ]; then
+            echo "Deleting RDS instances in $REGION: $RDS_INSTANCES"
+            for db in $RDS_INSTANCES; do
+              aws rds delete-db-instance --region $REGION --db-instance-identifier $db --skip-final-snapshot || true
+            done
+          fi
+          
+          # Delete VPCs (this will delete IGWs, subnets, etc.)
+          VPCS=$(aws ec2 describe-vpcs --region $REGION \
+            --filters "Name=tag:Project,Values=health-app" \
+            --query "Vpcs[].VpcId" --output text 2>/dev/null || echo "")
+          
+          if [ -n "$VPCS" ] && [ "$VPCS" != "None" ]; then
+            echo "Deleting VPCs in $REGION: $VPCS"
+            for vpc in $VPCS; do
+              # Delete subnets first
+              SUBNETS=$(aws ec2 describe-subnets --region $REGION --filters "Name=vpc-id,Values=$vpc" --query "Subnets[].SubnetId" --output text 2>/dev/null || echo "")
+              for subnet in $SUBNETS; do
+                aws ec2 delete-subnet --region $REGION --subnet-id $subnet || true
+              done
+              
+              # Delete IGW
+              IGW=$(aws ec2 describe-internet-gateways --region $REGION --filters "Name=attachment.vpc-id,Values=$vpc" --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null || echo "")
+              if [ -n "$IGW" ] && [ "$IGW" != "None" ]; then
+                aws ec2 detach-internet-gateway --region $REGION --internet-gateway-id $IGW --vpc-id $vpc || true
+                aws ec2 delete-internet-gateway --region $REGION --internet-gateway-id $IGW || true
+              fi
+              
+              # Delete VPC
+              aws ec2 delete-vpc --region $REGION --vpc-id $vpc || true
+            done
+          fi
+          
+          # Delete security groups
+          SGS=$(aws ec2 describe-security-groups --region $REGION \
+            --filters "Name=tag:Project,Values=health-app" \
+            --query "SecurityGroups[?GroupName!='default'].GroupId" --output text 2>/dev/null || echo "")
+          
+          if [ -n "$SGS" ] && [ "$SGS" != "None" ]; then
+            echo "Deleting security groups in $REGION: $SGS"
+            for sg in $SGS; do
+              aws ec2 delete-security-group --region $REGION --group-id $sg || true
+            done
+          fi
+          
+          # Delete key pairs
+          KEYS=$(aws ec2 describe-key-pairs --region $REGION \
+            --filters "Name=tag:Project,Values=health-app" \
+            --query "KeyPairs[].KeyName" --output text 2>/dev/null || echo "")
+          
+          if [ -n "$KEYS" ] && [ "$KEYS" != "None" ]; then
+            echo "Deleting key pairs in $REGION: $KEYS"
+            for key in $KEYS; do
+              aws ec2 delete-key-pair --region $REGION --key-name $key || true
+            done
+          fi
+          
+          echo "✅ Cleanup completed for $REGION"
+        done
+        
+        echo "🌍 Multi-region cleanup completed"
+
     - name: Terraform Destroy
       working-directory: infra/live
       if: github.event.inputs.action == 'destroy' && github.event.inputs.confirm_destroy == 'DESTROY'
