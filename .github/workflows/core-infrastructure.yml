@@ -649,8 +649,15 @@ jobs:
           fi
         done
         
-        # Update server IP to public IP
-        sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
+        # Verify kubeconfig has correct IP (should already be correct from K3s installation)
+        if grep -q "$K3S_IP" /tmp/kubeconfig.yaml; then
+          echo "✅ Kubeconfig already has correct IP: $K3S_IP"
+        else
+          echo "🔧 Updating kubeconfig with correct IP..."
+          sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
+          sed -i "s/0.0.0.0/$K3S_IP/g" /tmp/kubeconfig.yaml
+          echo "✅ Kubeconfig updated with IP: $K3S_IP"
+        fi
         
         # Test kubeconfig connectivity
         export KUBECONFIG=/tmp/kubeconfig.yaml

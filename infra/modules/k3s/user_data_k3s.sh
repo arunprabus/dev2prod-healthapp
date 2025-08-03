@@ -23,7 +23,7 @@ fi
 
 # Install K3s with proper TLS configuration
 echo "Installing K3s with TLS configuration..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --tls-san $PUBLIC_IP --bind-address 0.0.0.0 --advertise-address $PUBLIC_IP" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP" sh -
 
 # Wait for service to be ready
 echo "Starting K3s service..."
@@ -37,10 +37,16 @@ while [ ! -f /etc/rancher/k3s/k3s.yaml ]; do
   sleep 5
 done
 
-# Update kubeconfig with public IP
-echo "🔧 Updating kubeconfig with public IP..." | tee -a /var/log/k3s-install.log
-sed -i "s|127.0.0.1|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
-echo "✅ Kubeconfig updated with public IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
+# Verify kubeconfig has correct IP
+echo "🔍 Verifying kubeconfig configuration..." | tee -a /var/log/k3s-install.log
+if grep -q "$PUBLIC_IP" /etc/rancher/k3s/k3s.yaml; then
+  echo "✅ Kubeconfig already has correct public IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
+else
+  echo "🔧 Updating kubeconfig with public IP..." | tee -a /var/log/k3s-install.log
+  sed -i "s|127.0.0.1|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
+  sed -i "s|0.0.0.0|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
+  echo "✅ Kubeconfig updated with public IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
+fi
 
 # Test kubectl
 echo "Testing kubectl..."
