@@ -111,7 +111,7 @@ jobs:
           fi
           
           # Test connection
-          kubectl get nodes
+          kubectl get nodes --insecure-skip-tls-verify
 
       - name: Create namespace
         run: |
