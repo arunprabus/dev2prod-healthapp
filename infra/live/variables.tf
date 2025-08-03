@@ -73,7 +73,7 @@ locals {
   
   # Tags
   tags = {
-    Project     = "Learning"
+    Project     = "health-app"
     Environment = var.environment
     NetworkTier = var.network_tier
     ManagedBy   = "Terraform"
