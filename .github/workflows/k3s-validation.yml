@@ -12,14 +12,7 @@ on:
         - lower
         - higher
         - monitoring
-      runner_type:
-        description: 'Runner Type'
-        required: false
-        default: 'github'
-        type: choice
-        options:
-        - github
-        - aws
+
       validation_type:
         description: 'Validation Type'
         required: false
@@ -35,13 +28,13 @@ env:
 
 jobs:
   k3s-validation:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
+    runs-on: self-hosted
     
     steps:
     - name: Debug Runner Info
       run: |
         echo "🔍 Runner Information:"
-        echo "Runner Type: ${{ github.event.inputs.runner_type }}"
+        echo "Runner Type: self-hosted"
         echo "Hostname: $(hostname)"
         echo "User: $(whoami)"
         echo "Working Directory: $(pwd)"
