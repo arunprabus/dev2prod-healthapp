@@ -46,6 +46,24 @@ variable "snapshot_identifier" {
   default     = null
 }
 
+variable "k3s_domain_name" {
+  description = "Domain name for K3s API (e.g., k3s-dev.example.com)"
+  type        = string
+  default     = "k3s.local"
+}
+
+variable "route53_zone_id" {
+  description = "Route53 hosted zone ID for DNS validation (optional)"
+  type        = string
+  default     = ""
+}
+
+variable "enable_ssl_termination" {
+  description = "Enable ACM + NLB for SSL termination (costs ~$18/month)"
+  type        = bool
+  default     = false
+}
+
 locals {
   # Network CIDR based on tier
   vpc_cidr = var.network_tier == "lower" ? "10.0.0.0/16" : "10.1.0.0/16"

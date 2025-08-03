@@ -78,6 +78,21 @@ Actions → Core Deployment → health-api
 - ✅ Interactive learning commands
 - ✅ Production-ready with monitoring
 
+### **Option 1a: K3s with ACM + NLB** 🔒
+**Production SSL termination for K3s API**
+
+```bash
+# Deploy with professional SSL
+terraform apply -var="k3s_domain_name=k3s.yourdomain.com"
+```
+
+**Features:**
+- ✅ **ACM Certificate** - Professional SSL/TLS
+- ✅ **Network Load Balancer** - High performance
+- ✅ **Domain-based access** - k3s.yourdomain.com
+- ✅ **No self-signed certs** - Production ready
+- 💰 **Cost**: ~$18/month (NLB cost)
+
 ### **Option 2: Direct EC2 Deployment** 🚀
 **Simple Docker containers on EC2 instances**
 

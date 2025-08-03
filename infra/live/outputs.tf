@@ -50,27 +50,28 @@ output "github_runner_debug_commands" {
 #   value       = aws_db_instance.main.endpoint
 # }
 
-output "alb_dns_name" {
-  description = "ALB DNS name for K3s API"
-  value       = module.alb_ssl.alb_dns_name
+output "k3s_endpoint" {
+  description = "K3s API endpoint"
+  value       = var.enable_ssl_termination ? "https://${module.k3s_nlb[0].nlb_dns_name}:443" : "https://${aws_instance.k3s.public_ip}:6443"
 }
 
-output "k3s_ssl_endpoint" {
-  description = "K3s API endpoint with SSL via ALB"
-  value       = module.alb_ssl.k3s_endpoint
+output "nlb_dns_name" {
+  description = "NLB DNS name for K3s API (if SSL enabled)"
+  value       = var.enable_ssl_termination ? module.k3s_nlb[0].nlb_dns_name : null
 }
 
 output "certificate_arn" {
-  description = "ACM certificate ARN"
-  value       = module.alb_ssl.certificate_arn
+  description = "ACM certificate ARN (if SSL enabled)"
+  value       = var.enable_ssl_termination ? module.acm_certificate[0].certificate_arn : null
 }
 
 output "environment_info" {
   description = "Environment information"
   value = {
-    environment  = var.environment
-    network_tier = var.network_tier
-    cost_tier    = "FREE"
-    ssl_endpoint = module.alb_ssl.k3s_endpoint
+    environment     = var.environment
+    network_tier    = var.network_tier
+    cost_tier       = var.enable_ssl_termination ? "PAID (~$18/month)" : "FREE"
+    k3s_endpoint    = var.enable_ssl_termination ? "https://${module.k3s_nlb[0].nlb_dns_name}:443" : "https://${aws_instance.k3s.public_ip}:6443"
+    ssl_termination = var.enable_ssl_termination
   }
 }

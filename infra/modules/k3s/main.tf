@@ -21,13 +21,13 @@ resource "aws_security_group" "k3s" {
     description = "SSH access for management and setup"
   }
 
-  # K3s API server - Allow GitHub Actions access from management subnets
+  # K3s API server - Direct access (FREE option)
   ingress {
     from_port   = 6443
     to_port     = 6443
     protocol    = "tcp"
-    cidr_blocks = concat(["0.0.0.0/0"], var.management_subnet_cidrs)  # Allow public + management subnet access
-    description = "K3s API server access"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "K3s API server direct access"
   }
 
   # HTTP/HTTPS for applications

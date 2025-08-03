@@ -227,16 +227,30 @@ resource "aws_instance" "k3s" {
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
 
-# ALB with SSL for K3s API
-module "alb_ssl" {
-  source = "../modules/alb-ssl"
+# Optional: ACM Certificate for K3s API (costs ~$18/month)
+module "acm_certificate" {
+  count = var.enable_ssl_termination ? 1 : 0
+  source = "../modules/acm"
   
-  environment     = var.environment
-  vpc_id          = data.aws_vpc.first.id
-  subnet_ids      = data.aws_subnets.existing.ids
-  k3s_instance_id = aws_instance.k3s.id
-  aws_region      = var.aws_region
+  name_prefix   = local.name_prefix
+  domain_name   = var.k3s_domain_name
+  route53_zone_id = var.route53_zone_id
   
+  tags = local.tags
+}
+
+# Optional: Network Load Balancer for K3s API with ACM
+module "k3s_nlb" {
+  count = var.enable_ssl_termination ? 1 : 0
+  source = "../modules/k3s-nlb"
+  
+  name_prefix       = local.name_prefix
+  vpc_id            = data.aws_vpc.first.id
+  subnet_ids        = data.aws_subnets.existing.ids
+  k3s_instance_id   = aws_instance.k3s.id
+  certificate_arn   = module.acm_certificate[0].certificate_arn
+  
+  tags = local.tags
   depends_on = [aws_instance.k3s]
 }
 

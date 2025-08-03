@@ -67,3 +67,9 @@ variable "management_subnet_cidrs" {
   type        = list(string)
   default     = []
 }
+
+variable "nlb_security_group_ids" {
+  description = "Security group IDs of NLB for K3s API access"
+  type        = list(string)
+  default     = []
+}
