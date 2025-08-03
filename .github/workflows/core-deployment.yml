@@ -110,6 +110,64 @@ jobs:
             exit 1
           fi
           
+          # Check if cluster is reachable
+          CLUSTER_IP=$(grep 'server:' ~/.kube/config | awk '{print $2}' | sed 's|https://||' | sed 's|:6443||')
+          echo "🔍 Testing connectivity to K3s cluster: $CLUSTER_IP:6443"
+          
+          if timeout 10 bash -c "</dev/tcp/$CLUSTER_IP/6443"; then
+            echo "✅ Port 6443 is reachable"
+          else
+            echo "❌ Cannot connect to $CLUSTER_IP:6443"
+            echo "💡 Checking if K3s cluster is running..."
+            
+            # Check if instance is running
+            INSTANCE_STATUS=$(aws ec2 describe-instances \
+              --filters "Name=ip-address,Values=$CLUSTER_IP" \
+              --query "Reservations[0].Instances[0].State.Name" \
+              --output text 2>/dev/null || echo "None")
+            
+            if [ "$INSTANCE_STATUS" = "None" ]; then
+              # Try with private IP filter
+              INSTANCE_STATUS=$(aws ec2 describe-instances \
+                --filters "Name=private-ip-address,Values=$CLUSTER_IP" \
+                --query "Reservations[0].Instances[0].State.Name" \
+                --output text 2>/dev/null || echo "None")
+            fi
+            
+            echo "Instance status: $INSTANCE_STATUS"
+            
+            # Get instance details
+            if [ "$INSTANCE_STATUS" != "None" ]; then
+              INSTANCE_ID=$(aws ec2 describe-instances \
+                --filters "Name=ip-address,Values=$CLUSTER_IP" \
+                --query "Reservations[0].Instances[0].InstanceId" \
+                --output text 2>/dev/null || echo "None")
+              
+              if [ "$INSTANCE_ID" != "None" ]; then
+                echo "Instance ID: $INSTANCE_ID"
+                echo "Instance details:"
+                aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].[InstanceId,State.Name,PublicIpAddress,PrivateIpAddress]" --output table
+              fi
+            fi
+            
+            if [ "$INSTANCE_STATUS" != "running" ]; then
+              echo "❌ K3s cluster instance is not running (Status: $INSTANCE_STATUS)"
+              echo "💡 Please run Core Infrastructure deployment to start the cluster"
+              
+              # Try to start the instance if it's stopped
+              if [ "$INSTANCE_STATUS" = "stopped" ] && [ "$INSTANCE_ID" != "None" ]; then
+                echo "🔄 Attempting to start the stopped instance..."
+                aws ec2 start-instances --instance-ids $INSTANCE_ID
+                echo "⏳ Waiting for instance to start..."
+                aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+                echo "✅ Instance started, waiting for K3s to be ready..."
+                sleep 60  # Give K3s time to start
+              else
+                exit 1
+              fi
+            fi
+          fi
+          
           # Test connection
           kubectl get nodes --insecure-skip-tls-verify
 
