@@ -232,34 +232,7 @@ jobs:
             exit 1
           fi
 
-      - name: Generate deployment summary
-        if: always()
-        run: |
-          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
-          echo "**Application:** $APP_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** $IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
-          echo "**Namespace:** $NAMESPACE" >> $GITHUB_STEP_SUMMARY
-          echo "**Network Tier:** $NETWORK_TIER" >> $GITHUB_STEP_SUMMARY
-          echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
-          if [ "$DEPLOYMENT_STATUS" = "success" ]; then
-            echo "**Status:** ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
-            echo "**Pods Ready:** $READY_PODS/$TOTAL_PODS" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Status:** ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
-            echo "**Pods Ready:** ${READY_PODS:-0}/${TOTAL_PODS:-0}" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 🔍 Resource Information" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          kubectl get all -l app=$APP_NAME -n $NAMESPACE >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Resources not available" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+
 
       - name: Cleanup
         if: always()
