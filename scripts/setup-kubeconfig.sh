@@ -14,6 +14,22 @@ fi
 echo "🔑 Setting up kubeconfig for $ENVIRONMENT environment"
 echo "K3s IP: $K3S_IP"
 
+# Wait for kubeconfig file to exist
+echo "⏳ Waiting for kubeconfig file to be created..."
+for i in {1..6}; do
+    echo "Checking for kubeconfig file (attempt $i/6)..."
+    if ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "test -f /etc/rancher/k3s/k3s.yaml"; then
+        echo "✅ Kubeconfig file exists"
+        break
+    elif [ $i -eq 6 ]; then
+        echo "❌ Kubeconfig file not found after 1 minute"
+        exit 1
+    else
+        echo "Kubeconfig not ready yet, waiting 10 seconds..."
+        sleep 10
+    fi
+done
+
 # Download kubeconfig
 echo "📥 Downloading kubeconfig..."
 scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml ./kubeconfig-$ENVIRONMENT
@@ -22,16 +38,28 @@ scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s
 echo "🔧 Updating server IP..."
 sed -i "s/127.0.0.1/$K3S_IP/g" ./kubeconfig-$ENVIRONMENT
 
-# Test connection
-echo "🧪 Testing connection..."
+# Wait for K3s API server to be ready
+echo "⏳ Waiting for K3s API server to be ready..."
 export KUBECONFIG=./kubeconfig-$ENVIRONMENT
-if kubectl cluster-info --request-timeout=10s > /dev/null 2>&1; then
-    echo "✅ Kubeconfig is working"
-    kubectl get nodes
-else
-    echo "❌ Kubeconfig test failed"
-    exit 1
-fi
+
+for i in {1..12}; do
+    echo "Testing K3s API server (attempt $i/12)..."
+    if kubectl cluster-info --request-timeout=10s > /dev/null 2>&1; then
+        echo "✅ K3s API server is ready!"
+        kubectl get nodes
+        break
+    elif [ $i -eq 12 ]; then
+        echo "❌ K3s API server not ready after 2 minutes"
+        echo "🔍 Checking K3s service status via SSH..."
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo systemctl status k3s --no-pager" || true
+        echo "🔍 Checking K3s logs..."
+        ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo journalctl -u k3s --no-pager -n 10" || true
+        exit 1
+    else
+        echo "K3s not ready yet, waiting 10 seconds..."
+        sleep 10
+    fi
+done
 
 # Create GitHub secret
 if [ -n "$GITHUB_TOKEN" ]; then

@@ -46,6 +46,7 @@
                 "wafv2:UpdateWebACL",
                 "wafv2:AssociateWebACL",
                 "wafv2:DisassociateWebACL",
+                "wafv2:GetWebACLForResource",
                 "wafv2:TagResource",
                 "wafv2:ListTagsForResource",
                 "elasticloadbalancing:*",
