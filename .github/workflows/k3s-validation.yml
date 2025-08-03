@@ -1,0 +1,209 @@
+name: K3s Cluster Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target Environment'
+        required: true
+        default: 'lower'
+        type: choice
+        options:
+        - lower
+        - higher
+        - monitoring
+      runner_type:
+        description: 'Runner Type'
+        required: false
+        default: 'github'
+        type: choice
+        options:
+        - github
+        - aws
+      validation_type:
+        description: 'Validation Type'
+        required: false
+        default: 'full'
+        type: choice
+        options:
+        - full
+        - quick
+        - connectivity-only
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  k3s-validation:
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Ansible
+      run: |
+        echo "🔧 Setting up Ansible..."
+        pip install ansible boto3 botocore
+        ansible --version
+
+    - name: Get K3s Instance Details
+      id: k3s-info
+      run: |
+        echo "🔍 Finding K3s instance for ${{ github.event.inputs.environment }} environment..."
+        
+        K3S_DETAILS=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ github.event.inputs.environment }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress,PrivateIpAddress]" --output text)
+        
+        if [ "$K3S_DETAILS" = "None" ]; then
+          echo "❌ No K3s instance found for ${{ github.event.inputs.environment }} environment"
+          exit 1
+        fi
+        
+        K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
+        K3S_PUBLIC_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
+        K3S_PRIVATE_IP=$(echo $K3S_DETAILS | cut -d' ' -f3)
+        
+        echo "📋 K3s Instance Found:"
+        echo "  Instance ID: $K3S_INSTANCE_ID"
+        echo "  Public IP: $K3S_PUBLIC_IP"
+        echo "  Private IP: $K3S_PRIVATE_IP"
+        
+        echo "instance_id=$K3S_INSTANCE_ID" >> $GITHUB_OUTPUT
+        echo "public_ip=$K3S_PUBLIC_IP" >> $GITHUB_OUTPUT
+        echo "private_ip=$K3S_PRIVATE_IP" >> $GITHUB_OUTPUT
+
+    - name: Setup SSH Key
+      run: |
+        echo "🔑 Setting up SSH key..."
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+        chmod 600 ~/.ssh/k3s-key
+
+    - name: Create Ansible Inventory
+      run: |
+        echo "📝 Creating Ansible inventory..."
+        cat > /tmp/inventory.ini << EOF
+        [k3s_nodes]
+        k3s_node ansible_host=${{ steps.k3s-info.outputs.public_ip }} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/k3s-key ansible_ssh_common_args='-o StrictHostKeyChecking=no -o ConnectTimeout=30'
+        EOF
+        
+        echo "📋 Inventory created:"
+        cat /tmp/inventory.ini
+
+    - name: Test Basic Connectivity
+      run: |
+        echo "🌐 Testing basic connectivity..."
+        
+        echo "Testing ping..."
+        if ping -c 3 ${{ steps.k3s-info.outputs.public_ip }}; then
+          echo "✅ Ping successful"
+        else
+          echo "❌ Ping failed"
+        fi
+        
+        echo "Testing SSH connectivity..."
+        if timeout 30 ssh -i ~/.ssh/k3s-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@${{ steps.k3s-info.outputs.public_ip }} "echo 'SSH_OK'"; then
+          echo "✅ SSH connectivity successful"
+        else
+          echo "❌ SSH connectivity failed"
+          echo "🔍 Checking security group..."
+          aws ec2 describe-security-groups --filters "Name=group-name,Values=*k3s*" --query "SecurityGroups[*].[GroupName,GroupId]" --output table
+        fi
+
+    - name: Run Ansible K3s Validation
+      if: github.event.inputs.validation_type == 'full' || github.event.inputs.validation_type == 'quick'
+      run: |
+        echo "🚀 Running Ansible K3s validation..."
+        
+        export TF_STATE_BUCKET="${{ secrets.TF_STATE_BUCKET }}"
+        export NETWORK_TIER="${{ github.event.inputs.environment }}"
+        export ANSIBLE_HOST_KEY_CHECKING=False
+        export ANSIBLE_SSH_RETRIES=3
+        
+        if ansible-playbook -i /tmp/inventory.ini ansible/k3s-validation.yml -v; then
+          echo "✅ Ansible validation completed successfully"
+        else
+          echo "❌ Ansible validation failed"
+          exit 1
+        fi
+
+    - name: Quick Manual Validation
+      if: github.event.inputs.validation_type == 'quick' || github.event.inputs.validation_type == 'connectivity-only'
+      run: |
+        echo "⚡ Running quick manual validation..."
+        
+        K3S_IP="${{ steps.k3s-info.outputs.public_ip }}"
+        
+        echo "Checking K3s service status..."
+        ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo systemctl is-active k3s" || echo "Service check failed"
+        
+        echo "Testing kubectl..."
+        ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml" || echo "kubectl test failed"
+        
+        echo "Checking API endpoint..."
+        if timeout 10 curl -k -s https://$K3S_IP:6443/version; then
+          echo "✅ API endpoint accessible"
+        else
+          echo "❌ API endpoint not accessible"
+        fi
+
+    - name: Upload Kubeconfig to S3
+      if: success()
+      run: |
+        echo "📤 Uploading kubeconfig to S3..."
+        
+        K3S_IP="${{ steps.k3s-info.outputs.public_ip }}"
+        
+        # Download kubeconfig
+        ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig.yaml
+        
+        # Update server IP
+        sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
+        
+        # Upload to S3
+        aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ github.event.inputs.environment }}-kubeconfig.yaml
+        
+        echo "✅ Kubeconfig uploaded to S3"
+
+    - name: Generate Validation Report
+      if: always()
+      run: |
+        echo "📊 Generating validation report..."
+        
+        K3S_IP="${{ steps.k3s-info.outputs.public_ip }}"
+        
+        echo "### 🔍 K3s Cluster Validation Report" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Validation Type:** ${{ github.event.inputs.validation_type }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Instance ID:** ${{ steps.k3s-info.outputs.instance_id }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Public IP:** $K3S_IP" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        echo "#### 🔧 Manual Access Commands" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# SSH to K3s cluster" >> $GITHUB_STEP_SUMMARY
+        echo "ssh -i ~/.ssh/k3s-key ubuntu@$K3S_IP" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Test kubectl on server" >> $GITHUB_STEP_SUMMARY
+        echo "kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Download kubeconfig locally" >> $GITHUB_STEP_SUMMARY
+        echo "aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ github.event.inputs.environment }}-kubeconfig.yaml ~/.kube/config" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Cleanup
+      if: always()
+      run: |
+        echo "🧹 Cleaning up..."
+        rm -f ~/.ssh/k3s-key /tmp/kubeconfig.yaml /tmp/inventory.ini
+        echo "✅ Cleanup completed"

@@ -536,13 +536,13 @@ jobs:
 
 
 
-    - name: Comprehensive K3s Readiness Testing
+    - name: Setup kubeconfig via SSH
       run: |
-        echo "🔧 Setting up and validating K3s cluster for ${{ matrix.env }} environment..."
+        echo "🔧 Setting up kubeconfig for ${{ matrix.env }} environment..."
         
-        # Get K3s instance details using proper tags
+        # Get K3s instance details
         K3S_DETAILS=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=tag:Environment,Values=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" "Name=instance-state-name,Values=running" \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
           --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress]" --output text)
         
         if [ "$K3S_DETAILS" = "None" ]; then
@@ -553,168 +553,52 @@ jobs:
         K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
         K3S_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
         
-        echo "📋 K3s Instance Details:"
-        echo "  Instance ID: $K3S_INSTANCE_ID"
-        echo "  Public IP: $K3S_IP"
-        echo "  Environment: ${{ matrix.env }}"
+        echo "📥 Connecting to K3s via SSH: $K3S_IP"
         
         # Setup SSH key
         mkdir -p ~/.ssh
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
         chmod 600 ~/.ssh/k3s-key
         
-        # Phase 1: Network Connectivity Tests
-        echo "🌐 Phase 1: Network Connectivity Tests"
-        echo "Testing ping connectivity..."
-        if ping -c 3 $K3S_IP > /dev/null 2>&1; then
-          echo "✅ Ping successful"
-        else
-          echo "❌ Ping failed"
-        fi
-        
-        echo "Testing SSH connectivity..."
-        if timeout 10 ssh -i ~/.ssh/k3s-key -o ConnectTimeout=10 -o StrictHostKeyChecking=no ubuntu@$K3S_IP "echo SSH_OK" 2>/dev/null; then
-          echo "✅ SSH connectivity successful"
-        else
-          echo "❌ SSH connectivity failed"
-        fi
-        
-        echo "Testing port 6443 (K3s API)..."
-        if timeout 10 nc -zv $K3S_IP 6443 2>/dev/null; then
-          echo "✅ Port 6443 is reachable"
-        else
-          echo "❌ Port 6443 is not reachable"
-        fi
-        
-        # Phase 2: K3s Service Status via SSH
-        echo "🔧 Phase 2: K3s Service Status"
-        echo "Checking K3s service status via SSH..."
-        K3S_STATUS=$(ssh -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo systemctl is-active k3s" 2>/dev/null || echo "unknown")
-        echo "K3s service status: $K3S_STATUS"
-        
-        if [ "$K3S_STATUS" != "active" ]; then
-          echo "⚠️ K3s service not active, checking logs..."
-          ssh -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo journalctl -u k3s --no-pager -n 10" || echo "Could not retrieve logs"
-        fi
-        
-        # Phase 3: Wait for K3s API Server
-        echo "🚀 Phase 3: K3s API Server Readiness"
-        echo "Waiting for K3s API server to be ready..."
-        for i in {1..20}; do
-          echo "Checking K3s API server (attempt $i/20)..."
-          
-          # Test API endpoint directly
-          if timeout 10 curl -k -s https://$K3S_IP:6443/version > /tmp/api_response.json 2>/dev/null; then
-            echo "✅ K3s API server is responding!"
-            echo "API Response:"
-            cat /tmp/api_response.json | jq . 2>/dev/null || cat /tmp/api_response.json
-            break
-          else
-            echo "⏳ K3s API not ready yet (attempt $i/20)"
-            if [ $i -eq 20 ]; then
-              echo "❌ K3s API failed to start after 10 minutes"
-              echo "🔍 Final troubleshooting..."
-              ssh -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo systemctl status k3s --no-pager" || echo "Could not get service status"
-              exit 1
-            fi
-            sleep 30
-          fi
-        done
-        
-        # Phase 4: Download and Test Kubeconfig
-        echo "📥 Phase 4: Kubeconfig Setup and Testing"
-        echo "Downloading kubeconfig via SSH..."
-        for i in {1..5}; do
+        # Download kubeconfig via SSH with retry
+        echo "📥 Downloading kubeconfig via SSH..."
+        for i in {1..10}; do
           if scp -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml; then
             echo "✅ Kubeconfig downloaded successfully (attempt $i)"
             break
           else
-            echo "⏳ Kubeconfig not ready yet (attempt $i/5), waiting..."
-            if [ $i -eq 5 ]; then
-              echo "❌ Failed to download kubeconfig after 5 attempts"
+            echo "⏳ Kubeconfig not ready yet (attempt $i/10), waiting..."
+            if [ $i -eq 10 ]; then
+              echo "❌ Failed to download kubeconfig after 10 attempts"
+              echo "💡 Run the K3s Validation workflow to troubleshoot"
               exit 1
             fi
-            sleep 30
+            sleep 60
           fi
         done
         
         # Update server IP to public IP
         sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
         
-        # Phase 5: Comprehensive Kubectl Testing
-        echo "🧪 Phase 5: Comprehensive Kubectl Testing"
-        export KUBECONFIG=/tmp/kubeconfig.yaml
-        
-        echo "Testing kubectl connectivity..."
-        if timeout 30 kubectl cluster-info --request-timeout=10s; then
-          echo "✅ kubectl cluster-info successful"
-        else
-          echo "❌ kubectl cluster-info failed"
-        fi
-        
-        echo "Testing node status..."
-        for i in {1..10}; do
-          NODE_STATUS=$(timeout 30 kubectl get nodes --no-headers --request-timeout=10s 2>/dev/null | awk '{print $2}' || echo "NotReady")
-          echo "Node status (attempt $i/10): $NODE_STATUS"
-          
-          if [ "$NODE_STATUS" = "Ready" ]; then
-            echo "✅ Node is Ready!"
-            kubectl get nodes -o wide
-            break
-          elif [ $i -eq 10 ]; then
-            echo "⚠️ Node still not Ready after 5 minutes, but continuing..."
-            kubectl get nodes -o wide || echo "Could not get node status"
-          else
-            echo "⏳ Waiting for node to become Ready..."
-            sleep 30
-          fi
-        done
-        
-        echo "Testing pod listing..."
-        if timeout 30 kubectl get pods -A --request-timeout=10s; then
-          echo "✅ Pod listing successful"
-        else
-          echo "❌ Pod listing failed"
-        fi
-        
-        echo "Testing namespace creation..."
-        if timeout 30 kubectl create namespace test-connectivity --dry-run=client -o yaml | kubectl apply -f - --request-timeout=10s; then
-          echo "✅ Namespace creation successful"
-          kubectl delete namespace test-connectivity --request-timeout=10s || echo "Could not delete test namespace"
-        else
-          echo "❌ Namespace creation failed"
-        fi
-        
-        # Phase 6: System Component Health Check
-        echo "🏥 Phase 6: System Component Health Check"
-        echo "Checking system pods..."
-        kubectl get pods -n kube-system --request-timeout=10s || echo "Could not get kube-system pods"
-        
-        echo "Checking ingress controller..."
-        kubectl get pods -n ingress-nginx --request-timeout=10s || echo "Could not get ingress-nginx pods"
-        
-        # Phase 7: Upload Kubeconfig
-        echo "📤 Phase 7: Upload Kubeconfig to S3"
+        # Upload kubeconfig to S3
+        echo "📤 Uploading kubeconfig to S3..."
         aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml
-        echo "✅ Kubeconfig uploaded to S3"
         
-        # Generate comprehensive summary
-        echo "### 🎉 K3s Cluster Validation Complete" >> $GITHUB_STEP_SUMMARY
+        # Generate summary
+        echo "### 🔐 Kubeconfig Ready" >> $GITHUB_STEP_SUMMARY
         echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Cluster IP:** $K3S_IP:6443" >> $GITHUB_STEP_SUMMARY
-        echo "**Node Status:** $(kubectl get nodes --no-headers 2>/dev/null | awk '{print $2}' || echo 'Unknown')" >> $GITHUB_STEP_SUMMARY
-        echo "**System Pods:** $(kubectl get pods -n kube-system --no-headers 2>/dev/null | wc -l || echo '0') running" >> $GITHUB_STEP_SUMMARY
+        echo "**Cluster:** $K3S_IP:6443" >> $GITHUB_STEP_SUMMARY
         echo "**S3 Location:** s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "#### 🔧 Cluster Access Commands" >> $GITHUB_STEP_SUMMARY
-        echo '```bash' >> $GITHUB_STEP_SUMMARY
-        echo "# SSH to cluster" >> $GITHUB_STEP_SUMMARY
-        echo "ssh -i ~/.ssh/k3s-key ubuntu@$K3S_IP" >> $GITHUB_STEP_SUMMARY
+        echo "#### 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Run **K3s Validation** workflow to verify cluster health" >> $GITHUB_STEP_SUMMARY
+        echo "2. Run **Core Deployment** workflow to deploy applications" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "# Download kubeconfig" >> $GITHUB_STEP_SUMMARY
-        echo "aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml ~/.kube/config" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# Manual SSH access" >> $GITHUB_STEP_SUMMARY
+        echo "ssh -i ~/.ssh/k3s-key ubuntu@$K3S_IP" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         
         # Cleanup
-        rm -f ~/.ssh/k3s-key /tmp/kubeconfig.yaml /tmp/api_response.json
-        echo "🎉 K3s cluster is fully validated and ready for deployments!"
+        rm -f ~/.ssh/k3s-key /tmp/kubeconfig.yaml
+        echo "🎉 Kubeconfig configured and uploaded to S3 for ${{ matrix.env }} environment"
