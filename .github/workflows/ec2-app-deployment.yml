@@ -1,0 +1,345 @@
+name: EC2 Application Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Application'
+        required: true
+        default: 'health-api'
+        type: string
+      image:
+        description: 'Container image'
+        required: true
+        default: 'arunprabusiva/health-api:latest'
+        type: string
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      instance_type:
+        description: 'EC2 Instance Type'
+        required: false
+        default: 't2.micro'
+        type: choice
+        options:
+          - t2.micro
+          - t2.small
+          - t2.medium
+      auto_create:
+        description: 'Auto-create EC2 if not exists'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check existing EC2 instance
+        id: check_instance
+        run: |
+          APP="${{ github.event.inputs.app }}"
+          ENV="${{ github.event.inputs.environment }}"
+          INSTANCE_NAME="health-app-${APP}-${ENV}"
+          
+          echo "🔍 Checking for existing instance: $INSTANCE_NAME"
+          
+          # Check if instance exists and is running
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=$INSTANCE_NAME" \
+                     "Name=instance-state-name,Values=running,stopped" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text 2>/dev/null || echo "None")
+          
+          if [ "$INSTANCE_ID" != "None" ] && [ "$INSTANCE_ID" != "" ]; then
+            echo "✅ Found existing instance: $INSTANCE_ID"
+            
+            # Get instance details
+            INSTANCE_STATE=$(aws ec2 describe-instances \
+              --instance-ids $INSTANCE_ID \
+              --query "Reservations[0].Instances[0].State.Name" \
+              --output text)
+            
+            PUBLIC_IP=$(aws ec2 describe-instances \
+              --instance-ids $INSTANCE_ID \
+              --query "Reservations[0].Instances[0].PublicIpAddress" \
+              --output text)
+            
+            echo "instance_exists=true" >> $GITHUB_OUTPUT
+            echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+            echo "instance_state=$INSTANCE_STATE" >> $GITHUB_OUTPUT
+            echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+            echo "instance_name=$INSTANCE_NAME" >> $GITHUB_OUTPUT
+          else
+            echo "❌ No existing instance found"
+            echo "instance_exists=false" >> $GITHUB_OUTPUT
+            echo "instance_name=$INSTANCE_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create EC2 instance if needed
+        id: create_instance
+        if: steps.check_instance.outputs.instance_exists == 'false' && github.event.inputs.auto_create == 'true'
+        run: |
+          INSTANCE_NAME="${{ steps.check_instance.outputs.instance_name }}"
+          INSTANCE_TYPE="${{ github.event.inputs.instance_type }}"
+          ENV="${{ github.event.inputs.environment }}"
+          
+          echo "🚀 Creating new EC2 instance: $INSTANCE_NAME"
+          
+          # Get latest Ubuntu AMI
+          AMI_ID=$(aws ec2 describe-images \
+            --owners 099720109477 \
+            --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+            --query "Images | sort_by(@, &CreationDate) | [-1].ImageId" \
+            --output text)
+          
+          echo "Using AMI: $AMI_ID"
+          
+          # Create security group if not exists
+          SG_NAME="health-app-${ENV}-sg"
+          SG_ID=$(aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=$SG_NAME" \
+            --query "SecurityGroups[0].GroupId" \
+            --output text 2>/dev/null || echo "None")
+          
+          if [ "$SG_ID" = "None" ]; then
+            echo "Creating security group: $SG_NAME"
+            SG_ID=$(aws ec2 create-security-group \
+              --group-name $SG_NAME \
+              --description "Security group for health-app $ENV environment" \
+              --query "GroupId" \
+              --output text)
+            
+            # Add rules
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 22 \
+              --cidr 0.0.0.0/0
+            
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 80 \
+              --cidr 0.0.0.0/0
+            
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 443 \
+              --cidr 0.0.0.0/0
+            
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG_ID \
+              --protocol tcp \
+              --port 8080 \
+              --cidr 0.0.0.0/0
+          fi
+          
+          # Create key pair if not exists
+          KEY_NAME="health-app-${ENV}-key"
+          if ! aws ec2 describe-key-pairs --key-names $KEY_NAME >/dev/null 2>&1; then
+            echo "Creating key pair: $KEY_NAME"
+            echo "${{ secrets.SSH_PUBLIC_KEY }}" > /tmp/public_key.pub
+            aws ec2 import-key-pair \
+              --key-name $KEY_NAME \
+              --public-key-material fileb:///tmp/public_key.pub
+          fi
+          
+          # Launch instance
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id $AMI_ID \
+            --count 1 \
+            --instance-type $INSTANCE_TYPE \
+            --key-name $KEY_NAME \
+            --security-group-ids $SG_ID \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=Environment,Value=$ENV},{Key=Project,Value=health-app},{Key=ManagedBy,Value=github-actions}]" \
+            --user-data file://scripts/ec2-user-data.sh \
+            --query "Instances[0].InstanceId" \
+            --output text)
+          
+          echo "✅ Created instance: $INSTANCE_ID"
+          echo "⏳ Waiting for instance to be running..."
+          
+          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+          
+          # Get public IP
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+          
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "public_ip=$PUBLIC_IP" >> $GITHUB_OUTPUT
+          echo "instance_state=running" >> $GITHUB_OUTPUT
+
+      - name: Start instance if stopped
+        if: steps.check_instance.outputs.instance_exists == 'true' && steps.check_instance.outputs.instance_state == 'stopped'
+        run: |
+          INSTANCE_ID="${{ steps.check_instance.outputs.instance_id }}"
+          echo "🔄 Starting stopped instance: $INSTANCE_ID"
+          
+          aws ec2 start-instances --instance-ids $INSTANCE_ID
+          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+          
+          # Update public IP
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids $INSTANCE_ID \
+            --query "Reservations[0].Instances[0].PublicIpAddress" \
+            --output text)
+          
+          echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+
+      - name: Set deployment variables
+        run: |
+          if [ "${{ steps.check_instance.outputs.instance_exists }}" = "true" ]; then
+            echo "INSTANCE_ID=${{ steps.check_instance.outputs.instance_id }}" >> $GITHUB_ENV
+            echo "PUBLIC_IP=${{ steps.check_instance.outputs.public_ip }}" >> $GITHUB_ENV
+          else
+            echo "INSTANCE_ID=${{ steps.create_instance.outputs.instance_id }}" >> $GITHUB_ENV
+            echo "PUBLIC_IP=${{ steps.create_instance.outputs.public_ip }}" >> $GITHUB_ENV
+          fi
+          
+          echo "APP_NAME=${{ github.event.inputs.app }}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ github.event.inputs.image }}" >> $GITHUB_ENV
+          echo "ENVIRONMENT=${{ github.event.inputs.environment }}" >> $GITHUB_ENV
+
+      - name: Wait for instance to be ready
+        run: |
+          echo "⏳ Waiting for instance $INSTANCE_ID to be ready..."
+          echo "Public IP: $PUBLIC_IP"
+          
+          # Wait for SSH to be available
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") ubuntu@$PUBLIC_IP "echo 'SSH Ready'" 2>/dev/null; then
+              echo "✅ SSH connection established"
+              break
+            fi
+            echo "Attempt $i/30: SSH not ready, waiting 10 seconds..."
+            sleep 10
+          done
+
+      - name: Deploy application
+        run: |
+          echo "🚀 Deploying $APP_NAME to $PUBLIC_IP"
+          
+          # Create deployment script
+          cat > /tmp/deploy.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          
+          APP_NAME="$1"
+          IMAGE_NAME="$2"
+          ENVIRONMENT="$3"
+          
+          echo "🔄 Updating system packages..."
+          sudo apt-get update -qq
+          
+          echo "🐳 Installing Docker if not present..."
+          if ! command -v docker &> /dev/null; then
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sudo sh get-docker.sh
+            sudo usermod -aG docker ubuntu
+            sudo systemctl enable docker
+            sudo systemctl start docker
+          fi
+          
+          echo "🛑 Stopping existing container if running..."
+          sudo docker stop $APP_NAME 2>/dev/null || true
+          sudo docker rm $APP_NAME 2>/dev/null || true
+          
+          echo "📥 Pulling latest image..."
+          sudo docker pull $IMAGE_NAME
+          
+          echo "🚀 Starting new container..."
+          sudo docker run -d \
+            --name $APP_NAME \
+            --restart unless-stopped \
+            -p 80:8080 \
+            -p 8080:8080 \
+            -e ENVIRONMENT=$ENVIRONMENT \
+            -e AWS_REGION=ap-south-1 \
+            $IMAGE_NAME
+          
+          echo "⏳ Waiting for application to start..."
+          sleep 10
+          
+          echo "🔍 Checking application health..."
+          if curl -f http://localhost:8080/health 2>/dev/null; then
+            echo "✅ Application is healthy"
+          else
+            echo "⚠️ Health check failed, but container is running"
+            sudo docker logs $APP_NAME --tail 20
+          fi
+          
+          echo "📊 Container status:"
+          sudo docker ps | grep $APP_NAME || echo "Container not found"
+          EOF
+          
+          # Copy and execute deployment script
+          scp -o StrictHostKeyChecking=no -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") /tmp/deploy.sh ubuntu@$PUBLIC_IP:/tmp/
+          ssh -o StrictHostKeyChecking=no -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") ubuntu@$PUBLIC_IP "chmod +x /tmp/deploy.sh && /tmp/deploy.sh '$APP_NAME' '$IMAGE_NAME' '$ENVIRONMENT'"
+
+      - name: Verify deployment
+        run: |
+          echo "🔍 Verifying deployment on $PUBLIC_IP"
+          
+          # Test application endpoints
+          echo "Testing health endpoint..."
+          if curl -f http://$PUBLIC_IP:8080/health 2>/dev/null; then
+            echo "✅ Health endpoint responding"
+            HEALTH_STATUS="healthy"
+          else
+            echo "❌ Health endpoint not responding"
+            HEALTH_STATUS="unhealthy"
+          fi
+          
+          # Get container status
+          CONTAINER_STATUS=$(ssh -o StrictHostKeyChecking=no -i <(echo "${{ secrets.SSH_PRIVATE_KEY }}") ubuntu@$PUBLIC_IP "sudo docker ps --filter name=$APP_NAME --format '{{.Status}}'" || echo "unknown")
+          
+          echo "HEALTH_STATUS=$HEALTH_STATUS" >> $GITHUB_ENV
+          echo "CONTAINER_STATUS=$CONTAINER_STATUS" >> $GITHUB_ENV
+
+      - name: Generate deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 EC2 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📋 Deployment Details" >> $GITHUB_STEP_SUMMARY
+          echo "**Application:** $APP_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** $IMAGE_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** $ENVIRONMENT" >> $GITHUB_STEP_SUMMARY
+          echo "**Instance ID:** $INSTANCE_ID" >> $GITHUB_STEP_SUMMARY
+          echo "**Public IP:** $PUBLIC_IP" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 📊 Deployment Status" >> $GITHUB_STEP_SUMMARY
+          echo "**Health Status:** ${HEALTH_STATUS:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "**Container Status:** ${CONTAINER_STATUS:-unknown}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🌐 Access Information" >> $GITHUB_STEP_SUMMARY
+          echo "**Application URL:** http://$PUBLIC_IP:8080" >> $GITHUB_STEP_SUMMARY
+          echo "**Health Check:** http://$PUBLIC_IP:8080/health" >> $GITHUB_STEP_SUMMARY
+          echo "**SSH Access:** ssh -i ~/.ssh/key ubuntu@$PUBLIC_IP" >> $GITHUB_STEP_SUMMARY

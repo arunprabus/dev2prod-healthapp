@@ -1,49 +1,56 @@
 # 🏥 Health App Infrastructure Repository
 
-## Production-Ready K8s Infrastructure with Complete DevOps Pipeline
+## Production-Ready Multi-Deployment Infrastructure with Complete DevOps Pipeline
 
-This repository contains the complete infrastructure and deployment pipeline for the Health App platform, configured for **Kubernetes (K8s) instead of EKS** for cost-effective, production-ready deployments.
+This repository contains complete infrastructure and deployment pipelines for the Health App platform, supporting **both Kubernetes (K3s) and Direct EC2 deployments** for flexible, cost-effective, production-ready solutions.
 
 ## 🚀 **Key Features**
 
-- ✅ **K8s Native Deployment** - Direct Kubernetes without EKS overhead
-- ✅ **Multi-Environment Support** - dev/test/prod isolation
-- ✅ **Auto-Scaling & Monitoring** - HPA, health checks, Prometheus
-- ✅ **Cost Optimization** - Resource scheduling, auto-shutdown
-- ✅ **Complete CI/CD** - GitHub Actions automation
-- ✅ **Infrastructure as Code** - Terraform + K8s manifests
-- ✅ **Self-Hosted Runners** - GitHub runners with health monitoring
+- ✅ **Dual Deployment Options** - K3s clusters OR direct EC2 containers
+- ✅ **Multi-Environment Support** - dev/test/prod isolation with network tiers
+- ✅ **Auto-Scaling & Monitoring** - HPA for K8s, EC2 auto-scaling, health checks
+- ✅ **Cost Optimization** - 100% Free Tier usage, resource scheduling
+- ✅ **Complete CI/CD** - GitHub Actions with self-hosted runners
+- ✅ **Infrastructure as Code** - Terraform + K8s manifests + EC2 automation
+- ✅ **Learning Platform** - Interactive K8s tutorials and commands
 - ✅ **Policy Governance** - Automated compliance and cost controls
 - ✅ **Production Ready** - Reliable service startup and cleanup
 
-## 📁 Clean Repository Structure
+## 📁 Repository Structure
 
 ```
-├── .github/workflows/           # 🔥 CLEANED: 3 Core Workflows Only
-│   ├── core-infrastructure.yml  # Infrastructure management
-│   ├── core-deployment.yml      # Application deployment  
-│   └── core-operations.yml      # Monitoring & operations
+├── .github/workflows/           # GitHub Actions Workflows
+│   ├── core-infrastructure.yml  # K3s infrastructure management
+│   ├── core-deployment.yml      # K3s application deployment
+│   ├── core-operations.yml      # K3s monitoring & operations
+│   ├── ec2-app-deployment.yml   # 🆕 EC2 direct deployment
+│   └── ec2-operations.yml       # 🆕 EC2 scaling & management
 ├── infra/                       # Infrastructure as Code
-│   ├── modules/                 # Reusable modules
+│   ├── modules/                 # Reusable Terraform modules
 │   │   ├── vpc/                 # Multi-network VPC module
-│   │   ├── k8s/                 # K8s cluster module
+│   │   ├── k8s/                 # K3s cluster module
 │   │   ├── rds/                 # Database module
 │   │   └── monitoring/          # Monitoring module
-│   ├── environments/            # Environment configs
+│   ├── environments/            # Environment configurations
 │   │   ├── dev.tfvars          # Dev environment
 │   │   ├── test.tfvars         # Test environment
 │   │   ├── prod.tfvars         # Prod environment
-│   │   ├── monitoring.tfvars   # Monitoring environment
-│   │   └── network-architecture.tfvars  # 🆕 Network design
-│   └── backend-configs/         # Terraform state
+│   │   └── monitoring.tfvars   # Monitoring environment
+│   └── live/                    # Terraform state management
 ├── k8s/                         # Kubernetes manifests
-│   ├── health-api-complete.yaml # Application deployment
+│   ├── health-api-complete.yaml # Production K8s deployment
+│   ├── learning-deployment.yaml # 🆕 K8s learning exercises
 │   ├── monitoring-stack.yaml   # Prometheus + Grafana
-│   └── network-policies.yaml   # 🆕 Network security
-└── scripts/                     # Automation scripts
-    ├── k8s-health-check.sh     # Health monitoring
-    ├── k8s-auto-scale.sh       # Auto-scaling
-    └── setup-kubeconfig.sh     # Cluster connection
+│   └── ingress-ssl.yaml        # 🆕 SSL/TLS configuration
+├── scripts/                     # Automation scripts
+│   ├── k8s-learning-commands.sh # 🆕 Interactive K8s tutorial
+│   ├── k8s-auto-scale.sh       # K8s auto-scaling
+│   ├── ec2-autoscaling.sh      # 🆕 EC2 scaling management
+│   ├── ec2-health-check.sh     # 🆕 EC2 health monitoring
+│   ├── ec2-user-data.sh        # 🆕 EC2 auto-configuration
+│   └── setup-kubeconfig.sh     # K3s cluster connection
+└── docs/                        # 🆕 Documentation
+    └── kubernetes-learning-guide.md # K8s architecture guide
 ```
 
 ## Related Repositories
@@ -51,73 +58,134 @@ This repository contains the complete infrastructure and deployment pipeline for
 - [Health API](https://github.com/arunprabus/health-api): Backend API code
 - [Health Frontend](https://github.com/arunprabus/health-dash): Frontend application code
 
-## Infrastructure Deployment
+## 🏗️ **Deployment Options**
 
-The infrastructure code manages the following resources:
-
-- **VPC and networking** (isolated per environment)
-- **K8s clusters** on EC2 (cost-effective alternative to EKS)
-- **RDS database instances** with automated monitoring
-- **Multi-environment setup** (dev/test/prod namespaces)
-- **Auto-scaling** (HPA + resource scheduling)
-- **Monitoring stack** (Prometheus + Grafana)
-- **Cost optimization** (automated cleanup + scheduling)
-
-## Deployment Strategy
-
-### Infrastructure
-
-The infrastructure is deployed using the GitHub Actions workflow in `.github/workflows/infra-deploy.yml`. This creates the base infrastructure for each environment (development, test, production).
-
-### Applications
-
-Application deployments are handled through the following process:
-
-1. Code is pushed to the application repositories (HealthApi or HealthFrontend)
-2. The `.github/workflows/app-deploy.yml` workflow is triggered
-3. The workflow builds the application and pushes it to the container registry
-4. ArgoCD detects the changes and deploys the application to the appropriate environment
-
-### Environment Targeting
-
-- **Development Environment**: Triggered by pushes to the `develop` branch
-- **Test Environment**: Triggered by pushes to the `staging` branch
-- **Production Environment**: Triggered by pushes to the `main` branch
-
-## Getting Started
-
-### Prerequisites
-
-- AWS CLI configured with appropriate credentials
-- Terraform CLI (v1.6.0 or later)
-- kubectl
-
-### Deploying Infrastructure
-
-You can deploy the infrastructure using the GitHub Actions workflow or manually:
+### **Option 1: Kubernetes (K3s) Deployment** 🎓
+**Perfect for learning Kubernetes and production workloads**
 
 ```bash
-cd infra
-terraform init \
-  -backend-config="bucket=your-terraform-state-bucket" \
-  -backend-config="key=health-app-dev.tfstate" \
-  -backend-config="region=ap-south-1"
-terraform apply -var-file="environments/dev.tfvars"
+# Deploy K3s infrastructure
+Actions → Core Infrastructure → deploy → lower
+
+# Deploy applications to K3s
+Actions → Core Deployment → health-api
 ```
 
-## Maintenance
+**Features:**
+- ✅ Full Kubernetes experience with K3s
+- ✅ Pod orchestration, services, ingress
+- ✅ Horizontal Pod Autoscaler (HPA)
+- ✅ Interactive learning commands
+- ✅ Production-ready with monitoring
 
-The separation of application and infrastructure code allows for:
+### **Option 2: Direct EC2 Deployment** 🚀
+**Simple Docker containers on EC2 instances**
 
-1. Independent scaling of infrastructure without affecting application code
-2. Clearer responsibility boundaries
-3. Simplified CI/CD pipelines
-4. Better security and access control
-> 🚀 Enterprise-grade multi-environment setup with EKS, RDS, and **Blue-Green deployment strategy**—perfect for learning production DevOps practices.
+```bash
+# Auto-creates EC2 + deploys app
+Actions → EC2 Application Deployment → health-api
 
----
+# Scale EC2 instances
+Actions → EC2 Operations → scale-out
+```
 
-## 🧱 New Network Architecture with GitHub Runners
+**Features:**
+- ✅ Simple Docker deployment
+- ✅ Auto-creates EC2 if not exists
+- ✅ Nginx reverse proxy included
+- ✅ EC2-level auto-scaling
+- ✅ Health monitoring & auto-restart
+
+## 🎯 **Quick Start Guide**
+
+### **Prerequisites**
+```bash
+# Required GitHub Secrets:
+AWS_ACCESS_KEY_ID: "Your AWS access key"
+AWS_SECRET_ACCESS_KEY: "Your AWS secret key"
+SSH_PUBLIC_KEY: "ssh-rsa AAAAB3... (from ~/.ssh/k3s-key.pub)"
+SSH_PRIVATE_KEY: "-----BEGIN OPENSSH PRIVATE KEY-----"
+TF_STATE_BUCKET: "health-app-terraform-state"
+```
+
+### **🚀 Deploy K3s Infrastructure** (Recommended for learning)
+```bash
+# Step 1: Deploy infrastructure
+Actions → Core Infrastructure
+  action: deploy
+  environment: lower  # Creates dev + test
+  runner_type: github
+
+# Step 2: Deploy application
+Actions → Core Deployment
+  app: health-api
+  image: arunprabusiva/health-api:latest
+  environment: dev
+  runner_type: aws
+
+# Step 3: Learn Kubernetes
+# SSH to cluster and run:
+./scripts/k8s-learning-commands.sh help
+```
+
+### **⚡ Deploy Direct EC2** (Simple & fast)
+```bash
+# One-step deployment
+Actions → EC2 Application Deployment
+  app: health-api
+  image: arunprabusiva/health-api:latest
+  environment: dev
+  auto_create: true
+```
+
+## 🎓 **Learning Kubernetes**
+
+This repository includes comprehensive K8s learning materials:
+
+### **Interactive Tutorial**
+```bash
+# After deploying K3s infrastructure, SSH to cluster:
+ssh -i ~/.ssh/k3s-key ubuntu@<CLUSTER_IP>
+
+# Start interactive learning:
+./scripts/k8s-learning-commands.sh help
+./scripts/k8s-learning-commands.sh deploy      # Deploy learning app
+./scripts/k8s-learning-commands.sh pods       # List pods
+./scripts/k8s-learning-commands.sh scale-up   # Scale application
+./scripts/k8s-learning-commands.sh logs       # View logs
+./scripts/k8s-learning-commands.sh exec       # Execute into pod
+```
+
+### **Learning Resources**
+- 📚 `docs/kubernetes-learning-guide.md` - Architecture overview
+- 🎯 `k8s/learning-deployment.yaml` - Step-by-step K8s objects
+- 🔧 `scripts/k8s-learning-commands.sh` - Interactive commands
+- 📊 Real-time scaling and monitoring examples
+
+## 💰 **Cost Optimization**
+
+### **100% Free Tier Usage**
+| Resource | Quantity | Free Tier Limit | Monthly Cost |
+|----------|----------|-----------------|-------------|
+| EC2 t2.micro | 6 instances | 750 hrs each | **$0** |
+| RDS db.t3.micro | 2 instances | 750 hrs each | **$0** |
+| EBS Storage | ~120GB total | 30GB each | **$0** |
+| Data Transfer | <1GB/month | 1GB/month | **$0** |
+| **Total Cost** | | | **$0/month** |
+
+### **Automated Cost Controls**
+- 🛡️ **Policy Validation** - Prevents expensive resources
+- 📊 **Budget Alerts** - Email notifications at $1.00
+- 🕘 **Scheduled Scaling** - Auto-shutdown during off-hours
+- 🧹 **Auto-Cleanup** - Removes failed/orphaned resources
+- 🌍 **Multi-Region Prevention** - Blocks accidental deployments
+
+### **vs EKS Alternative**
+- **K3s Setup**: $0/month (Free Tier)
+- **EKS Setup**: $119/month (Control plane + NAT Gateway)
+- **Savings**: 100% cost reduction
+
+## 🌐 **Network Architecture**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -160,56 +228,84 @@ The separation of application and infrastructure code allows for:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 🔒 **Enhanced Security Architecture**
+### 🔒 **Network Security Architecture**
 
-| Network | CIDR | Environments | Database | Runner Labels | K3s Access |
-|---------|------|--------------|----------|---------------|------------|
-| **Lower** | Default VPC | Dev + Test | Shared RDS | `aws-lower`, `aws-dev`, `aws-test` | ✅ Direct Private IP |
-| **Higher** | Default VPC | Production | Dedicated RDS | `aws-higher`, `aws-prod` | ✅ Direct Private IP |
-| **Monitoring** | Default VPC | Monitoring | None | `aws-monitoring`, `aws-dev`, `aws-test`, `aws-prod` | ✅ Access to All |
+| Network Tier | Environments | Database | GitHub Runners | Deployment Options |
+|--------------|--------------|----------|----------------|--------------------|
+| **Lower** | Dev + Test | Shared RDS | `github-runner-lower` | K3s + EC2 Direct |
+| **Higher** | Production | Dedicated RDS | `github-runner-higher` | K3s + EC2 Direct |
+| **Monitoring** | Monitoring | None | `github-runner-monitoring` | Centralized Monitoring |
 
-### 🤖 **GitHub Runner Configuration**
+### 🤖 **Deployment Workflows**
 
-| Network | Runner Name | Labels | K3s Connectivity | Software Installed |
-|---------|-------------|--------|------------------|--------------------|
-| **Lower** | `github-runner-lower-{id}` | `github-runner-lower` | ✅ Same VPC | ✅ Health Monitoring, ✅ Auto-Restart, ✅ Cleanup |
-| **Higher** | `github-runner-higher-{id}` | `github-runner-higher` | ✅ Same VPC | ✅ Health Monitoring, ✅ Auto-Restart, ✅ Cleanup |
-| **Monitoring** | `github-runner-monitoring-{id}` | `github-runner-monitoring` | ✅ All Networks | ✅ Health Monitoring, ✅ Auto-Restart, ✅ Cleanup |
+| Workflow | Purpose | Target | Auto-Creates |
+| **Core Infrastructure** | K3s clusters + RDS + Runners | EC2 instances | ✅ Complete infrastructure |
+| **Core Deployment** | K8s application deployment | K3s pods | ✅ Namespaces + services |
+| **EC2 App Deployment** | Direct container deployment | EC2 instances | ✅ EC2 + Docker + Nginx |
+| **EC2 Operations** | Scaling + health checks | Running instances | ✅ Additional instances |
 
-### 🌐 **Network Communication Matrix**
+### 🔄 **Environment Isolation**
 
-| From Runner → To K3s | Lower K3s | Higher K3s | Monitoring K3s |
-|---------------------|-----------|------------|----------------|
-| **Lower Runner** | ✅ Direct Private IP | ❌ Network Isolated | ❌ Network Isolated |
-| **Higher Runner** | ❌ Network Isolated | ✅ Direct Private IP | ❌ Network Isolated |
-| **Monitoring Runner** | ✅ Via Network Access | ✅ Via Network Access | ✅ Direct Private IP |
+| Environment | K3s Namespace | EC2 Naming | Database | Access |
+|-------------|---------------|------------|----------|--------|
+| **Development** | `health-app-dev` | `health-app-*-dev` | Shared RDS | Lower network |
+| **Test** | `health-app-test` | `health-app-*-test` | Shared RDS | Lower network |
+| **Production** | `health-app-prod` | `health-app-*-prod` | Dedicated RDS | Higher network |
 
-### 🛡️ **Isolation Benefits**
-- ✅ **Complete Prod Isolation**: No direct dev/test → prod access
-- ✅ **Cost Optimization**: Shared database for dev/test
-- ✅ **Centralized Monitoring**: Single monitoring cluster for all environments
-- ✅ **Security**: Network-level separation with controlled access
-- ✅ **Data Continuity**: Restore from existing snapshots (healthapidb-snapshot)
-- ✅ **Self-Healing Runners**: Automatic health monitoring and restart
-- ✅ **Policy Compliance**: Governance validation and cost controls
-- ✅ **Production Ready**: Reliable service startup with fallback methods
+### 🛡️ **Security & Isolation Benefits**
+- ✅ **Environment Isolation**: Complete separation between dev/test/prod
+- ✅ **Dual Deployment**: Choose K3s for learning or EC2 for simplicity
+- ✅ **Auto-Scaling**: HPA for K3s, instance scaling for EC2
+- ✅ **Health Monitoring**: Automatic restart and recovery
+- ✅ **Cost Controls**: Budget alerts and resource limits
+- ✅ **Learning Platform**: Interactive K8s tutorials included
+- ✅ **Production Ready**: Both deployment options are production-capable
 
-### 💾 **Database Restore Advantages**
-- ✅ **Instant Data**: Restore from `healthapidb-snapshot` with all existing data
-- ✅ **Zero Migration**: No manual data import needed
-- ✅ **Real Testing**: Dev/Test environments use production-like data
-- ✅ **Cost Effective**: Shared database reduces storage costs
-- ✅ **Consistent State**: Data integrity maintained across environments
+### 💾 **Database Management**
+- ✅ **Snapshot Restore**: Restore from `healthapidb-snapshot` for instant data
+- ✅ **Environment Separation**: Shared DB for dev/test, dedicated for prod
+- ✅ **Cost Optimization**: S3 backups reduce storage costs by 97%
+- ✅ **Auto-Configuration**: Database credentials via AWS Systems Manager
+- ✅ **Health Monitoring**: Automated database connectivity checks
+
+## 🚀 **What You've Achieved**
+
+### **🏗️ Infrastructure Capabilities**
+- ✅ **Dual Deployment Options**: K3s clusters AND direct EC2 deployment
+- ✅ **Multi-Environment**: Dev, Test, Production with complete isolation
+- ✅ **Auto-Scaling**: Kubernetes HPA + EC2 instance scaling
+- ✅ **Self-Hosted Runners**: GitHub Actions runners in each network tier
+- ✅ **Database Management**: RDS with snapshot restore capabilities
+- ✅ **Cost Optimization**: 100% Free Tier usage with automated controls
+
+### **🎓 Learning Platform**
+- ✅ **Interactive K8s Tutorial**: Step-by-step commands and exercises
+- ✅ **Real-World Examples**: Production-ready configurations
+- ✅ **Hands-On Practice**: Deploy, scale, monitor, troubleshoot
+- ✅ **Architecture Understanding**: Complete K3s cluster setup
+
+### **🔧 Operational Excellence**
+- ✅ **Health Monitoring**: Automated application and infrastructure checks
+- ✅ **Policy Governance**: Cost controls and compliance validation
+- ✅ **Disaster Recovery**: Automated cleanup and recovery procedures
+- ✅ **Documentation**: Comprehensive guides and examples
+
+### **📊 Current Status**
+- ✅ **5 GitHub Workflows**: Infrastructure, K8s deployment, EC2 deployment, operations
+- ✅ **6 Learning Scripts**: Interactive K8s tutorials and EC2 management
+- ✅ **4 K8s Manifests**: Production deployments, learning exercises, SSL config
+- ✅ **Complete Documentation**: Architecture guides and step-by-step tutorials
 
 ---
 
-## 💰 Cost Comparison & Database Backup Strategy
+## 💰 **Cost Analysis**
 
-### 🆓 **Enhanced Setup: 100% FREE TIER with GitHub Runners**
+### **Current Setup: 100% Free Tier Usage**
 | Resource | Lower Network | Higher Network | Monitoring | Free Tier Limit | Monthly Cost |
 |----------|---------------|----------------|------------|-----------------|-------------|
 | **EC2 t2.micro (K3s)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
 | **EC2 t2.micro (GitHub Runner)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
+| **EC2 t2.micro (App Instances)** | Auto-created | Auto-created | 0 | 750 hrs each | **$0** |
 | **RDS db.t3.micro** | 1 shared | 1 dedicated | 0 | 750 hrs each | **$0** |
 | **EBS Storage** | ~40GB | ~20GB | ~20GB | 30GB each | **$0** |
 | **VPC + Networking** | Default VPC | Default VPC | Default VPC | Always free | **$0** |

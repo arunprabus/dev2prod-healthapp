@@ -1,0 +1,89 @@
+name: EC2 Operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: 'Operation'
+        required: true
+        type: choice
+        options:
+        - status
+        - scale-out
+        - scale-in
+        - schedule
+        - health-check
+        - cleanup
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      app_name:
+        description: 'Application Name'
+        required: false
+        default: 'health-api'
+        type: string
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  operations:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Execute operation
+        run: |
+          chmod +x scripts/ec2-autoscaling.sh
+          
+          case "${{ github.event.inputs.operation }}" in
+            "status")
+              echo "📊 Getting instance status..."
+              ./scripts/ec2-autoscaling.sh status "${{ github.event.inputs.environment }}" "${{ github.event.inputs.app_name }}"
+              ;;
+            "scale-out")
+              echo "📈 Scaling out instances..."
+              ./scripts/ec2-autoscaling.sh scale-out "${{ github.event.inputs.environment }}" "${{ github.event.inputs.app_name }}"
+              ;;
+            "scale-in")
+              echo "📉 Scaling in instances..."
+              ./scripts/ec2-autoscaling.sh scale-in "${{ github.event.inputs.environment }}" "${{ github.event.inputs.app_name }}"
+              ;;
+            "schedule")
+              echo "⏰ Running scheduled scaling..."
+              ./scripts/ec2-autoscaling.sh schedule "${{ github.event.inputs.environment }}" "${{ github.event.inputs.app_name }}"
+              ;;
+            "health-check")
+              echo "🔍 Running health checks..."
+              ./scripts/ec2-health-check.sh "${{ github.event.inputs.environment }}" "${{ github.event.inputs.app_name }}"
+              ;;
+            "cleanup")
+              echo "🧹 Cleaning up stopped instances..."
+              ./scripts/ec2-cleanup.sh "${{ github.event.inputs.environment }}" "${{ github.event.inputs.app_name }}"
+              ;;
+          esac
+
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## 🔧 EC2 Operations Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Operation:** ${{ github.event.inputs.operation }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Application:** ${{ github.event.inputs.app_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Date:** $(date)" >> $GITHUB_STEP_SUMMARY
