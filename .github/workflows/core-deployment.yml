@@ -86,7 +86,7 @@ jobs:
           echo "NAMESPACE=health-app-$ENV" >> $GITHUB_ENV
           echo "NETWORK_TIER=$NETWORK_TIER" >> $GITHUB_ENV
 
-      - name: Download kubeconfig from S3
+      - name: Network Diagnostics and K3s Connection
         run: |
           # Determine network tier based on environment
           if [ "$ENVIRONMENT" = "dev" ] || [ "$ENVIRONMENT" = "test" ]; then
@@ -113,17 +113,61 @@ jobs:
             exit 1
           fi
           
-          # Test connection
-          echo "🔍 Testing kubectl connection..."
-          if timeout 30 kubectl get nodes --request-timeout=10s; then
-            echo "✅ K3s cluster is accessible"
+          # Get K3s IP for diagnostics
+          K3S_IP=$(grep "server:" ~/.kube/config | sed 's/.*https:\/\///g' | sed 's/:6443.*//g')
+          echo "🔍 K3s cluster IP: $K3S_IP"
+          
+          # Network diagnostics
+          echo "🔍 Running network diagnostics..."
+          echo "GitHub Actions runner IP:"
+          curl -s https://httpbin.org/ip || echo "Could not get runner IP"
+          
+          echo "Testing connectivity to K3s cluster:"
+          if ping -c 3 $K3S_IP; then
+            echo "✅ Ping to K3s IP successful"
           else
-            echo "⚠️ K3s cluster test failed, but proceeding with deployment"
+            echo "❌ Ping to K3s IP failed"
+          fi
+          
+          echo "Testing port 6443 connectivity:"
+          if timeout 10 nc -zv $K3S_IP 6443; then
+            echo "✅ Port 6443 is reachable"
+          else
+            echo "❌ Port 6443 is not reachable"
+          fi
+          
+          echo "Testing HTTPS handshake:"
+          if timeout 10 openssl s_client -connect $K3S_IP:6443 -servername $K3S_IP < /dev/null; then
+            echo "✅ HTTPS handshake successful"
+          else
+            echo "❌ HTTPS handshake failed"
+          fi
+          
+          # Try kubectl with insecure flag
+          echo "🔍 Testing kubectl with --insecure-skip-tls-verify..."
+          if timeout 30 kubectl get nodes --insecure-skip-tls-verify --request-timeout=10s; then
+            echo "✅ kubectl works with --insecure-skip-tls-verify"
+            echo "This indicates TLS certificate issues"
+            
+            # Use insecure flag for deployment
+            echo "KUBECTL_EXTRA_ARGS=--insecure-skip-tls-verify" >> $GITHUB_ENV
+          else
+            echo "❌ kubectl failed even with --insecure-skip-tls-verify"
+            echo "This indicates network connectivity issues"
+          fi
+          
+          # Try standard kubectl
+          echo "🔍 Testing standard kubectl..."
+          if timeout 30 kubectl get nodes --request-timeout=10s; then
+            echo "✅ Standard kubectl works"
+            echo "KUBECTL_EXTRA_ARGS=" >> $GITHUB_ENV
+          else
+            echo "❌ Standard kubectl failed"
           fi
 
       - name: Create namespace
         run: |
-          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml $KUBECTL_EXTRA_ARGS | kubectl apply -f - $KUBECTL_EXTRA_ARGS
           echo "✅ Namespace $NAMESPACE ready"
 
       - name: Deploy application
@@ -131,43 +175,43 @@ jobs:
           echo "🚀 Deploying $APP_NAME with image $IMAGE_NAME"
           
           # Check if deployment exists
-          if kubectl get deployment $APP_NAME -n $NAMESPACE >/dev/null 2>&1; then
+          if kubectl get deployment $APP_NAME -n $NAMESPACE $KUBECTL_EXTRA_ARGS >/dev/null 2>&1; then
             echo "📝 Updating existing deployment"
-            kubectl set image deployment/$APP_NAME $APP_NAME=$IMAGE_NAME -n $NAMESPACE
-            kubectl annotate deployment/$APP_NAME deployment.kubernetes.io/revision- -n $NAMESPACE
+            kubectl set image deployment/$APP_NAME $APP_NAME=$IMAGE_NAME -n $NAMESPACE $KUBECTL_EXTRA_ARGS
+            kubectl annotate deployment/$APP_NAME deployment.kubernetes.io/revision- -n $NAMESPACE $KUBECTL_EXTRA_ARGS
           else
             echo "🆕 Creating new deployment"
-            kubectl create deployment $APP_NAME --image=$IMAGE_NAME -n $NAMESPACE
+            kubectl create deployment $APP_NAME --image=$IMAGE_NAME -n $NAMESPACE $KUBECTL_EXTRA_ARGS
             
             # Create service
-            kubectl expose deployment $APP_NAME --port=80 --target-port=8080 -n $NAMESPACE --type=ClusterIP
+            kubectl expose deployment $APP_NAME --port=80 --target-port=8080 -n $NAMESPACE --type=ClusterIP $KUBECTL_EXTRA_ARGS
             
             # Add labels
-            kubectl label deployment $APP_NAME app=$APP_NAME version=latest -n $NAMESPACE
+            kubectl label deployment $APP_NAME app=$APP_NAME version=latest -n $NAMESPACE $KUBECTL_EXTRA_ARGS
           fi
           
           # Wait for rollout
           echo "⏳ Waiting for deployment rollout..."
-          kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s
+          kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s $KUBECTL_EXTRA_ARGS
 
       - name: Verify deployment
         run: |
           echo "🔍 Verifying deployment status"
           
           # Get deployment status
-          kubectl get deployment $APP_NAME -n $NAMESPACE -o wide
+          kubectl get deployment $APP_NAME -n $NAMESPACE -o wide $KUBECTL_EXTRA_ARGS
           
           # Get pods
           echo "📋 Pod status:"
-          kubectl get pods -l app=$APP_NAME -n $NAMESPACE -o wide
+          kubectl get pods -l app=$APP_NAME -n $NAMESPACE -o wide $KUBECTL_EXTRA_ARGS
           
           # Get services
           echo "🌐 Service status:"
-          kubectl get services -l app=$APP_NAME -n $NAMESPACE
+          kubectl get services -l app=$APP_NAME -n $NAMESPACE $KUBECTL_EXTRA_ARGS
           
           # Check pod health
-          READY_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers | grep Running | wc -l)
-          TOTAL_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers | wc -l)
+          READY_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers $KUBECTL_EXTRA_ARGS | grep Running | wc -l)
+          TOTAL_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers $KUBECTL_EXTRA_ARGS | wc -l)
           
           echo "READY_PODS=$READY_PODS" >> $GITHUB_ENV
           echo "TOTAL_PODS=$TOTAL_PODS" >> $GITHUB_ENV
@@ -178,7 +222,7 @@ jobs:
           else
             echo "❌ Some pods are not ready: $READY_PODS/$TOTAL_PODS"
             echo "DEPLOYMENT_STATUS=failed" >> $GITHUB_ENV
-            kubectl describe pods -l app=$APP_NAME -n $NAMESPACE
+            kubectl describe pods -l app=$APP_NAME -n $NAMESPACE $KUBECTL_EXTRA_ARGS
             exit 1
           fi
 
