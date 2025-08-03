@@ -5,6 +5,7 @@ on:
     inputs:
       action:
         description: 'Action'
+        default: 'deploy'
         required: true
         type: choice
         options:
