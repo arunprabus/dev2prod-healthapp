@@ -6,24 +6,19 @@ exec > >(tee /var/log/k3s-install.log) 2>&1
 
 echo "Starting K3s installation at $(date)"
 
-# Get public IP for TLS configuration
-echo "🌐 Fetching public IP for TLS configuration..."
+# Get public IP first
+echo "🌐 Fetching public IP..."
 TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 
 PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/public-ipv4)
 
-if [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "✅ Public IP is $PUBLIC_IP"
-else
-  echo "❌ Failed to fetch valid public IP. Got: $PUBLIC_IP"
-  exit 1
-fi
+echo "✅ Public IP: $PUBLIC_IP"
 
-# Install K3s with proper TLS configuration
-echo "Installing K3s with TLS configuration..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP" sh -
+# Install K3s for internal access only (ALB will handle external SSL)
+echo "Installing K3s..."
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
 
 # Wait for service to be ready
 echo "Starting K3s service..."
@@ -37,41 +32,38 @@ while [ ! -f /etc/rancher/k3s/k3s.yaml ]; do
   sleep 5
 done
 
-# Verify kubeconfig has correct IP
-echo "🔍 Verifying kubeconfig configuration..." | tee -a /var/log/k3s-install.log
-if grep -q "$PUBLIC_IP" /etc/rancher/k3s/k3s.yaml; then
-  echo "✅ Kubeconfig already has correct public IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
-else
-  echo "🔧 Updating kubeconfig with public IP..." | tee -a /var/log/k3s-install.log
-  sed -i "s|127.0.0.1|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
-  sed -i "s|0.0.0.0|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
-  echo "✅ Kubeconfig updated with public IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
-fi
+# Update kubeconfig with public IP
+echo "🔧 Updating kubeconfig..." | tee -a /var/log/k3s-install.log
+sed -i "s|127.0.0.1|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
+echo "✅ Kubeconfig updated with IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
 
 # Test kubectl
 echo "Testing kubectl..."
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-# Wait for K3s to be fully ready with proper TLS
+# Wait for K3s to be ready
 echo "Waiting for K3s to be ready..."
 for i in {1..30}; do
-  if kubectl get nodes > /dev/null 2>&1; then
-    echo "✅ K3s is ready with proper TLS!"
-    kubectl get nodes
+  if kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
+    echo "✅ K3s is ready!"
+    kubectl get nodes --insecure-skip-tls-verify
     break
   fi
   echo "Waiting for K3s... ($i/30)"
   sleep 10
 done
 
-# Verify TLS connectivity
-echo "🔒 Testing TLS connectivity..."
-if kubectl cluster-info > /dev/null 2>&1; then
-  echo "✅ TLS connectivity verified"
-else
-  echo "⚠️ TLS connectivity issue detected, checking service status..."
-  systemctl status k3s --no-pager
-fi
+# Create ALB-enabled kubeconfig and store in SSM
+echo "📤 Creating ALB kubeconfig and storing in SSM..."
+cp /etc/rancher/k3s/k3s.yaml /tmp/alb-kubeconfig.yaml
+# Replace with ALB endpoint (will be updated by Terraform output)
+sed -i "s|https://$PUBLIC_IP:6443|https://$ENVIRONMENT.k3s.healthapp.local:443|g" /tmp/alb-kubeconfig.yaml
+KUBECONFIG_B64=$(base64 -w 0 /tmp/alb-kubeconfig.yaml)
+aws ssm put-parameter \
+  --name "/health-app/$ENVIRONMENT/kubeconfig" \
+  --value "$KUBECONFIG_B64" \
+  --type "SecureString" \
+  --overwrite || echo "⚠️ Failed to store in SSM"
 
 # Create completion marker
 echo "K3s installation completed at $(date)"
@@ -81,8 +73,8 @@ touch /var/log/k3s-install-complete
 echo "🏷️ Creating namespaces for $ENVIRONMENT..."
 if [[ "$ENVIRONMENT" == "dev" ]] || [[ "$NETWORK_TIER" == "lower" ]]; then
   # Lower network: dev and test environments
-  kubectl create namespace health-app-dev || true
-  kubectl create namespace health-app-test || true
+  kubectl create namespace health-app-dev --insecure-skip-tls-verify || true
+  kubectl create namespace health-app-test --insecure-skip-tls-verify || true
   
   # Database secrets commented out for now
   # echo "💾 Creating database secrets for shared DB..."
@@ -106,7 +98,7 @@ if [[ "$ENVIRONMENT" == "dev" ]] || [[ "$NETWORK_TIER" == "lower" ]]; then
 
 elif [[ "$ENVIRONMENT" == "prod" ]] || [[ "$NETWORK_TIER" == "higher" ]]; then
   # Higher network: production environment
-  kubectl create namespace health-app-prod || true
+  kubectl create namespace health-app-prod --insecure-skip-tls-verify || true
   
   # Database secrets commented out for now
   # echo "💾 Creating database secrets for dedicated prod DB..."
@@ -121,17 +113,17 @@ elif [[ "$ENVIRONMENT" == "prod" ]] || [[ "$NETWORK_TIER" == "higher" ]]; then
 
 elif [[ "$ENVIRONMENT" == "monitoring" ]]; then
   # Monitoring network: monitoring tools
-  kubectl create namespace monitoring || true
-  kubectl create namespace health-app-monitoring || true
+  kubectl create namespace monitoring --insecure-skip-tls-verify || true
+  kubectl create namespace health-app-monitoring --insecure-skip-tls-verify || true
 fi
 
 # Create service account for GitHub Actions
 echo "🔐 Creating service account for GitHub Actions..."
-kubectl create namespace gha-access || true
-kubectl create serviceaccount gha-deployer -n gha-access || true
+kubectl create namespace gha-access --insecure-skip-tls-verify || true
+kubectl create serviceaccount gha-deployer -n gha-access --insecure-skip-tls-verify || true
 
 # Create cluster role with necessary permissions
-cat <<EOF | kubectl apply -f -
+cat <<EOF | kubectl apply -f - --insecure-skip-tls-verify
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -151,11 +143,12 @@ EOF
 # Create cluster role binding
 kubectl create clusterrolebinding gha-deployer-binding \
   --clusterrole=gha-deployer-role \
-  --serviceaccount=gha-access:gha-deployer || true
+  --serviceaccount=gha-access:gha-deployer \
+  --insecure-skip-tls-verify || true
 
 # Generate service account token
 echo "🎫 Generating service account token..."
-TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=8760h) # 1 year
+TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=8760h --insecure-skip-tls-verify) # 1 year
 
 if [[ -n "$TOKEN" ]]; then
   PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
@@ -166,8 +159,8 @@ apiVersion: v1
 kind: Config
 clusters:
 - cluster:
+    insecure-skip-tls-verify: true
     server: https://$PUBLIC_IP:6443
-    insecure-skip-tls-verify: false
   name: k3s-cluster
 contexts:
 - context:

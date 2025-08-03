@@ -50,11 +50,27 @@ output "github_runner_debug_commands" {
 #   value       = aws_db_instance.main.endpoint
 # }
 
+output "alb_dns_name" {
+  description = "ALB DNS name for K3s API"
+  value       = module.alb_ssl.alb_dns_name
+}
+
+output "k3s_ssl_endpoint" {
+  description = "K3s API endpoint with SSL via ALB"
+  value       = module.alb_ssl.k3s_endpoint
+}
+
+output "certificate_arn" {
+  description = "ACM certificate ARN"
+  value       = module.alb_ssl.certificate_arn
+}
+
 output "environment_info" {
   description = "Environment information"
   value = {
     environment  = var.environment
     network_tier = var.network_tier
     cost_tier    = "FREE"
+    ssl_endpoint = module.alb_ssl.k3s_endpoint
   }
 }

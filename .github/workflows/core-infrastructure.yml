@@ -592,9 +592,9 @@ jobs:
       run: |
         echo "🔧 Setting up kubeconfig for ${{ matrix.env }} environment..."
         
-        # Get K3s instance details
+        # Get K3s instance details using proper tags
         K3S_DETAILS=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=tag:Environment,Values=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" "Name=instance-state-name,Values=running" \
           --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress]" --output text)
         
         if [ "$K3S_DETAILS" = "None" ]; then
@@ -649,15 +649,8 @@ jobs:
           fi
         done
         
-        # Verify kubeconfig has correct IP (should already be correct from K3s installation)
-        if grep -q "$K3S_IP" /tmp/kubeconfig.yaml; then
-          echo "✅ Kubeconfig already has correct IP: $K3S_IP"
-        else
-          echo "🔧 Updating kubeconfig with correct IP..."
-          sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
-          sed -i "s/0.0.0.0/$K3S_IP/g" /tmp/kubeconfig.yaml
-          echo "✅ Kubeconfig updated with IP: $K3S_IP"
-        fi
+        # Update server IP to public IP
+        sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
         
         # Test kubeconfig connectivity
         export KUBECONFIG=/tmp/kubeconfig.yaml

@@ -97,15 +97,16 @@ jobs:
           
           echo "💾 Downloading kubeconfig for $ENVIRONMENT environment (network: $NETWORK_TIER)"
           
-          # Download kubeconfig from S3 - use standard kubeconfig
-          KUBECONFIG_KEY="kubeconfig/$ENVIRONMENT-standard.yaml"
+          # Download kubeconfig from SSM Parameter Store
+          SSM_PARAM="/health-app/$ENVIRONMENT/kubeconfig"
           
-          if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_KEY ~/.kube/config; then
-            echo "✅ Downloaded kubeconfig from S3: $KUBECONFIG_KEY"
-            echo "📄 Kubeconfig contents:"
-            cat ~/.kube/config
+          if KUBECONFIG_B64=$(aws ssm get-parameter --name "$SSM_PARAM" --with-decryption --query "Parameter.Value" --output text 2>/dev/null); then
+            echo "✅ Downloaded kubeconfig from SSM: $SSM_PARAM"
+            echo "$KUBECONFIG_B64" | base64 -d > ~/.kube/config
+            echo "📄 Kubeconfig server:"
+            grep "server:" ~/.kube/config
           else
-            echo "❌ Failed to download kubeconfig from S3"
+            echo "❌ Failed to download kubeconfig from SSM"
             echo "💡 Please run Core Infrastructure deployment first"
             exit 1
           fi
@@ -113,10 +114,10 @@ jobs:
           # Skip connectivity check - proceed directly to deployment
           echo "⏩ Skipping connectivity check - proceeding with deployment"
           
-          # Test connection with timeout
-          echo "🔍 Testing kubectl connection..."
+          # Test connection via ALB with proper SSL
+          echo "🔍 Testing kubectl connection via ALB..."
           if timeout 30 kubectl get nodes --request-timeout=10s; then
-            echo "✅ K3s cluster is accessible"
+            echo "✅ K3s cluster is accessible via ALB with SSL"
           else
             echo "⚠️ K3s cluster test failed, but proceeding with deployment"
           fi

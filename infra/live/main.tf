@@ -63,11 +63,22 @@ resource "aws_security_group" "k3s" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Remove direct internet access to K3s API - only via ALB
+  # ingress {
+  #   from_port   = 6443
+  #   to_port     = 6443
+  #   protocol    = "tcp"
+  #   cidr_blocks = ["0.0.0.0/0"]
+  #   description = "K3s API access"
+  # }
+
+  # Allow ALB to access K3s API
   ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port       = 6443
+    to_port         = 6443
+    protocol        = "tcp"
+    security_groups = [module.alb_ssl.alb_security_group_id]
+    description     = "ALB to K3s API"
   }
 
   ingress {
@@ -134,6 +145,57 @@ resource "aws_iam_role_policy_attachment" "k3s_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# IAM policy for S3 and SSM access
+resource "aws_iam_role_policy" "k3s_policy" {
+  name = "${local.name_prefix}-k3s-policy"
+  role = aws_iam_role.k3s_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = "arn:aws:s3:::health-app-terraform-state/kubeconfig/*"
+        Condition = {
+          StringEquals = {
+            "s3:x-amz-server-side-encryption" = "AES256"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:PutParameter",
+          "ssm:GetParameter"
+        ]
+        Resource = "arn:aws:ssm:${var.aws_region}:*:parameter/health-app/${var.environment}/*"
+        Condition = {
+          StringEquals = {
+            "ssm:ParameterType" = "SecureString"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey"
+        ]
+        Resource = "arn:aws:kms:${var.aws_region}:*:key/*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
 resource "aws_iam_instance_profile" "k3s_profile" {
   name = "${local.name_prefix}-k3s-profile"
   role = aws_iam_role.k3s_role.name
@@ -163,6 +225,20 @@ resource "aws_instance" "k3s" {
   })
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
+}
+
+# ALB with SSL for K3s API
+module "alb_ssl" {
+  source = "../modules/alb-ssl"
+  
+  environment           = var.environment
+  vpc_id                = data.aws_vpc.first.id
+  subnet_ids            = data.aws_subnets.existing.ids
+  k3s_instance_id       = aws_instance.k3s.id
+  k3s_security_group_id = aws_security_group.k3s.id
+  aws_region            = var.aws_region
+  
+  depends_on = [aws_instance.k3s]
 }
 
 # GitHub Runner
