@@ -1,0 +1,155 @@
+@ -0,0 +1,154 @@
+---
+- name: K3s Cluster Validation and Setup
+  hosts: k3s_nodes
+  become: yes
+  gather_facts: yes
+  vars:
+    k3s_kubeconfig: /etc/rancher/k3s/k3s.yaml
+    s3_bucket: "{{ lookup('env', 'TF_STATE_BUCKET') }}"
+    network_tier: "{{ lookup('env', 'NETWORK_TIER') }}"
+
+  tasks:
+    - name: Display connection info
+      debug:
+        msg: |
+          Connecting to K3s node: {{ inventory_hostname }}
+          Environment: {{ network_tier }}
+          S3 Bucket: {{ s3_bucket }}
+
+    - name: Check system status
+      command: uptime
+      register: uptime_result
+
+    - name: Display system uptime
+      debug:
+        msg: "System uptime: {{ uptime_result.stdout }}"
+
+    - name: Check K3s service status
+      systemd:
+        name: k3s
+        state: started
+        enabled: yes
+      register: k3s_service
+
+    - name: Restart K3s if not active
+      systemd:
+        name: k3s
+        state: restarted
+      when: k3s_service.status.ActiveState != "active"
+
+    - name: Wait for K3s service to be active
+      wait_for:
+        timeout: 60
+      delegate_to: localhost
+
+    - name: Verify K3s service is running
+      systemd:
+        name: k3s
+      register: k3s_status
+
+    - name: Display K3s service status
+      debug:
+        msg: "K3s service status: {{ k3s_status.status.ActiveState }}"
+
+    - name: Check if kubeconfig exists
+      stat:
+        path: "{{ k3s_kubeconfig }}"
+      register: kubeconfig_file
+
+    - name: Fail if kubeconfig doesn't exist
+      fail:
+        msg: "Kubeconfig file not found at {{ k3s_kubeconfig }}"
+      when: not kubeconfig_file.stat.exists
+
+    - name: Test kubectl connectivity locally
+      command: kubectl get nodes --kubeconfig={{ k3s_kubeconfig }}
+      register: kubectl_nodes
+      retries: 10
+      delay: 30
+      until: kubectl_nodes.rc == 0
+
+    - name: Display node status
+      debug:
+        msg: "{{ kubectl_nodes.stdout_lines }}"
+
+    - name: Check node readiness
+      command: kubectl get nodes --no-headers --kubeconfig={{ k3s_kubeconfig }}
+      register: node_status
+      retries: 10
+      delay: 30
+      until: "'Ready' in node_status.stdout"
+
+    - name: Display node readiness
+      debug:
+        msg: "Node is Ready: {{ 'Ready' in node_status.stdout }}"
+
+    - name: Get all pods status
+      command: kubectl get pods -A --kubeconfig={{ k3s_kubeconfig }}
+      register: all_pods
+
+    - name: Display pods status
+      debug:
+        msg: "{{ all_pods.stdout_lines }}"
+
+    - name: Test namespace creation
+      command: kubectl create namespace test-ansible --dry-run=client -o yaml --kubeconfig={{ k3s_kubeconfig }}
+      register: namespace_test
+
+    - name: Apply test namespace
+      command: kubectl apply -f - --kubeconfig={{ k3s_kubeconfig }}
+      args:
+        stdin: "{{ namespace_test.stdout }}"
+
+    - name: Delete test namespace
+      command: kubectl delete namespace test-ansible --kubeconfig={{ k3s_kubeconfig }}
+      ignore_errors: yes
+
+    - name: Get public IP
+      uri:
+        url: http://169.254.169.254/latest/meta-data/public-ipv4
+        method: GET
+        return_content: yes
+      register: public_ip
+
+    - name: Read kubeconfig content
+      slurp:
+        src: "{{ k3s_kubeconfig }}"
+      register: kubeconfig_content
+
+    - name: Update kubeconfig with public IP
+      copy:
+        content: "{{ kubeconfig_content.content | b64decode | replace('127.0.0.1', public_ip.content) }}"
+        dest: /tmp/kubeconfig-updated.yaml
+        mode: '0644'
+
+    - name: Test external kubectl connectivity
+      command: kubectl get nodes --kubeconfig=/tmp/kubeconfig-updated.yaml --insecure-skip-tls-verify
+      register: external_kubectl
+      delegate_to: localhost
+
+    - name: Display external connectivity test
+      debug:
+        msg: "External kubectl test: {{ external_kubectl.stdout_lines }}"
+
+    - name: Upload kubeconfig to S3
+      aws_s3:
+        bucket: "{{ s3_bucket }}"
+        object: "kubeconfig/{{ network_tier }}-kubeconfig.yaml"
+        src: /tmp/kubeconfig-updated.yaml
+        mode: put
+      delegate_to: localhost
+
+    - name: Cleanup temporary files
+      file:
+        path: /tmp/kubeconfig-updated.yaml
+        state: absent
+
+    - name: Final validation summary
+      debug:
+        msg: |
+          ✅ K3s Cluster Validation Complete
+          - Service Status: {{ k3s_status.status.ActiveState }}
+          - Node Status: {{ 'Ready' if 'Ready' in node_status.stdout else 'NotReady' }}
+          - Public IP: {{ public_ip.content }}
+          - Kubeconfig uploaded to S3: {{ s3_bucket }}/kubeconfig/{{ network_tier }}-kubeconfig.yaml
