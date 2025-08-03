@@ -57,8 +57,20 @@ jobs:
     - name: Setup Ansible
       run: |
         echo "🔧 Setting up Ansible..."
-        pip install ansible boto3 botocore
-        ansible --version
+        
+        # Install Ansible system-wide
+        sudo apt-get update
+        sudo apt-get install -y python3-pip
+        sudo pip3 install ansible boto3 botocore
+        
+        # Also install in user space and add to PATH
+        pip3 install --user ansible boto3 botocore
+        export PATH="$HOME/.local/bin:$PATH"
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        
+        # Verify installation
+        which ansible || echo "Ansible not in PATH"
+        ansible --version || /home/ubuntu/.local/bin/ansible --version
 
     - name: Get K3s Instance Details
       id: k3s-info
