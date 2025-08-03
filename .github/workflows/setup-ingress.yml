@@ -1,0 +1,182 @@
+name: Setup Ingress
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - test
+        - both
+      runner_type:
+        description: 'Runner Type'
+        required: false
+        default: 'aws'
+        type: choice
+        options:
+        - github
+        - aws
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  setup-ingress:
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'lower')) || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'both' && fromJson('["dev", "test"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup SSH Key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+        chmod 600 ~/.ssh/k3s-key
+        
+        # Add SSH config for better connection handling
+        cat >> ~/.ssh/config << 'EOF'
+        Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ConnectTimeout 30
+            ServerAliveInterval 60
+        EOF
+
+    - name: Get K3s Cluster IP
+      id: cluster-ip
+      run: |
+        K3S_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-lower-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+        
+        if [ "$K3S_IP" = "None" ] || [ -z "$K3S_IP" ]; then
+          echo "❌ K3s cluster not found"
+          exit 1
+        fi
+        
+        echo "cluster_ip=$K3S_IP" >> $GITHUB_OUTPUT
+        echo "📍 K3s Cluster IP: $K3S_IP"
+
+    - name: Setup Kubeconfig
+      run: |
+        echo "📥 Setting up kubeconfig..."
+        
+        # Download kubeconfig via SSH with retry
+        for i in {1..5}; do
+          if scp -i ~/.ssh/k3s-key ubuntu@${{ steps.cluster-ip.outputs.cluster_ip }}:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml; then
+            echo "✅ Kubeconfig downloaded successfully (attempt $i)"
+            break
+          else
+            echo "⏳ Kubeconfig download failed (attempt $i/5), retrying..."
+            if [ $i -eq 5 ]; then
+              echo "❌ Failed to download kubeconfig after 5 attempts"
+              exit 1
+            fi
+            sleep 30
+          fi
+        done
+        
+        # Update server IP
+        sed -i "s/127.0.0.1/${{ steps.cluster-ip.outputs.cluster_ip }}/g" /tmp/kubeconfig.yaml
+        
+        # Set kubeconfig
+        export KUBECONFIG=/tmp/kubeconfig.yaml
+        echo "KUBECONFIG=/tmp/kubeconfig.yaml" >> $GITHUB_ENV
+        
+        # Verify connection
+        kubectl get nodes
+
+    - name: Setup Ingress for ${{ matrix.env }}
+      run: |
+        echo "🚀 Setting up ingress for ${{ matrix.env }} environment"
+        
+        # Make script executable
+        chmod +x scripts/setup-ingress-dev-test.sh
+        
+        # Run ingress setup
+        ./scripts/setup-ingress-dev-test.sh ${{ matrix.env }}
+
+    - name: Verify Ingress Setup
+      run: |
+        echo "🔍 Verifying ingress setup for ${{ matrix.env }}..."
+        
+        # Wait for ingress controller to be ready
+        echo "⏳ Waiting for NGINX Ingress Controller..."
+        kubectl wait --namespace ingress-nginx \
+          --for=condition=ready pod \
+          --selector=app.kubernetes.io/component=controller \
+          --timeout=300s || echo "Warning: Ingress controller not ready"
+        
+        # Check ingress
+        echo "📋 Ingress Status:"
+        kubectl get ingress -n health-app-${{ matrix.env }} -o wide || echo "No ingress found yet"
+        
+        # Check certificates
+        echo "🔒 Certificate Status:"
+        kubectl get certificate -n health-app-${{ matrix.env }} -o wide || echo "No certificates found yet"
+        
+        # Check ingress controller pods
+        echo "📋 Ingress Controller Pods:"
+        kubectl get pods -n ingress-nginx -o wide
+        
+        # Check cert-manager pods
+        echo "📋 Cert-Manager Pods:"
+        kubectl get pods -n cert-manager -o wide
+        
+        echo ""
+        echo "✅ Ingress setup completed for ${{ matrix.env }}"
+        echo "🌍 URL: https://${{ matrix.env }}.sharpzeal.com"
+        echo "⏳ SSL certificate will be issued automatically (5-10 minutes)"
+
+    - name: Generate Summary
+      if: always()
+      run: |
+        echo "## 🌐 Ingress Setup Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Cluster IP:** ${{ steps.cluster-ip.outputs.cluster_ip }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 Result URLs" >> $GITHUB_STEP_SUMMARY
+        echo "- **${{ matrix.env }}**: https://${{ matrix.env }}.sharpzeal.com" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. **Deploy Application** - Run Core Deployment workflow" >> $GITHUB_STEP_SUMMARY
+        echo "2. **Test SSL** - Check URL after 5-10 minutes" >> $GITHUB_STEP_SUMMARY
+        echo "3. **Verify Certificate** - \`kubectl get certificate -n health-app-${{ matrix.env }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "4. **Monitor Ingress** - \`kubectl get ingress -n health-app-${{ matrix.env }} -w\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 Monitoring Commands" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# SSH to cluster" >> $GITHUB_STEP_SUMMARY
+        echo "ssh -i ~/.ssh/k3s-key ubuntu@${{ steps.cluster-ip.outputs.cluster_ip }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Check certificate status" >> $GITHUB_STEP_SUMMARY
+        echo "kubectl get certificate -n health-app-${{ matrix.env }} -w" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Check ingress logs" >> $GITHUB_STEP_SUMMARY
+        echo "kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -f ~/.ssh/k3s-key /tmp/kubeconfig.yaml
