@@ -98,7 +98,7 @@ jobs:
           echo "💾 Downloading kubeconfig for $ENVIRONMENT environment (network: $NETWORK_TIER)"
           
           # Download kubeconfig from S3
-          KUBECONFIG_KEY="kubeconfig/health-app-$NETWORK_TIER-kubeconfig.yaml"
+          KUBECONFIG_KEY="kubeconfig/$NETWORK_TIER-kubeconfig.yaml"
           
           if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_KEY ~/.kube/config; then
             echo "✅ Downloaded kubeconfig from S3: $KUBECONFIG_KEY"
