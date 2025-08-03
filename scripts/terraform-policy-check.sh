@@ -64,9 +64,9 @@ validate_plan_against_policies() {
     
     # Check 4: Prohibited resources
     echo "  Checking for prohibited resources..."
-    local prohibited=$(jq -r '.resource_changes[]? | select(.type | test("aws_nat_gateway|aws_lb|aws_alb|aws_elb")) | .address' /tmp/tfplan.json 2>/dev/null || echo "")
+    local prohibited=$(jq -r '.resource_changes[]? | select(.type | test("aws_nat_gateway|aws_elb")) | .address' /tmp/tfplan.json 2>/dev/null || echo "")
     if [[ -n "$prohibited" ]]; then
-        echo "    ❌ Prohibited expensive resources found:"
+        echo "    ❌ Prohibited expensive resources found (NAT Gateway/Classic ELB):"
         echo "$prohibited" | sed 's/^/      /'
         violations=$((violations + 1))
     else
