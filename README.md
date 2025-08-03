@@ -99,8 +99,73 @@ Actions → EC2 Operations → scale-out
 ## 🎯 **Quick Start Guide**
 
 ### **Prerequisites**
+
+#### **🔐 Required IAM Policy**
+Attach this comprehensive policy to your AWS user/group:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:*",
+                "rds:*",
+                "ssm:*",
+                "dynamodb:*",
+                "s3:*",
+                "budgets:*",
+                "logs:*",
+                "cognito-idp:*",
+                "cognito-identity:*",
+                "cognito-sync:*",
+                "lambda:*",
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:PassRole",
+                "iam:AttachRolePolicy",
+                "iam:DetachRolePolicy",
+                "iam:CreateInstanceProfile",
+                "iam:DeleteInstanceProfile",
+                "iam:AddRoleToInstanceProfile",
+                "iam:RemoveRoleFromInstanceProfile",
+                "iam:GetInstanceProfile",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:GetRolePolicy",
+                "iam:TagRole",
+                "iam:TagInstanceProfile",
+                "acm:RequestCertificate",
+                "acm:ImportCertificate",
+                "acm:DescribeCertificate",
+                "acm:ListCertificates",
+                "acm:DeleteCertificate",
+                "acm:AddTagsToCertificate",
+                "wafv2:CreateWebACL",
+                "wafv2:DeleteWebACL",
+                "wafv2:GetWebACL",
+                "wafv2:UpdateWebACL",
+                "wafv2:AssociateWebACL",
+                "wafv2:DisassociateWebACL",
+                "wafv2:TagResource",
+                "wafv2:ListTagsForResource",
+                "elasticloadbalancing:*",
+                "kms:Decrypt",
+                "kms:DescribeKey",
+                "kms:Encrypt",
+                "kms:GenerateDataKey",
+                "kms:CreateGrant"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+
+#### **🔑 Required GitHub Secrets**
 ```bash
-# Required GitHub Secrets:
 AWS_ACCESS_KEY_ID: "Your AWS access key"
 AWS_SECRET_ACCESS_KEY: "Your AWS secret key"
 SSH_PUBLIC_KEY: "ssh-rsa AAAAB3... (from ~/.ssh/k3s-key.pub)"
