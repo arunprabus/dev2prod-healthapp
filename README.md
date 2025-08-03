@@ -267,7 +267,7 @@ ssh -i ~/.ssh/k3s-key ubuntu@<CLUSTER_IP>
 - **EKS Setup**: $119/month (Control plane + NAT Gateway)
 - **Savings**: 100% cost reduction
 
-## 🌐 **Network Architecture**
+## 🌐 **Network Architecture (NEW - Isolated VPCs)**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -275,53 +275,119 @@ ssh -i ~/.ssh/k3s-key ubuntu@<CLUSTER_IP>
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │ ┌─────────────────────────────────────────────────────────────────────┐ │
-│ │                   LOWER NETWORK (Default VPC)                       │ │
+│ │              MONITORING VPC (10.30.0.0/16)                         │ │
+│ │ ┌─────────────────────────────────────────────────────────────────┐   │ │
+│ │ │                    GITHUB RUNNERS HUB                          │   │ │
+│ │ │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐        │   │ │
+│ │ │  │GitHub Runner│    │GitHub Runner│    │GitHub Runner│        │   │ │
+│ │ │  │  Monitoring │    │    Lower    │    │   Higher    │        │   │ │
+│ │ │  │   t2.micro  │    │  t2.micro   │    │  t2.micro   │        │   │ │
+│ │ │  └─────────────┘    └─────────────┘    └─────────────┘        │   │ │
+│ │ └─────────────────────────────────────────────────────────────────┘   │ │
+│ └─────────────────────────────────────────────────────────────────────┘ │
+│                              ↕ VPC Peering ↕                           │
+│ ┌─────────────────────────────────────────────────────────────────────┐ │
+│ │                LOWER VPC (10.10.0.0/16)                            │ │
 │ │ ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────────┐ │ │
 │ │ │   DEV ENV   │  │  TEST ENV   │  │        SHARED DATABASE          │ │ │
 │ │ │ K3s Cluster │  │ K3s Cluster │  │     RDS (db.t3.micro)          │ │ │
-│ │ │ + Runner    │  │ + Runner    │  │                                 │ │ │
-│ │ │ t2.micro    │  │ t2.micro    │  │                                 │ │ │
+│ │ │  t2.micro   │  │  t2.micro   │  │                                 │ │ │
 │ │ └─────────────┘  └─────────────┘  └─────────────────────────────────┘ │ │
 │ └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                         │
+│                              ↕ VPC Peering ↕                           │
 │ ┌─────────────────────────────────────────────────────────────────────┐ │
-│ │                   HIGHER NETWORK (Default VPC)                      │ │
+│ │                HIGHER VPC (10.20.0.0/16)                           │ │
 │ │ ┌─────────────┐                    ┌─────────────────────────────────┐ │ │
 │ │ │  PROD ENV   │                    │     DEDICATED DATABASE          │ │ │
 │ │ │ K3s Cluster │                    │     RDS (db.t3.micro)          │ │ │
-│ │ │ + Runner    │                    │                                 │ │ │
-│ │ │ t2.micro    │                    │                                 │ │ │
+│ │ │  t2.micro   │                    │                                 │ │ │
 │ │ └─────────────┘                    └─────────────────────────────────┘ │ │
-│ └─────────────────────────────────────────────────────────────────────┘ │
-│                                                                         │
-│ ┌─────────────────────────────────────────────────────────────────────┐ │
-│ │                 MONITORING NETWORK (Default VPC)                    │ │
-│ │ ┌─────────────────────────────────────────────────────────────────┐   │ │
-│ │ │              MONITORING CLUSTER                                 │   │ │
-│ │ │         Prometheus + Grafana + Runner                          │   │ │
-│ │ │                t2.micro                                        │   │ │
-│ │ │                                                                │   │ │
-│ │ │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐        │   │ │
-│ │ │  │GitHub Runner│    │GitHub Runner│    │GitHub Runner│        │   │ │
-│ │ │  │awsgithubrunner│  │awsgithubrunner│  │awsgithubrunner│      │   │ │
-│ │ │  └─────────────┘    └─────────────┘    └─────────────┘        │   │ │
-│ │ └─────────────────────────────────────────────────────────────────┘   │ │
 │ └─────────────────────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 🔒 **Network Security Architecture**
+### **🔄 Network Architecture Changes:**
 
-| Network Tier | Environments | Database | GitHub Runners | Deployment Options |
-|--------------|--------------|----------|----------------|--------------------|
-| **Lower** | Dev + Test | Shared RDS | `github-runner-lower` | K3s + EC2 Direct |
-| **Higher** | Production | Dedicated RDS | `github-runner-higher` | K3s + EC2 Direct |
-| **Monitoring** | Monitoring | None | `github-runner-monitoring` | Centralized Monitoring |
+| Aspect | **BEFORE (Default VPC)** | **AFTER (Custom VPCs)** |
+|--------|--------------------------|-------------------------|
+| **Network Design** | Single shared VPC | 3 isolated VPCs |
+| **Environment Isolation** | ❌ None - all in same network | ✅ Complete isolation |
+| **Connectivity Issues** | ❌ Routing conflicts | ✅ Controlled via peering |
+| **Security** | ❌ Shared security groups | ✅ Dedicated per VPC |
+| **GitHub Runner Access** | ❌ Same subnet conflicts | ✅ Centralized in monitoring VPC |
+| **Cost Impact** | $0/month | $0/month (still free tier) |
+| **Troubleshooting** | ❌ Hard to isolate issues | ✅ Clear network boundaries |
+
+### 🔒 **Network Security Architecture (UPDATED)**
+
+| Network Tier | VPC CIDR | Environments | Database | GitHub Runners | Peering |
+|--------------|----------|--------------|----------|----------------|----------|
+| **Monitoring** | `10.30.0.0/16` | Monitoring | None | All runners centralized | Hub for all access |
+| **Lower** | `10.10.0.0/16` | Dev + Test | Shared RDS | Access via peering | ↔ Monitoring only |
+| **Higher** | `10.20.0.0/16` | Production | Dedicated RDS | Access via peering | ↔ Monitoring only |
+
+### **🛡️ Security Improvements:**
+- ✅ **Complete isolation** - Dev/Test/Prod cannot access each other
+- ✅ **Centralized runners** - All GitHub runners in monitoring VPC
+- ✅ **Controlled access** - Only monitoring VPC can access other tiers
+- ✅ **Dedicated security groups** - Per-VPC security policies
+- ✅ **Network-level separation** - Infrastructure-enforced boundaries
+
+## 🤖 **GitHub Runner Configuration (NEW)**
+
+### **Centralized Runner Architecture:**
+```
+Monitoring VPC (10.30.0.0/16)
+├── GitHub Runner (monitoring) ──┐
+├── GitHub Runner (lower)     ──┤── All runners in same VPC
+└── GitHub Runner (higher)    ──┘
+                 │
+            VPC Peering
+                 │
+    ┌────────────┼────────────┐
+    │            │            │
+Lower VPC    Higher VPC   Direct Access
+(10.10.x.x)  (10.20.x.x)  (Monitoring)
+```
+
+### **🔧 Runner Deployment:**
+```bash
+# Deploy monitoring network first (includes all runners)
+Actions → Core Infrastructure → deploy → monitoring
+
+# This creates:
+# - github-runner-monitoring (for monitoring tasks)
+# - github-runner-lower (for dev/test deployments)
+# - github-runner-higher (for prod deployments)
+```
+
+### **🌐 Network Access:**
+| Runner | VPC Location | Can Access | Purpose |
+|--------|--------------|------------|----------|
+| `github-runner-monitoring` | Monitoring VPC | Monitoring resources | Infrastructure management |
+| `github-runner-lower` | Monitoring VPC | Lower VPC via peering | Dev/Test deployments |
+| `github-runner-higher` | Monitoring VPC | Higher VPC via peering | Production deployments |
+
+### **🔒 Security Configuration:**
+- **Centralized in Monitoring VPC** - All runners in secure hub
+- **VPC Peering Access** - Controlled connectivity to target environments
+- **Dedicated Security Groups** - Per-runner access policies
+- **SSH Key Management** - Shared keys for K3s cluster access
+- **IAM Roles** - SSM and S3 access for automation
+
+### **✅ Benefits:**
+- 🛡️ **Enhanced Security** - Runners isolated from workloads
+- 🔧 **Centralized Management** - All runners in one location
+- 🌐 **Controlled Access** - VPC peering for specific connectivity
+- 📊 **Better Monitoring** - Centralized logging and metrics
+- 💰 **Still Free** - No additional costs for network architecture
 
 ### 🤖 **Deployment Workflows**
 
 | Workflow | Purpose | Target | Auto-Creates |
+|----------|---------|--------|-------------|
 | **Core Infrastructure** | K3s clusters + RDS + Runners | EC2 instances | ✅ Complete infrastructure |
+| **K3s Validation** | Comprehensive cluster testing | K3s instances | ✅ Health checks + kubeconfig |
 | **Core Deployment** | K8s application deployment | K3s pods | ✅ Namespaces + services |
 | **EC2 App Deployment** | Direct container deployment | EC2 instances | ✅ EC2 + Docker + Nginx |
 | **EC2 Operations** | Scaling + health checks | Running instances | ✅ Additional instances |
@@ -382,18 +448,44 @@ ssh -i ~/.ssh/k3s-key ubuntu@<CLUSTER_IP>
 
 ## 💰 **Cost Analysis**
 
-### **Current Setup: 100% Free Tier Usage**
-| Resource | Lower Network | Higher Network | Monitoring | Free Tier Limit | Monthly Cost |
-|----------|---------------|----------------|------------|-----------------|-------------|
+### **✅ NEW: Custom VPC Architecture - Still 100% Free!**
+
+| Component | **Before (Default VPC)** | **After (Custom VPCs)** | **Cost** |
+|-----------|--------------------------|--------------------------|----------|
+| **VPCs** | 1 (default) | 3 (custom) | **$0** - VPCs are free |
+| **Internet Gateways** | 1 | 3 | **$0** - IGWs are free |
+| **Public Subnets** | Default subnets | 6 subnets (2 per VPC) | **$0** - Subnets are free |
+| **VPC Peering** | None | 2 connections | **$0** - Peering is free |
+| **Route Tables** | Default | 3 custom | **$0** - Route tables are free |
+| **Security Groups** | Shared | Dedicated per VPC | **$0** - Security groups are free |
+| **EC2 Instances** | 6 × t2.micro | 6 × t2.micro | **$0** - Free tier (750 hrs each) |
+| **Data Transfer** | Within AZ | Within region via peering | **$0** - Free within region |
+
+### **💰 Detailed Resource Breakdown:**
+| Resource | Lower VPC | Higher VPC | Monitoring VPC | Free Tier Limit | Monthly Cost |
+|----------|-----------|------------|----------------|-----------------|-------------|
 | **EC2 t2.micro (K3s)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
 | **EC2 t2.micro (GitHub Runner)** | 1 instance | 1 instance | 1 instance | 750 hrs each | **$0** |
 | **EC2 t2.micro (App Instances)** | Auto-created | Auto-created | 0 | 750 hrs each | **$0** |
 | **RDS db.t3.micro** | 1 shared | 1 dedicated | 0 | 750 hrs each | **$0** |
 | **EBS Storage** | ~40GB | ~20GB | ~20GB | 30GB each | **$0** |
-| **VPC + Networking** | Default VPC | Default VPC | Default VPC | Always free | **$0** |
+| **VPC Infrastructure** | Custom VPC | Custom VPC | Custom VPC | Always free | **$0** |
 | **Data Transfer** | <0.3GB | <0.3GB | <0.3GB | 1GB/month | **$0** |
-| **Total per Network** | **$0** | **$0** | **$0** | | **$0/month** |
+| **Total per VPC** | **$0** | **$0** | **$0** | | **$0/month** |
 | **Grand Total** | | | | | **$0/month** |
+
+### **🎯 What We Avoided (Expensive Options):**
+- ❌ **NAT Gateways** (~$45/month each) - Using public subnets only
+- ❌ **VPC Endpoints** (~$7/month each) - Direct internet access
+- ❌ **Transit Gateway** (~$36/month) - Using free VPC peering
+- ❌ **Private subnets** - No need for NAT costs
+
+### **✅ Network Improvements Achieved at $0 Cost:**
+- 🛡️ **Complete environment isolation** - Dev/Test/Prod separated
+- 🔗 **Controlled connectivity** - VPC peering for specific access
+- 🏗️ **Dedicated security groups** - Per-VPC security policies
+- 🌐 **Centralized GitHub runners** - All in monitoring VPC
+- 🔧 **Resolved connectivity issues** - No more SSH timeouts
 
 ### 📊 **Data Transfer Optimization**
 

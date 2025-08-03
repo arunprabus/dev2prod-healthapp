@@ -18,39 +18,94 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Get or create default VPC
-resource "aws_default_vpc" "default" {
+# Custom VPC Configuration
+module "vpc_monitoring" {
+  source = "../modules/vpc"
+
+  name_prefix         = "health-app-monitoring"
+  vpc_cidr           = "10.30.0.0/16"
+  public_subnet_cidrs = ["10.30.1.0/24", "10.30.2.0/24"]
+
   tags = {
-    Name = "Default VPC"
+    Environment = "monitoring"
+    NetworkTier = "monitoring"
+    Project     = "health-app"
   }
 }
 
-data "aws_vpc" "first" {
-  id = aws_default_vpc.default.id
-}
+module "vpc_lower" {
+  source = "../modules/vpc"
 
+  name_prefix         = "health-app-lower"
+  vpc_cidr           = "10.10.0.0/16"
+  public_subnet_cidrs = ["10.10.1.0/24", "10.10.2.0/24"]
+  
+  peer_vpc_id         = module.vpc_monitoring.vpc_id
+  monitoring_vpc_cidr = module.vpc_monitoring.vpc_cidr_block
 
-
-# Get existing subnets
-data "aws_subnets" "existing" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.first.id]
+  tags = {
+    Environment = "dev"
+    NetworkTier = "lower"
+    Project     = "health-app"
   }
 }
 
-data "aws_subnet" "public" {
-  id = tolist(data.aws_subnets.existing.ids)[0]
+module "vpc_higher" {
+  source = "../modules/vpc"
+
+  name_prefix         = "health-app-higher"
+  vpc_cidr           = "10.20.0.0/16"
+  public_subnet_cidrs = ["10.20.1.0/24", "10.20.2.0/24"]
+  
+  peer_vpc_id         = module.vpc_monitoring.vpc_id
+  monitoring_vpc_cidr = module.vpc_monitoring.vpc_cidr_block
+
+  tags = {
+    Environment = "prod"
+    NetworkTier = "higher"
+    Project     = "health-app"
+  }
 }
 
-data "aws_subnet" "db" {
-  id = length(data.aws_subnets.existing.ids) > 1 ? tolist(data.aws_subnets.existing.ids)[1] : tolist(data.aws_subnets.existing.ids)[0]
+# Reverse peering connections
+resource "aws_vpc_peering_connection" "monitoring_to_lower" {
+  vpc_id      = module.vpc_monitoring.vpc_id
+  peer_vpc_id = module.vpc_lower.vpc_id
+  auto_accept = true
+  tags = { Name = "monitoring-to-lower" }
+}
+
+resource "aws_route" "monitoring_to_lower" {
+  route_table_id            = module.vpc_monitoring.route_table_id
+  destination_cidr_block    = module.vpc_lower.vpc_cidr_block
+  vpc_peering_connection_id = aws_vpc_peering_connection.monitoring_to_lower.id
+}
+
+resource "aws_vpc_peering_connection" "monitoring_to_higher" {
+  vpc_id      = module.vpc_monitoring.vpc_id
+  peer_vpc_id = module.vpc_higher.vpc_id
+  auto_accept = true
+  tags = { Name = "monitoring-to-higher" }
+}
+
+resource "aws_route" "monitoring_to_higher" {
+  route_table_id            = module.vpc_monitoring.route_table_id
+  destination_cidr_block    = module.vpc_higher.vpc_cidr_block
+  vpc_peering_connection_id = aws_vpc_peering_connection.monitoring_to_higher.id
+}
+
+# Select VPC based on network tier
+locals {
+  current_vpc = var.network_tier == "monitoring" ? module.vpc_monitoring : (
+    var.network_tier == "lower" ? module.vpc_lower : module.vpc_higher
+  )
+  current_subnet = local.current_vpc.public_subnet_ids[0]
 }
 
 # Security group for K3s cluster
 resource "aws_security_group" "k3s" {
   name_prefix = "${local.name_prefix}-k3s-"
-  vpc_id      = data.aws_vpc.first.id
+  vpc_id      = local.current_vpc.vpc_id
   
   lifecycle {
     create_before_destroy = true
@@ -200,7 +255,7 @@ resource "aws_instance" "k3s" {
   instance_type          = "t2.micro"
   key_name              = aws_key_pair.main.key_name
   vpc_security_group_ids = [aws_security_group.k3s.id]
-  subnet_id             = data.aws_subnet.public.id
+  subnet_id             = local.current_subnet
   iam_instance_profile   = aws_iam_instance_profile.k3s_profile.name
   
   lifecycle {
@@ -236,8 +291,8 @@ module "k3s_nlb" {
   source = "../modules/k3s-nlb"
   
   name_prefix       = local.name_prefix
-  vpc_id            = data.aws_vpc.first.id
-  subnet_ids        = data.aws_subnets.existing.ids
+  vpc_id            = local.current_vpc.vpc_id
+  subnet_ids        = local.current_vpc.public_subnet_ids
   k3s_instance_id   = aws_instance.k3s.id
   certificate_arn   = module.acm_certificate[0].certificate_arn
   
@@ -245,21 +300,25 @@ module "k3s_nlb" {
   depends_on = [aws_instance.k3s]
 }
 
-# GitHub Runner
+# GitHub Runner - Deploy to Monitoring VPC for centralized access
 module "github_runner" {
   source = "../modules/github-runner"
   
   network_tier       = var.network_tier
-  vpc_id             = data.aws_vpc.first.id
-  subnet_id          = data.aws_subnet.public.id
+  vpc_id             = module.vpc_monitoring.vpc_id
+  subnet_id          = module.vpc_monitoring.public_subnet_ids[0]
   ssh_public_key     = var.ssh_public_key
   repo_pat           = var.repo_pat
   repo_name          = var.repo_name
   s3_bucket          = "health-app-terraform-state"
   aws_region         = var.aws_region
-  k3s_subnet_cidrs   = [data.aws_subnet.public.cidr_block]
+  k3s_subnet_cidrs   = [
+    module.vpc_lower.vpc_cidr_block,
+    module.vpc_higher.vpc_cidr_block,
+    module.vpc_monitoring.vpc_cidr_block
+  ]
   
-  depends_on = [aws_key_pair.main]
+  depends_on = [aws_key_pair.main, module.vpc_monitoring]
 }
 
 # RDS Database - Commented out for now

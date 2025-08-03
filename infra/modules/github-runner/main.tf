@@ -84,13 +84,13 @@ resource "aws_security_group" "runner" {
     description = "All outbound traffic for GitHub API and package downloads"
   }
   
-  # SSH access from VPC (management subnet)
+  # SSH access from all VPCs (monitoring, lower, higher)
   ingress {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"]
-    description = "SSH access from VPC"
+    cidr_blocks = ["10.10.0.0/16", "10.20.0.0/16", "10.30.0.0/16"]
+    description = "SSH access from all health-app VPCs"
   }
   
   tags = {
