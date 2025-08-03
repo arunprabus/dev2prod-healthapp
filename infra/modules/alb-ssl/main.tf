@@ -197,4 +197,3 @@ resource "aws_wafv2_web_acl_association" "k3s_waf_association" {
   resource_arn = aws_lb.k3s_alb.arn
   web_acl_arn  = aws_wafv2_web_acl.k3s_waf.arn
 }
-}
