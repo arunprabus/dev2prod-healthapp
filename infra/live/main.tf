@@ -250,14 +250,14 @@ module "github_runner" {
 # RDS Database - Commented out for now
 # resource "aws_db_subnet_group" "main" {
 #   name       = "${local.name_prefix}-db-subnet-group"
-#   subnet_ids = [data.aws_subnet.public.id, data.aws_subnet.db.id]
+#   subnet_ids = local.current_vpc.public_subnet_ids
 #   
 #   tags = merge(local.tags, { Name = "${local.name_prefix}-db-subnet-group" })
 # }
 
 # resource "aws_security_group" "rds" {
 #   name_prefix = "${local.name_prefix}-rds-"
-#   vpc_id      = data.aws_vpc.first.id
+#   vpc_id      = local.current_vpc.vpc_id
 #   
 #   lifecycle {
 #     create_before_destroy = true
