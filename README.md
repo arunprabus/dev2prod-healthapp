@@ -135,6 +135,8 @@ Attach this comprehensive policy to your AWS user/group:
                 "iam:PutRolePolicy",
                 "iam:DeleteRolePolicy",
                 "iam:GetRolePolicy",
+                "iam:ListRolePolicies",
+                "iam:ListAttachedRolePolicies",
                 "iam:TagRole",
                 "iam:TagInstanceProfile",
                 "acm:RequestCertificate",

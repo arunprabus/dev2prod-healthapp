@@ -155,36 +155,10 @@ resource "aws_wafv2_web_acl" "k3s_waf" {
     allow {}
   }
 
-  rule {
-    name     = "RateLimitRule"
-    priority = 1
-
-    override_action {
-      none {}
-    }
-
-    statement {
-      rate_based_statement {
-        limit              = 2000
-        aggregate_key_type = "IP"
-      }
-    }
-
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "RateLimitRule"
-      sampled_requests_enabled   = true
-    }
-
-    action {
-      block {}
-    }
-  }
-
   visibility_config {
-    cloudwatch_metrics_enabled = true
+    cloudwatch_metrics_enabled = false
     metric_name                = "k3sWAF"
-    sampled_requests_enabled   = true
+    sampled_requests_enabled   = false
   }
 
   tags = {
