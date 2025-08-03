@@ -155,19 +155,47 @@ jobs:
           echo "❌ Ansible validation failed"
         fi
 
-    - name: Quick Manual Validation
+    - name: Quick Manual Validation via SSM
       if: github.event.inputs.validation_type == 'quick' || github.event.inputs.validation_type == 'connectivity-only'
       continue-on-error: true
       run: |
-        echo "⚡ Running quick manual validation..."
+        echo "⚡ Running quick manual validation via SSM..."
         
+        INSTANCE_ID="${{ steps.k3s-info.outputs.instance_id }}"
         K3S_IP="${{ steps.k3s-info.outputs.public_ip }}"
         
-        echo "Checking K3s service status..."
-        ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "sudo systemctl is-active k3s" || echo "Service check failed"
+        echo "Checking K3s service status via SSM..."
+        STATUS_CMD=$(aws ssm send-command \
+          --instance-ids "$INSTANCE_ID" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["systemctl is-active k3s"]' \
+          --query "Command.CommandId" --output text)
         
-        echo "Testing kubectl..."
-        ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml" || echo "kubectl test failed"
+        sleep 10
+        
+        SERVICE_STATUS=$(aws ssm get-command-invocation \
+          --command-id "$STATUS_CMD" \
+          --instance-id "$INSTANCE_ID" \
+          --query "StandardOutputContent" --output text 2>/dev/null | tr -d '\n' || echo "unknown")
+        
+        echo "K3s service status: $SERVICE_STATUS"
+        
+        echo "Testing kubectl via SSM..."
+        KUBECTL_CMD=$(aws ssm send-command \
+          --instance-ids "$INSTANCE_ID" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["kubectl get nodes --kubeconfig=/etc/rancher/k3s/k3s.yaml"]' \
+          --query "Command.CommandId" --output text)
+        
+        sleep 10
+        
+        KUBECTL_RESULT=$(aws ssm get-command-invocation \
+          --command-id "$KUBECTL_CMD" \
+          --instance-id "$INSTANCE_ID" \
+          --query "StandardOutputContent" --output text 2>/dev/null || echo "failed")
+        
+        echo "kubectl result:"
+        echo "$KUBECTL_RESULT"
         
         echo "Checking API endpoint..."
         if timeout 10 curl -k -s https://$K3S_IP:6443/version; then
@@ -176,23 +204,42 @@ jobs:
           echo "❌ API endpoint not accessible"
         fi
 
-    - name: Upload Kubeconfig to S3
+    - name: Upload Kubeconfig to S3 via SSM
       continue-on-error: true
       run: |
-        echo "📤 Uploading kubeconfig to S3..."
+        echo "📤 Uploading kubeconfig to S3 via SSM..."
         
+        INSTANCE_ID="${{ steps.k3s-info.outputs.instance_id }}"
         K3S_IP="${{ steps.k3s-info.outputs.public_ip }}"
         
-        # Download kubeconfig
-        ssh -i ~/.ssh/k3s-key -o StrictHostKeyChecking=no ubuntu@$K3S_IP "cat /etc/rancher/k3s/k3s.yaml" > /tmp/kubeconfig.yaml
+        # Download kubeconfig via SSM
+        KUBECONFIG_CMD=$(aws ssm send-command \
+          --instance-ids "$INSTANCE_ID" \
+          --document-name "AWS-RunShellScript" \
+          --parameters 'commands=["cat /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo NOTFOUND"]' \
+          --query "Command.CommandId" --output text)
         
-        # Update server IP
-        sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
+        sleep 10
         
-        # Upload to S3
-        aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ github.event.inputs.environment }}-kubeconfig.yaml
+        KUBECONFIG_CONTENT=$(aws ssm get-command-invocation \
+          --command-id "$KUBECONFIG_CMD" \
+          --instance-id "$INSTANCE_ID" \
+          --query "StandardOutputContent" --output text 2>/dev/null || echo "FAILED")
         
-        echo "✅ Kubeconfig uploaded to S3"
+        if [[ "$KUBECONFIG_CONTENT" != "NOTFOUND" ]] && [[ "$KUBECONFIG_CONTENT" != "FAILED" ]] && [[ -n "$KUBECONFIG_CONTENT" ]]; then
+          echo "✅ Kubeconfig downloaded via SSM"
+          echo "$KUBECONFIG_CONTENT" > /tmp/kubeconfig.yaml
+          
+          # Update server IP
+          sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
+          
+          # Upload to S3
+          aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ github.event.inputs.environment }}-kubeconfig.yaml
+          
+          echo "✅ Kubeconfig uploaded to S3"
+        else
+          echo "❌ Failed to download kubeconfig via SSM"
+        fi
 
     - name: Generate Validation Report
       if: always()
