@@ -27,18 +27,18 @@ on:
       runner_type:
         description: 'Runner Type'
         required: false
-        default: 'aws'
+        default: 'github'
         type: choice
         options:
-        - aws
         - github
+        - aws
 
 env:
   AWS_REGION: ap-south-1
 
 jobs:
   deploy:
-    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', github.event.inputs.environment == 'dev' && 'lower' || github.event.inputs.environment == 'test' && 'lower' || 'higher')) || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.inputs.runner_type == 'aws' && fromJSON(format('["self-hosted", "github-runner-{0}"]', 'monitoring')) || 'ubuntu-latest' }}
     
     steps:
       - name: Checkout
@@ -86,31 +86,34 @@ jobs:
           echo "NAMESPACE=health-app-$ENV" >> $GITHUB_ENV
           echo "NETWORK_TIER=$NETWORK_TIER" >> $GITHUB_ENV
 
-      - name: Configure kubectl for environment
+      - name: Download kubeconfig from S3
         run: |
-          # Use appropriate kubeconfig secret
-          if [ "$ENVIRONMENT" = "dev" ]; then
-            echo "${{ secrets.KUBECONFIG_DEV }}" | base64 -d > /tmp/kubeconfig
-          elif [ "$ENVIRONMENT" = "test" ]; then
-            echo "${{ secrets.KUBECONFIG_TEST }}" | base64 -d > /tmp/kubeconfig
+          # Determine network tier based on environment
+          if [ "$ENVIRONMENT" = "dev" ] || [ "$ENVIRONMENT" = "test" ]; then
+            NETWORK_TIER="lower"
           else
-            echo "${{ secrets.KUBECONFIG_PROD }}" | base64 -d > /tmp/kubeconfig
+            NETWORK_TIER="higher"
           fi
           
-          # Fix kubeconfig SSL issues
-          sed -i 's/certificate-authority-data:.*/insecure-skip-tls-verify: true/' /tmp/kubeconfig
-          sed -i '/certificate-authority:/d' /tmp/kubeconfig
+          echo "💾 Downloading kubeconfig for $ENVIRONMENT environment (network: $NETWORK_TIER)"
           
-          export KUBECONFIG=/tmp/kubeconfig
-          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          # Download kubeconfig from S3
+          KUBECONFIG_KEY="kubeconfig/health-app-$NETWORK_TIER-kubeconfig.yaml"
           
-          # Test connection with insecure flag
-          kubectl cluster-info --insecure-skip-tls-verify=true
-          kubectl get nodes --insecure-skip-tls-verify=true
+          if aws s3 cp s3://${{ secrets.TF_STATE_BUCKET }}/$KUBECONFIG_KEY ~/.kube/config; then
+            echo "✅ Downloaded kubeconfig from S3: $KUBECONFIG_KEY"
+          else
+            echo "❌ Failed to download kubeconfig from S3"
+            echo "💡 Please run Core Infrastructure deployment first"
+            exit 1
+          fi
+          
+          # Test connection
+          kubectl get nodes
 
       - name: Create namespace
         run: |
-          kubectl create namespace $NAMESPACE --dry-run=client -o yaml --insecure-skip-tls-verify=true | kubectl apply -f - --insecure-skip-tls-verify=true
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
           echo "✅ Namespace $NAMESPACE ready"
 
       - name: Deploy application
@@ -118,43 +121,43 @@ jobs:
           echo "🚀 Deploying $APP_NAME with image $IMAGE_NAME"
           
           # Check if deployment exists
-          if kubectl get deployment $APP_NAME -n $NAMESPACE --insecure-skip-tls-verify=true >/dev/null 2>&1; then
+          if kubectl get deployment $APP_NAME -n $NAMESPACE >/dev/null 2>&1; then
             echo "📝 Updating existing deployment"
-            kubectl set image deployment/$APP_NAME $APP_NAME=$IMAGE_NAME -n $NAMESPACE --insecure-skip-tls-verify=true
-            kubectl annotate deployment/$APP_NAME deployment.kubernetes.io/revision- -n $NAMESPACE --insecure-skip-tls-verify=true
+            kubectl set image deployment/$APP_NAME $APP_NAME=$IMAGE_NAME -n $NAMESPACE
+            kubectl annotate deployment/$APP_NAME deployment.kubernetes.io/revision- -n $NAMESPACE
           else
             echo "🆕 Creating new deployment"
-            kubectl create deployment $APP_NAME --image=$IMAGE_NAME -n $NAMESPACE --insecure-skip-tls-verify=true
+            kubectl create deployment $APP_NAME --image=$IMAGE_NAME -n $NAMESPACE
             
             # Create service
-            kubectl expose deployment $APP_NAME --port=80 --target-port=8080 -n $NAMESPACE --type=ClusterIP --insecure-skip-tls-verify=true
+            kubectl expose deployment $APP_NAME --port=80 --target-port=8080 -n $NAMESPACE --type=ClusterIP
             
             # Add labels
-            kubectl label deployment $APP_NAME app=$APP_NAME version=latest -n $NAMESPACE --insecure-skip-tls-verify=true
+            kubectl label deployment $APP_NAME app=$APP_NAME version=latest -n $NAMESPACE
           fi
           
           # Wait for rollout
           echo "⏳ Waiting for deployment rollout..."
-          kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s --insecure-skip-tls-verify=true
+          kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s
 
       - name: Verify deployment
         run: |
           echo "🔍 Verifying deployment status"
           
           # Get deployment status
-          kubectl get deployment $APP_NAME -n $NAMESPACE -o wide --insecure-skip-tls-verify=true
+          kubectl get deployment $APP_NAME -n $NAMESPACE -o wide
           
           # Get pods
           echo "📋 Pod status:"
-          kubectl get pods -l app=$APP_NAME -n $NAMESPACE -o wide --insecure-skip-tls-verify=true
+          kubectl get pods -l app=$APP_NAME -n $NAMESPACE -o wide
           
           # Get services
           echo "🌐 Service status:"
-          kubectl get services -l app=$APP_NAME -n $NAMESPACE --insecure-skip-tls-verify=true
+          kubectl get services -l app=$APP_NAME -n $NAMESPACE
           
           # Check pod health
-          READY_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers --insecure-skip-tls-verify=true | grep Running | wc -l)
-          TOTAL_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers --insecure-skip-tls-verify=true | wc -l)
+          READY_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers | grep Running | wc -l)
+          TOTAL_PODS=$(kubectl get pods -l app=$APP_NAME -n $NAMESPACE --no-headers | wc -l)
           
           echo "READY_PODS=$READY_PODS" >> $GITHUB_ENV
           echo "TOTAL_PODS=$TOTAL_PODS" >> $GITHUB_ENV
@@ -165,7 +168,7 @@ jobs:
           else
             echo "❌ Some pods are not ready: $READY_PODS/$TOTAL_PODS"
             echo "DEPLOYMENT_STATUS=failed" >> $GITHUB_ENV
-            kubectl describe pods -l app=$APP_NAME -n $NAMESPACE --insecure-skip-tls-verify=true
+            kubectl describe pods -l app=$APP_NAME -n $NAMESPACE
             exit 1
           fi
 
@@ -195,11 +198,11 @@ jobs:
           
           echo "### 🔍 Resource Information" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          kubectl get all -l app=$APP_NAME -n $NAMESPACE --insecure-skip-tls-verify=true >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Resources not available" >> $GITHUB_STEP_SUMMARY
+          kubectl get all -l app=$APP_NAME -n $NAMESPACE >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "Resources not available" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup
         if: always()
         run: |
-          rm -f /tmp/kubeconfig
+          rm -f ~/.kube/config
           echo "🧹 Cleanup completed"
