@@ -16,9 +16,9 @@ PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
 
 echo "✅ Public IP: $PUBLIC_IP"
 
-# Install K3s for internal access only (ALB will handle external SSL)
+# Install K3s with proper external access configuration
 echo "Installing K3s..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --bind-address 0.0.0.0 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP" sh -
 
 # Wait for service to be ready
 echo "Starting K3s service..."
@@ -43,14 +43,29 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 # Wait for K3s to be ready
 echo "Waiting for K3s to be ready..."
-for i in {1..30}; do
-  if kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
+for i in {1..60}; do
+  if kubectl get nodes > /dev/null 2>&1; then
     echo "✅ K3s is ready!"
-    kubectl get nodes --insecure-skip-tls-verify
+    kubectl get nodes
     break
   fi
-  echo "Waiting for K3s... ($i/30)"
+  echo "Waiting for K3s... ($i/60)"
   sleep 10
+done
+
+# Additional wait for API server to be fully ready
+echo "⏳ Additional wait for API server stability..."
+sleep 30
+
+# Test external connectivity
+echo "🔍 Testing external API access..."
+for i in {1..10}; do
+  if curl -k -s https://$PUBLIC_IP:6443/version > /dev/null 2>&1; then
+    echo "✅ External API access working (attempt $i)"
+    break
+  fi
+  echo "⏳ External API not ready (attempt $i/10), waiting..."
+  sleep 15
 done
 
 # Create ALB-enabled kubeconfig and store in SSM

@@ -75,6 +75,29 @@ jobs:
         echo "cluster_ip=$K3S_IP" >> $GITHUB_OUTPUT
         echo "📍 K3s Cluster IP: $K3S_IP"
 
+    - name: Wait for K3s API Server
+      run: |
+        echo "⏳ Waiting for K3s API server to be ready..."
+        
+        # Check if K3s service is running via SSH
+        for i in {1..10}; do
+          if ssh -i ~/.ssh/k3s-key ubuntu@${{ steps.cluster-ip.outputs.cluster_ip }} "sudo systemctl is-active k3s" | grep -q "active"; then
+            echo "✅ K3s service is active (attempt $i)"
+            break
+          else
+            echo "⏳ K3s service not ready (attempt $i/10), waiting..."
+            if [ $i -eq 10 ]; then
+              echo "❌ K3s service not ready after 10 attempts"
+              exit 1
+            fi
+            sleep 30
+          fi
+        done
+        
+        # Additional wait for API server to be fully ready
+        echo "⏳ Waiting additional 60 seconds for API server..."
+        sleep 60
+
     - name: Setup Kubeconfig
       run: |
         echo "📥 Setting up kubeconfig..."
@@ -101,8 +124,21 @@ jobs:
         export KUBECONFIG=/tmp/kubeconfig.yaml
         echo "KUBECONFIG=/tmp/kubeconfig.yaml" >> $GITHUB_ENV
         
-        # Verify connection
-        kubectl get nodes
+        # Verify connection with retry
+        echo "🔍 Verifying K3s API connection..."
+        for i in {1..5}; do
+          if kubectl get nodes --request-timeout=60s; then
+            echo "✅ K3s API connection successful (attempt $i)"
+            break
+          else
+            echo "⏳ K3s API not ready (attempt $i/5), waiting..."
+            if [ $i -eq 5 ]; then
+              echo "❌ K3s API not ready after 5 attempts"
+              exit 1
+            fi
+            sleep 60
+          fi
+        done
 
     - name: Setup Ingress for ${{ matrix.env }}
       run: |
