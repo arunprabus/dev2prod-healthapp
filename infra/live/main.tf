@@ -72,14 +72,14 @@ resource "aws_security_group" "k3s" {
   #   description = "K3s API access"
   # }
 
-  # Allow ALB to access K3s API
-  ingress {
-    from_port       = 6443
-    to_port         = 6443
-    protocol        = "tcp"
-    security_groups = [module.alb_ssl.alb_security_group_id]
-    description     = "ALB to K3s API"
-  }
+  # Allow ALB to access K3s API - will be added after ALB creation
+  # ingress {
+  #   from_port       = 6443
+  #   to_port         = 6443
+  #   protocol        = "tcp"
+  #   security_groups = [module.alb_ssl.alb_security_group_id]
+  #   description     = "ALB to K3s API"
+  # }
 
   ingress {
     from_port   = 80
@@ -231,12 +231,11 @@ resource "aws_instance" "k3s" {
 module "alb_ssl" {
   source = "../modules/alb-ssl"
   
-  environment           = var.environment
-  vpc_id                = data.aws_vpc.first.id
-  subnet_ids            = data.aws_subnets.existing.ids
-  k3s_instance_id       = aws_instance.k3s.id
-  k3s_security_group_id = aws_security_group.k3s.id
-  aws_region            = var.aws_region
+  environment     = var.environment
+  vpc_id          = data.aws_vpc.first.id
+  subnet_ids      = data.aws_subnets.existing.ids
+  k3s_instance_id = aws_instance.k3s.id
+  aws_region      = var.aws_region
   
   depends_on = [aws_instance.k3s]
 }

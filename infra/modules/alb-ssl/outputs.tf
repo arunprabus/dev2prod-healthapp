@@ -13,7 +13,8 @@ output "k3s_endpoint" {
   value       = "https://${var.environment}.k3s.${var.domain_name}:443"
 }
 
-output "alb_security_group_id" {
-  description = "ALB security group ID"
-  value       = aws_security_group.alb_sg.id
-}
+# Removed to avoid circular dependency
+# output "alb_security_group_id" {
+#   description = "ALB security group ID"
+#   value       = aws_security_group.alb_sg.id
+# }

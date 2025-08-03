@@ -64,10 +64,11 @@ resource "aws_security_group" "alb_sg" {
   }
 
   egress {
-    from_port       = 6443
-    to_port         = 6443
-    protocol        = "tcp"
-    security_groups = [var.k3s_security_group_id]
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/8"]
+    description = "ALB to K3s API"
   }
 
   egress {

@@ -30,7 +30,8 @@ variable "k3s_instance_id" {
   type        = string
 }
 
-variable "k3s_security_group_id" {
-  description = "K3s security group ID"
-  type        = string
-}
+# Removed to avoid circular dependency
+# variable "k3s_security_group_id" {
+#   description = "K3s security group ID"
+#   type        = string
+# }
