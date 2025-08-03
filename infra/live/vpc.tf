@@ -22,10 +22,6 @@ module "vpc_lower" {
   name_prefix         = "health-app-lower"
   vpc_cidr           = "10.10.0.0/16"
   public_subnet_cidrs = ["10.10.1.0/24", "10.10.2.0/24"]
-  
-  # Peer with monitoring VPC
-  peer_vpc_id         = module.vpc_monitoring.vpc_id
-  monitoring_vpc_cidr = module.vpc_monitoring.vpc_cidr_block
 
   tags = {
     Environment = "dev"
@@ -41,10 +37,6 @@ module "vpc_higher" {
   name_prefix         = "health-app-higher"
   vpc_cidr           = "10.20.0.0/16"
   public_subnet_cidrs = ["10.20.1.0/24", "10.20.2.0/24"]
-  
-  # Peer with monitoring VPC
-  peer_vpc_id         = module.vpc_monitoring.vpc_id
-  monitoring_vpc_cidr = module.vpc_monitoring.vpc_cidr_block
 
   tags = {
     Environment = "prod"
@@ -84,5 +76,18 @@ resource "aws_vpc_peering_connection" "monitoring_to_higher" {
 resource "aws_route" "monitoring_to_higher" {
   route_table_id            = module.vpc_monitoring.route_table_id
   destination_cidr_block    = module.vpc_higher.vpc_cidr_block
+  vpc_peering_connection_id = aws_vpc_peering_connection.monitoring_to_higher.id
+}
+
+# Routes from Lower/Higher back to Monitoring
+resource "aws_route" "lower_to_monitoring" {
+  route_table_id            = module.vpc_lower.route_table_id
+  destination_cidr_block    = module.vpc_monitoring.vpc_cidr_block
+  vpc_peering_connection_id = aws_vpc_peering_connection.monitoring_to_lower.id
+}
+
+resource "aws_route" "higher_to_monitoring" {
+  route_table_id            = module.vpc_higher.route_table_id
+  destination_cidr_block    = module.vpc_monitoring.vpc_cidr_block
   vpc_peering_connection_id = aws_vpc_peering_connection.monitoring_to_higher.id
 }

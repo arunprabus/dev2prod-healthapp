@@ -55,24 +55,4 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# VPC Peering to Monitoring VPC
-resource "aws_vpc_peering_connection" "to_monitoring" {
-  count = var.peer_vpc_id != null ? 1 : 0
-
-  vpc_id      = aws_vpc.main.id
-  peer_vpc_id = var.peer_vpc_id
-  auto_accept = true
-
-  tags = merge(var.tags, {
-    Name = "${var.name_prefix}-to-monitoring"
-  })
-}
-
-# Route for Monitoring Access
-resource "aws_route" "to_monitoring" {
-  count = var.peer_vpc_id != null ? 1 : 0
-
-  route_table_id            = aws_route_table.public.id
-  destination_cidr_block    = var.monitoring_vpc_cidr
-  vpc_peering_connection_id = aws_vpc_peering_connection.to_monitoring[0].id
-}
+# VPC Peering is handled in the main configuration

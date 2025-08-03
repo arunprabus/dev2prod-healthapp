@@ -10,10 +10,10 @@ metadata:
 spec:
   tls:
   - hosts:
-    - health-api.yourdomain.com
+    - health-api.sharpzeal.com
     secretName: health-api-tls
   rules:
-  - host: health-api.yourdomain.com
+  - host: health-api.sharpzeal.com
     http:
       paths:
       - path: /
@@ -31,7 +31,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: your-email@domain.com
+    email: admin@sharpzeal.com
     privateKeySecretRef:
       name: letsencrypt-prod
     solvers:

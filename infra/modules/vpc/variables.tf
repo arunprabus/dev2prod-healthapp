@@ -19,17 +19,7 @@ variable "public_subnet_cidrs" {
   type        = list(string)
 }
 
-variable "peer_vpc_id" {
-  description = "VPC ID to peer with (monitoring VPC)"
-  type        = string
-  default     = null
-}
 
-variable "monitoring_vpc_cidr" {
-  description = "CIDR block of monitoring VPC for routing"
-  type        = string
-  default     = "10.30.0.0/16"
-}
 
 variable "tags" {
   description = "Tags to apply to resources"

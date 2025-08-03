@@ -80,10 +80,24 @@ jobs:
     - name: Clear Cache (for redeploy)
       if: github.event.inputs.action == 'redeploy'
       run: |
-        echo "🧹 Clearing Terraform cache for fresh redeploy..."
+        echo "🧹 Clearing ALL Terraform cache for fresh redeploy..."
+        
+        # Clear plugin cache
         rm -rf ~/.terraform.d/plugin-cache
+        
+        # Clear working directory cache
         rm -rf infra/live/.terraform
         rm -rf infra/live/.terraform.lock.hcl
+        
+        # Clear any module cache
+        find infra -name ".terraform" -type d -exec rm -rf {} + 2>/dev/null || true
+        find infra -name ".terraform.lock.hcl" -type f -delete 2>/dev/null || true
+        
+        # Clear any cached plans
+        find infra -name "tfplan" -type f -delete 2>/dev/null || true
+        find infra -name "*.tfplan" -type f -delete 2>/dev/null || true
+        
+        echo "✅ All Terraform cache cleared - modules will be freshly loaded"
         
     - name: Setup Terraform Cache Directory
       run: |
