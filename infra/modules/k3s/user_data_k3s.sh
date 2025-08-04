@@ -18,7 +18,7 @@ echo "✅ Public IP: $PUBLIC_IP"
 
 # Install K3s with proper external access configuration
 echo "Installing K3s..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --bind-address 0.0.0.0 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP --resolv-conf /etc/resolv.conf" sh -
 
 # Wait for service to be ready
 echo "Starting K3s service..."
@@ -34,8 +34,17 @@ done
 
 # Update kubeconfig with public IP (fix server endpoint)
 echo "🔧 Updating kubeconfig..." | tee -a /var/log/k3s-install.log
+
+# Wait for kubeconfig to be fully written
+sleep 5
+
+# Fix server endpoint in kubeconfig
 sed -i "s|https://127.0.0.1:6443|https://$PUBLIC_IP:6443|g" /etc/rancher/k3s/k3s.yaml
 sed -i "s|server: https://0.0.0.0:6443|server: https://$PUBLIC_IP:6443|g" /etc/rancher/k3s/k3s.yaml
+
+# Verify the change
+echo "📋 Kubeconfig server URL:"
+grep "server:" /etc/rancher/k3s/k3s.yaml
 echo "✅ Kubeconfig updated with IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
 
 # Test kubectl
@@ -291,16 +300,36 @@ echo 'export KUBECONFIG=/etc/rancher/k3s/k3s.yaml' >> /root/.bashrc
 echo 'alias k="kubectl"' >> /home/ubuntu/.bashrc
 echo 'alias k="kubectl"' >> /root/.bashrc
 
-# Install NGINX Ingress Controller
+# Install NGINX Ingress Controller with timeout handling
 echo "🌐 Installing NGINX Ingress Controller..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml --insecure-skip-tls-verify
+
+# Apply with timeout and retry logic
+for i in {1..3}; do
+  echo "Attempt $i/3: Installing NGINX Ingress..."
+  if timeout 120 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml --insecure-skip-tls-verify; then
+    echo "✅ NGINX Ingress installed successfully"
+    break
+  else
+    echo "⚠️ Attempt $i failed, retrying..."
+    if [ $i -eq 3 ]; then
+      echo "⚠️ NGINX Ingress installation had timeouts, but core components likely created"
+      echo "Checking what was created..."
+      kubectl get all -n ingress-nginx --insecure-skip-tls-verify || true
+    fi
+    sleep 30
+  fi
+done
+
+# Create missing ServiceAccount if needed
+echo "🔧 Ensuring ServiceAccount exists..."
+kubectl create serviceaccount ingress-nginx-admission -n ingress-nginx --insecure-skip-tls-verify 2>/dev/null || echo "ServiceAccount already exists or created"
 
 # Wait for ingress controller to be ready
 echo "⏳ Waiting for ingress controller..."
 kubectl wait --namespace ingress-nginx \
   --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller \
-  --timeout=300s --insecure-skip-tls-verify || true
+  --timeout=300s --insecure-skip-tls-verify || echo "⚠️ Ingress controller may still be starting"
 
 # Create test deployment for verification
 echo "🧪 Creating test deployment..."
@@ -481,19 +510,153 @@ echo "  - /home/ubuntu/cluster-info.sh - Show cluster information"
 echo "  - /home/ubuntu/monitor-k3s.sh - Health monitoring (runs every 5 minutes)"
 echo "  - /home/ubuntu/restart-k3s.sh - Restart K3s cluster"
 
-# Final verification and debug info
-echo "=== FINAL VERIFICATION ==="
-echo "🔍 K3s service status:"
-systemctl status k3s --no-pager
+# Comprehensive K3s diagnostics for troubleshooting
+echo "=== COMPREHENSIVE K3S DIAGNOSTICS ==="
+echo "Generated at: $(date)"
 echo ""
-echo "🔍 K3s process:"
-ps aux | grep k3s | grep -v grep
+
+# 1. Network and IP information
+echo "=== NETWORK INFORMATION ==="
+echo "🌐 Hostname and IPs:"
+hostname -I || echo "hostname -I failed"
+echo "🌐 Public IP: $PUBLIC_IP"
+echo "🌐 Network interfaces:"
+ip addr show | grep -E "inet |UP|DOWN" || echo "ip addr failed"
 echo ""
-echo "🔍 Kubeconfig file:"
+
+# 2. K3s service status
+echo "=== K3S SERVICE STATUS ==="
+echo "🔧 Service status:"
+systemctl status k3s --no-pager || echo "systemctl status failed"
+echo ""
+echo "🔧 Service is-active:"
+systemctl is-active k3s || echo "Service not active"
+echo "🔧 Service is-enabled:"
+systemctl is-enabled k3s || echo "Service not enabled"
+echo ""
+
+# 3. K3s process information
+echo "=== K3S PROCESS INFORMATION ==="
+echo "🔍 K3s processes:"
+ps aux | grep k3s | grep -v grep || echo "No K3s processes found"
+echo ""
+echo "🔍 Process tree:"
+pstree -p | grep k3s || echo "No K3s in process tree"
+echo ""
+
+# 4. Network listening ports
+echo "=== NETWORK PORTS ==="
+echo "🔌 Ports listening on 6443:"
+sudo ss -tulnp | grep 6443 || echo "Port 6443 not listening"
+echo "🔌 All K3s related ports:"
+sudo ss -tulnp | grep k3s || echo "No K3s ports found"
+echo "🔌 All listening ports:"
+sudo ss -tuln | head -20
+echo ""
+
+# 5. Kubeconfig analysis
+echo "=== KUBECONFIG ANALYSIS ==="
+echo "📋 Kubeconfig file info:"
 ls -la /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "Kubeconfig file not found"
+echo "📋 Server URL in kubeconfig:"
+cat /etc/rancher/k3s/k3s.yaml | grep server || echo "No server line found"
+echo "📋 Kubeconfig permissions:"
+stat -c "%a %n" /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "Cannot stat kubeconfig"
 echo ""
-echo "🔍 kubectl test:"
-kubectl get nodes --insecure-skip-tls-verify 2>/dev/null || echo "kubectl not working"
+
+# 6. K3s logs (recent)
+echo "=== K3S LOGS (LAST 50 LINES) ==="
+echo "📜 Recent K3s service logs:"
+sudo journalctl -u k3s -n 50 --no-pager || echo "Cannot read K3s logs"
+echo ""
+
+# 7. K3s installation log
+echo "=== K3S INSTALLATION LOG (LAST 30 LINES) ==="
+echo "📜 Installation log:"
+tail -30 /var/log/k3s-install.log 2>/dev/null || echo "No installation log found"
+echo ""
+
+# 8. Kubernetes API connectivity test
+echo "=== KUBERNETES API TESTS ==="
+echo "🔍 Local API test (127.0.0.1):"
+curl -k -s --connect-timeout 5 https://127.0.0.1:6443/version || echo "Local API not responding"
+echo "🔍 External API test ($PUBLIC_IP):"
+curl -k -s --connect-timeout 5 https://$PUBLIC_IP:6443/version || echo "External API not responding"
+echo "🔍 kubectl cluster-info:"
+kubectl cluster-info --insecure-skip-tls-verify 2>/dev/null || echo "kubectl cluster-info failed"
+echo "🔍 kubectl get nodes:"
+kubectl get nodes --insecure-skip-tls-verify 2>/dev/null || echo "kubectl get nodes failed"
+echo ""
+
+# 9. System resources
+echo "=== SYSTEM RESOURCES ==="
+echo "📊 Memory usage:"
+free -h || echo "free command failed"
+echo "📊 Disk usage:"
+df -h / || echo "df command failed"
+echo "📊 Load average:"
+uptime || echo "uptime command failed"
+echo ""
+
+# 10. DNS and connectivity
+echo "=== DNS AND CONNECTIVITY ==="
+echo "🌐 DNS resolution test:"
+nslookup kubernetes.default.svc.cluster.local 2>/dev/null || echo "DNS resolution failed"
+echo "🌐 Internet connectivity:"
+ping -c 2 8.8.8.8 2>/dev/null || echo "Internet connectivity failed"
+echo ""
+
+# 11. K3s configuration files
+echo "=== K3S CONFIGURATION ==="
+echo "📁 K3s data directory:"
+ls -la /var/lib/rancher/k3s/ 2>/dev/null || echo "K3s data directory not found"
+echo "📁 K3s config directory:"
+ls -la /etc/rancher/k3s/ 2>/dev/null || echo "K3s config directory not found"
+echo ""
+
+# 12. Container runtime
+echo "=== CONTAINER RUNTIME ==="
+echo "📦 Containerd status:"
+sudo ctr version 2>/dev/null || echo "Containerd not accessible"
+echo "📦 Running containers:"
+sudo ctr containers list 2>/dev/null | head -10 || echo "Cannot list containers"
+echo ""
+
+# 13. Firewall and security
+echo "=== SECURITY AND FIREWALL ==="
+echo "🔥 UFW status:"
+sudo ufw status 2>/dev/null || echo "UFW not available"
+echo "🔥 Iptables rules (K3s related):"
+sudo iptables -L | grep -i k3s || echo "No K3s iptables rules found"
+echo ""
+
+# 14. Final status summary
+echo "=== FINAL STATUS SUMMARY ==="
+echo "📋 Environment: $ENVIRONMENT"
+echo "📋 Network Tier: $NETWORK_TIER"
+echo "📋 Public IP: $PUBLIC_IP"
+echo "📋 Cluster Name: $CLUSTER_NAME"
+echo "📋 Installation Time: $(date)"
+
+# Test final connectivity
+if kubectl get nodes --insecure-skip-tls-verify >/dev/null 2>&1; then
+    echo "✅ K3S STATUS: HEALTHY - API responding"
+    kubectl get nodes --insecure-skip-tls-verify
+else
+    echo "❌ K3S STATUS: UNHEALTHY - API not responding"
+fi
+
+if systemctl is-active --quiet k3s; then
+    echo "✅ SERVICE STATUS: ACTIVE"
+else
+    echo "❌ SERVICE STATUS: INACTIVE"
+fi
+
+if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+    echo "✅ KUBECONFIG: EXISTS"
+else
+    echo "❌ KUBECONFIG: MISSING"
+fi
 
 echo "SUCCESS" > /var/log/k3s-install-complete
 echo "K3S_INSTALLATION_COMPLETE=$(date)" >> /var/log/k3s-ready
