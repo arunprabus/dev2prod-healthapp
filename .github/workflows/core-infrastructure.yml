@@ -205,17 +205,6 @@ jobs:
         
         echo "✅ Pre-deployment cleanup completed"
 
- get nodes --request-timeout=10s >/dev/null 2>&1; then
-              echo "✅ kubectl configured successfully"
-              kubectl get nodes
-            else
-              echo "⚠️ kubectl connection failed, will configure after infrastructure deployment"
-            fi
-          else
-            echo "⚠️ No existing kubeconfig found in S3"
-          fi
-        fi
-
     - name: Terraform Init
       working-directory: infra/live
       run: |
@@ -237,6 +226,19 @@ jobs:
           -backend-config="region=$AWS_REGION"
         
         echo ""
+        echo "📋 Terraform workspace: $(terraform workspace show)"
+        echo "📋 Backend config verified"
+        
+        # Verify S3 backend is working
+        echo ""
+        echo "🔍 Verifying S3 backend..."
+        if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ > /dev/null 2>&1; then
+          echo "✅ S3 bucket accessible"
+          echo "📋 Existing state files:"
+          aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ | grep ".tfstate" || echo "No state files found yet"
+        else
+          echo "❌ S3 bucket not accessible - check bucket name and permissions"
+        fiho ""
         echo "📋 Terraform workspace: $(terraform workspace show)"
         echo "📋 Backend config verified"
         
