@@ -1,88 +1,223 @@
-name: Cleanup GitHub Runners
+name: Nuclear Cleanup - Destroy All Resources
 
 on:
   workflow_dispatch:
     inputs:
-      network_tier:
-        description: 'Network tier to clean'
+      cleanup_scope:
+        description: 'Cleanup scope'
         required: true
         type: choice
         options:
-        - lower
-        - higher
-        - monitoring
-        - all
-      cleanup_type:
-        description: 'Cleanup type'
+        - github-runners-only
+        - infrastructure-only
+        - nuclear-everything
+      confirmation:
+        description: 'Type DESTROY to confirm'
         required: true
-        type: choice
-        options:
-        - offline-only
-        - all-runners
-        - by-pattern
+        type: string
 
 jobs:
-  cleanup-runners:
+  nuclear-cleanup:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Cleanup GitHub Runners
+    - name: Validate Confirmation
       run: |
-        echo "🧹 Cleaning up GitHub runners..."
-        echo "Network tier: ${{ github.event.inputs.network_tier }}"
-        echo "Cleanup type: ${{ github.event.inputs.cleanup_type }}"
+        if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
+          echo "❌ Confirmation failed. Type 'DESTROY' to proceed."
+          exit 1
+        fi
+        echo "✅ Confirmation validated"
+    
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+    
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Nuclear Cleanup
+      run: |
+        echo "💥 NUCLEAR CLEANUP INITIATED" 
+        echo "Scope: ${{ github.event.inputs.cleanup_scope }}"
         
-        # Function to cleanup runners for a specific network tier
-        cleanup_network_runners() {
-          local network=$1
-          echo "🔍 Finding runners for network: $network"
-          
-          if [ "${{ github.event.inputs.cleanup_type }}" = "offline-only" ]; then
-            RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.status == \"offline\" and (.name | contains(\"$network\"))) | .id")
-          elif [ "${{ github.event.inputs.cleanup_type }}" = "all-runners" ]; then
-            RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.name | contains(\"$network\")) | .id")
-          else
-            RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-              jq -r ".runners[] | select(.name | contains(\"$network\")) | .id")
-          fi
-          
-          echo "Found runners to remove: $RUNNERS"
+        # GitHub Runners Cleanup
+        if [[ "${{ github.event.inputs.cleanup_scope }}" == "github-runners-only" || "${{ github.event.inputs.cleanup_scope }}" == "nuclear-everything" ]]; then
+          echo "🔥 Cleaning GitHub Runners..."
+          RUNNERS=$(curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/runners | \
+            jq -r '.runners[].id')
           
           for runner_id in $RUNNERS; do
             if [ ! -z "$runner_id" ] && [ "$runner_id" != "null" ]; then
-              echo "🗑️ Removing runner ID: $runner_id"
               curl -s -X DELETE \
                 -H "Authorization: token ${{ secrets.REPO_PAT }}" \
                 -H "Accept: application/vnd.github.v3+json" \
                 https://api.github.com/repos/${{ github.repository }}/actions/runners/$runner_id
-              echo "✅ Runner $runner_id removed"
-              sleep 2
+              echo "🗑️ Removed runner: $runner_id"
             fi
           done
-        }
-        
-        # Cleanup based on network tier selection
-        if [ "${{ github.event.inputs.network_tier }}" = "all" ]; then
-          cleanup_network_runners "lower"
-          cleanup_network_runners "higher" 
-          cleanup_network_runners "monitoring"
-        else
-          cleanup_network_runners "${{ github.event.inputs.network_tier }}"
         fi
         
-        echo "🎉 Cleanup completed!"
+        # Infrastructure Cleanup
+        if [[ "${{ github.event.inputs.cleanup_scope }}" == "infrastructure-only" || "${{ github.event.inputs.cleanup_scope }}" == "nuclear-everything" ]]; then
+          echo "🔥 Destroying AWS Infrastructure..."
+          
+          # Multi-region cleanup first
+          echo "🌍 Cleaning other regions..."
+          REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1 ap-southeast-2 eu-central-1 ca-central-1 sa-east-1"
+          
+          for REGION in $REGIONS; do
+            echo "Cleaning $REGION..."
+            # Terminate instances
+            INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
+            if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+              echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
+            fi
+            
+            # Delete RDS
+            RDS_INSTANCES=$(aws rds describe-db-instances --region $REGION --query "DBInstances[].DBInstanceIdentifier" --output text 2>/dev/null || echo "")
+            for db in $RDS_INSTANCES; do
+              if [ -n "$db" ] && [ "$db" != "None" ]; then
+                aws rds delete-db-instance --region $REGION --db-instance-identifier $db --skip-final-snapshot --delete-automated-backups || true
+              fi
+            done
+            
+            # Delete VPCs
+            VPCS=$(aws ec2 describe-vpcs --region $REGION --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text 2>/dev/null || echo "")
+            for vpc in $VPCS; do
+              if [ -n "$vpc" ] && [ "$vpc" != "None" ]; then
+                # Delete IGWs
+                IGWS=$(aws ec2 describe-internet-gateways --region $REGION --filters "Name=attachment.vpc-id,Values=$vpc" --query "InternetGateways[].InternetGatewayId" --output text 2>/dev/null || echo "")
+                for igw in $IGWS; do
+                  if [ -n "$igw" ] && [ "$igw" != "None" ]; then
+                    aws ec2 detach-internet-gateway --region $REGION --internet-gateway-id $igw --vpc-id $vpc || true
+                    aws ec2 delete-internet-gateway --region $REGION --internet-gateway-id $igw || true
+                  fi
+                done
+                aws ec2 delete-vpc --region $REGION --vpc-id $vpc || true
+              fi
+            done
+          done
+          
+          # Main region cleanup (ap-south-1)
+          echo "🔥 Cleaning main region (ap-south-1)..."
+          
+          # Terminate all EC2 instances
+          INSTANCES=$(aws ec2 describe-instances --query "Reservations[].Instances[?State.Name!='terminated'].InstanceId" --output text)
+          if [ ! -z "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            aws ec2 terminate-instances --instance-ids $INSTANCES
+            echo "⏳ Waiting for instances to terminate..."
+            aws ec2 wait instance-terminated --instance-ids $INSTANCES
+          fi
+          
+          # Delete RDS instances
+          RDS_INSTANCES=$(aws rds describe-db-instances --query "DBInstances[].DBInstanceIdentifier" --output text)
+          for db in $RDS_INSTANCES; do
+            if [ ! -z "$db" ] && [ "$db" != "None" ]; then
+              aws rds delete-db-instance --db-instance-identifier $db --skip-final-snapshot --delete-automated-backups
+            fi
+          done
+          
+          # Force delete VPCs with dependencies
+          VPCS=$(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text)
+          for vpc in $VPCS; do
+            if [ ! -z "$vpc" ] && [ "$vpc" != "None" ]; then
+              echo "💥 Destroying VPC: $vpc"
+              
+              # Delete VPC Peering Connections
+              PEERS=$(aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$vpc" "Name=accepter-vpc-info.vpc-id,Values=$vpc" --query "VpcPeeringConnections[].VpcPeeringConnectionId" --output text)
+              for peer in $PEERS; do
+                if [ ! -z "$peer" ] && [ "$peer" != "None" ]; then
+                  aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id $peer || true
+                fi
+              done
+              
+              # Delete NAT Gateways
+              NATGWS=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc" --query "NatGateways[].NatGatewayId" --output text)
+              for nat in $NATGWS; do
+                if [ ! -z "$nat" ] && [ "$nat" != "None" ]; then
+                  aws ec2 delete-nat-gateway --nat-gateway-id $nat || true
+                fi
+              done
+              
+              # Delete Internet Gateways
+              IGWS=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc" --query "InternetGateways[].InternetGatewayId" --output text)
+              for igw in $IGWS; do
+                if [ ! -z "$igw" ] && [ "$igw" != "None" ]; then
+                  aws ec2 detach-internet-gateway --internet-gateway-id $igw --vpc-id $vpc || true
+                  aws ec2 delete-internet-gateway --internet-gateway-id $igw || true
+                fi
+              done
+              
+              # Delete Subnets
+              SUBNETS=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc" --query "Subnets[].SubnetId" --output text)
+              for subnet in $SUBNETS; do
+                if [ ! -z "$subnet" ] && [ "$subnet" != "None" ]; then
+                  aws ec2 delete-subnet --subnet-id $subnet || true
+                fi
+              done
+              
+              # Delete Route Tables
+              ROUTE_TABLES=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc" --query "RouteTables[?Associations[0].Main!=\`true\`].RouteTableId" --output text)
+              for rt in $ROUTE_TABLES; do
+                if [ ! -z "$rt" ] && [ "$rt" != "None" ]; then
+                  aws ec2 delete-route-table --route-table-id $rt || true
+                fi
+              done
+              
+              # Delete Security Groups
+              SGS=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc" --query "SecurityGroups[?GroupName!=\`default\`].GroupId" --output text)
+              for sg in $SGS; do
+                if [ ! -z "$sg" ] && [ "$sg" != "None" ]; then
+                  aws ec2 delete-security-group --group-id $sg || true
+                fi
+              done
+              
+              # Delete VPC
+              aws ec2 delete-vpc --vpc-id $vpc || true
+            fi
+          done
+          
+          # Delete Key Pairs
+          KEY_PAIRS=$(aws ec2 describe-key-pairs --query "KeyPairs[].KeyName" --output text)
+          for key in $KEY_PAIRS; do
+            if [[ "$key" == *"health-app"* ]]; then
+              aws ec2 delete-key-pair --key-name $key || true
+            fi
+          done
+          
+          # Terraform destroy with proper backend config
+          echo "🔥 Running Terraform destroy..."
+          cd infra/live
+          
+          # Initialize and destroy for each environment
+          for env in lower higher monitoring; do
+            echo "Destroying $env environment..."
+            terraform init -reconfigure \
+              -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+              -backend-config="key=health-app-$env.tfstate" \
+              -backend-config="region=ap-south-1" || true
+            
+            terraform destroy \
+              -var="environment=$env" \
+              -var="network_tier=$env" \
+              -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+              -var="repo_pat=${{ secrets.REPO_PAT }}" \
+              -var="repo_name=${{ secrets.REPO_NAME }}" \
+              -var="restore_from_snapshot=false" \
+              -var="snapshot_identifier=null" \
+              -auto-approve || true
+          done
+        fi
         
-        # Show remaining runners
-        echo "📋 Remaining runners:"
-        curl -s -H "Authorization: token ${{ secrets.REPO_PAT }}" \
-          -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/repos/${{ github.repository }}/actions/runners | \
-          jq -r '.runners[] | "\(.name) - \(.status)"'
+        echo "💥 NUCLEAR CLEANUP COMPLETED"
