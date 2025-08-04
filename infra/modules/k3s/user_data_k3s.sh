@@ -18,7 +18,7 @@ echo "✅ Public IP: $PUBLIC_IP"
 
 # Install K3s with proper external access configuration
 echo "Installing K3s..."
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --bind-address 0.0.0.0 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --advertise-address $PUBLIC_IP --tls-san $PUBLIC_IP --node-external-ip $PUBLIC_IP" sh -
 
 # Wait for service to be ready
 echo "Starting K3s service..."
@@ -32,21 +32,22 @@ while [ ! -f /etc/rancher/k3s/k3s.yaml ]; do
   sleep 5
 done
 
-# Update kubeconfig with public IP
+# Update kubeconfig with public IP (fix server endpoint)
 echo "🔧 Updating kubeconfig..." | tee -a /var/log/k3s-install.log
-sed -i "s|127.0.0.1|$PUBLIC_IP|g" /etc/rancher/k3s/k3s.yaml
+sed -i "s|https://127.0.0.1:6443|https://$PUBLIC_IP:6443|g" /etc/rancher/k3s/k3s.yaml
+sed -i "s|server: https://0.0.0.0:6443|server: https://$PUBLIC_IP:6443|g" /etc/rancher/k3s/k3s.yaml
 echo "✅ Kubeconfig updated with IP: $PUBLIC_IP" | tee -a /var/log/k3s-install.log
 
 # Test kubectl
 echo "Testing kubectl..."
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-# Wait for K3s to be ready
+# Wait for K3s to be ready with insecure skip
 echo "Waiting for K3s to be ready..."
 for i in {1..60}; do
-  if kubectl get nodes > /dev/null 2>&1; then
+  if kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
     echo "✅ K3s is ready!"
-    kubectl get nodes
+    kubectl get nodes --insecure-skip-tls-verify
     break
   fi
   echo "Waiting for K3s... ($i/60)"
@@ -55,18 +56,33 @@ done
 
 # Additional wait for API server to be fully ready
 echo "⏳ Additional wait for API server stability..."
-sleep 30
+sleep 60
 
-# Test external connectivity
+# Wait for all system pods to be ready
+echo "🔍 Waiting for system pods..."
+for i in {1..30}; do
+  if kubectl get pods -n kube-system --insecure-skip-tls-verify | grep -v Running | grep -v Completed | wc -l | grep -q "^1$"; then
+    echo "✅ System pods ready!"
+    break
+  fi
+  echo "Waiting for system pods... ($i/30)"
+  sleep 10
+done
+
+# Test external connectivity with longer timeout
 echo "🔍 Testing external API access..."
-for i in {1..10}; do
-  if curl -k -s https://$PUBLIC_IP:6443/version > /dev/null 2>&1; then
+for i in {1..20}; do
+  if timeout 30 kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
     echo "✅ External API access working (attempt $i)"
     break
   fi
-  echo "⏳ External API not ready (attempt $i/10), waiting..."
-  sleep 15
+  echo "⏳ External API not ready (attempt $i/20), waiting 30s..."
+  sleep 30
 done
+
+# Final verification with detailed output
+echo "🔍 Final API verification..."
+kubectl get nodes --insecure-skip-tls-verify || echo "⚠️ API still not ready, but continuing..."
 
 # Create ALB-enabled kubeconfig and store in SSM
 echo "📤 Creating ALB kubeconfig and storing in SSM..."
@@ -212,7 +228,8 @@ if [[ -n "$S3_BUCKET" ]]; then
   # Create standard kubeconfig with public IP
   PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
   cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig-standard.yaml
-  sed -i "s/127.0.0.1/$PUBLIC_IP/g" /tmp/kubeconfig-standard.yaml
+  sed -i "s|https://127.0.0.1:6443|https://$PUBLIC_IP:6443|g" /tmp/kubeconfig-standard.yaml
+  sed -i "s|server: https://0.0.0.0:6443|server: https://$PUBLIC_IP:6443|g" /tmp/kubeconfig-standard.yaml
   
   if aws s3 ls s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml >/dev/null 2>&1; then
     echo "🔄 Existing standard kubeconfig found, updating..."
@@ -225,8 +242,138 @@ if [[ -n "$S3_BUCKET" ]]; then
   fi
 fi
 
+# CloudWatch Agent disabled to stay in free tier
+# Uncomment below to enable monitoring (costs ~$2.60/month)
+# echo "📊 Installing CloudWatch Agent..."
+# wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+# dpkg -i -E ./amazon-cloudwatch-agent.deb
+# 
+# # Create CloudWatch Agent configuration
+# cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_EOF'
+# {
+#   "agent": {
+#     "metrics_collection_interval": 60,
+#     "run_as_user": "cwagent"
+#   },
+#   "metrics": {
+#     "namespace": "HealthApp/K3s",
+#     "metrics_collected": {
+#       "cpu": {
+#         "measurement": ["cpu_usage_idle", "cpu_usage_user", "cpu_usage_system"],
+#         "metrics_collection_interval": 60
+#       },
+#       "disk": {
+#         "measurement": ["used_percent"],
+#         "metrics_collection_interval": 60,
+#         "resources": ["*"]
+#       },
+#       "mem": {
+#         "measurement": ["mem_used_percent"],
+#         "metrics_collection_interval": 60
+#       }
+#     }
+#   },
+#   "logs": {
+#     "logs_collected": {
+#       "files": {
+#         "collect_list": [
+#           {
+#             "file_path": "/var/log/k3s-install.log",
+#             "log_group_name": "/aws/ec2/health-app/k3s-install",
+#             "log_stream_name": "{instance_id}"
+#           }
+#         ]
+#       }
+#     }
+#   }
+# }
+# CW_EOF
+# 
+# # Start CloudWatch Agent
+# /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+#   -a fetch-config \
+#   -m ec2 \
+#   -s \
+#   -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+# 
+# systemctl enable amazon-cloudwatch-agent
+# echo "✅ CloudWatch monitoring enabled"
+
 # Setup local kubeconfig access
-echo "🔧 Setting up local kubeconfig access..."
+echo "🔧 Setting up local kubeconfig access..." monitoring (costs ~$2.60/month)
+# echo "📊 Installing CloudWatch Agent..."
+# wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+# dpkg -i -E ./amazon-cloudwatch-agent.deb
+
+# Setup local kubeconfig access
+echo "🔧 Setting up local kubeconfig access...t..."
+wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
+dpkg -i -E ./amazon-cloudwatch-agent.deb
+
+# Create CloudWatch Agent configuration
+cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_EOF'
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent"
+  },
+  "metrics": {
+    "namespace": "HealthApp/K3s",
+    "metrics_collected": {
+      "cpu": {
+        "measurement": [
+          "cpu_usage_idle",
+          "cpu_usage_iowait",
+          "cpu_usage_user",
+          "cpu_usage_system"
+        ],
+        "metrics_collection_interval": 60
+      },
+      "disk": {
+        "measurement": [
+          "used_percent"
+        ],
+        "metrics_collection_interval": 60,
+        "resources": [
+          "*"
+        ]
+      },
+      "mem": {
+        "measurement": [
+          "mem_used_percent"
+        ],
+        "metrics_collection_interval": 60
+      }
+    }
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/k3s-install.log",
+            "log_group_name": "/aws/ec2/health-app/k3s-install",
+            "log_stream_name": "{instance_id}"
+          }
+        ]
+      }
+    }
+  }
+}
+CW_EOF
+
+# Start CloudWatch Agent
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config \
+  -m ec2 \
+  -s \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+systemctl enable amazon-cloudwatch-agent
+echo "✅ CloudWatch monitoring enabled"
+
+# Setup local kubeconfig access
+echo "🔧 Setting up local kubeconfig access....."
 mkdir -p /home/ubuntu/.kube
 cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
 chown ubuntu:ubuntu /home/ubuntu/.kube/config

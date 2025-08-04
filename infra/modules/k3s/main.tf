@@ -141,6 +141,7 @@ resource "aws_instance" "k3s" {
   subnet_id                  = var.subnet_id
   iam_instance_profile       = aws_iam_instance_profile.k3s_profile.name
   associate_public_ip_address = true
+  # monitoring                 = true  # Costs $2.10/month - disabled for free tier
   
   # Ensure instance is in public subnet with internet access
   depends_on = [aws_key_pair.main]
