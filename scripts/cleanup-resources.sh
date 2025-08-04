@@ -1,7 +1,36 @@
 #!/bin/bash
 set -e
 
+# Get deployment context from environment variables
+DEPLOYMENT_ACTION=${DEPLOYMENT_ACTION:-deploy}
+TARGET_ENVIRONMENT=${TARGET_ENVIRONMENT:-}
+RUNNER_TYPE=${RUNNER_TYPE:-github}
+
 echo "🧹 Starting resource cleanup..."
+echo "📊 Action: $DEPLOYMENT_ACTION"
+echo "📊 Target: $TARGET_ENVIRONMENT"
+echo "📊 Runner: $RUNNER_TYPE"
+
+# Detect current runner's VPC if running on AWS self-hosted runner
+CURRENT_RUNNER_VPC=""
+if [[ "$RUNNER_TYPE" == "aws" ]]; then
+    echo "🔍 Detecting current runner's VPC..."
+    
+    # Get current instance metadata
+    TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || echo "")
+    if [[ -n "$TOKEN" ]]; then
+        CURRENT_INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id 2>/dev/null || echo "")
+        
+        if [[ -n "$CURRENT_INSTANCE_ID" ]]; then
+            CURRENT_RUNNER_VPC=$(aws ec2 describe-instances --instance-ids "$CURRENT_INSTANCE_ID" --query 'Reservations[0].Instances[0].VpcId' --output text 2>/dev/null || echo "")
+            
+            if [[ -n "$CURRENT_RUNNER_VPC" && "$CURRENT_RUNNER_VPC" != "None" ]]; then
+                RUNNER_VPC_NAME=$(aws ec2 describe-vpcs --vpc-ids "$CURRENT_RUNNER_VPC" --query 'Vpcs[0].Tags[?Key==`Name`].Value|[0]' --output text 2>/dev/null || echo "")
+                echo "✅ Current runner VPC detected: $RUNNER_VPC_NAME ($CURRENT_RUNNER_VPC)"
+            fi
+        fi
+    fi
+fi
 
 # Function to check if instance is running
 is_instance_running() {
@@ -44,9 +73,29 @@ delete_vpc() {
         --query 'Reservations[*].Instances[*].InstanceId' --output text)
     
     if [[ -n "$running_instances" && "$running_instances" != "None" ]]; then
-        echo "⚠️ VPC $vpc_name has running instances: $running_instances"
-        echo "   Skipping VPC deletion to avoid disruption"
-        return 2  # Special return code for active VPCs
+        # Check if this VPC contains the current runner
+        if [[ -n "$CURRENT_RUNNER_VPC" && "$vpc_id" == "$CURRENT_RUNNER_VPC" ]]; then
+            echo "🚫 PROTECTED: This VPC contains the current GitHub runner - cannot delete"
+            echo "   Runner VPC: $vpc_name ($vpc_id)"
+            return 2  # Special return code for protected VPCs
+        fi
+        
+        # For redeploy of target environment, force delete even with running instances
+        if [[ "$DEPLOYMENT_ACTION" == "redeploy" && "$vpc_name" == *"-$TARGET_ENVIRONMENT-"* ]]; then
+            echo "🔄 REDEPLOY: Force terminating instances in target VPC $vpc_name"
+            echo "$running_instances" | tr ' ' '\n' | while read -r instance_id; do
+                if [[ -n "$instance_id" ]]; then
+                    echo "❌ Terminating instance: $instance_id"
+                    aws ec2 terminate-instances --instance-ids "$instance_id" || true
+                fi
+            done
+            echo "⏳ Waiting 60 seconds for instances to terminate..."
+            sleep 60
+        else
+            echo "⚠️ VPC $vpc_name has running instances: $running_instances"
+            echo "   Skipping VPC deletion to avoid disruption"
+            return 2  # Special return code for active VPCs
+        fi
     fi
     
     echo "🗑️ Deleting VPC $vpc_name ($vpc_id) and dependencies..."
@@ -144,10 +193,12 @@ if [[ -n "$VPCS" ]]; then
     DELETED_VPCS=0
     
     echo "$VPCS" | while read -r vpc_id vpc_name; do
-        if delete_vpc "$vpc_id" "$vpc_name"; then
-            DELETED_VPCS=$((DELETED_VPCS + 1))
-        elif [ $? -eq 2 ]; then
-            ACTIVE_VPCS=$((ACTIVE_VPCS + 1))
+        # For redeploy, prioritize target environment VPCs for deletion
+        if [[ "$DEPLOYMENT_ACTION" == "redeploy" && "$vpc_name" == *"-$TARGET_ENVIRONMENT-"* ]]; then
+            echo "🎯 Target environment VPC found: $vpc_name - forcing deletion"
+            delete_vpc "$vpc_id" "$vpc_name"
+        else
+            delete_vpc "$vpc_id" "$vpc_name"
         fi
     done
     

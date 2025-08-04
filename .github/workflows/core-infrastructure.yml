@@ -75,6 +75,10 @@ jobs:
     - name: Pre-deployment Resource Cleanup
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       continue-on-error: true
+      env:
+        DEPLOYMENT_ACTION: ${{ github.event.inputs.action }}
+        TARGET_ENVIRONMENT: ${{ matrix.env }}
+        RUNNER_TYPE: ${{ github.event.inputs.runner_type }}
       run: |
         echo "🧹 Pre-deployment resource cleanup..."
         
