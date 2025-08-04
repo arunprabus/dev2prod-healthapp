@@ -185,14 +185,23 @@ jobs:
         if aws s3 cp "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" ./kubeconfig 2>/dev/null; then
           export KUBECONFIG=./kubeconfig
           
-          # Test kubectl connection
-          if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
-            echo "✅ kubectl configured successfully"
-            kubectl get nodes
-            kubectl get namespaces
-          else
-            echo "⚠️ kubectl connection failed - cluster may still be initializing"
-          fi
+          # Test kubectl connection with retry
+          echo "🔍 Testing kubectl connection..."
+          for i in {1..12}; do
+            if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
+              echo "✅ kubectl configured successfully (attempt $i)"
+              kubectl get nodes
+              kubectl get namespaces
+              break
+            else
+              echo "⏳ kubectl connection failed (attempt $i/12), waiting 30s..."
+              if [ $i -eq 12 ]; then
+                echo "⚠️ kubectl connection failed after 6 minutes - cluster may have issues"
+              else
+                sleep 30
+              fi
+            fi
+          done
         else
           echo "⚠️ Could not download kubeconfig from S3"
         fi
