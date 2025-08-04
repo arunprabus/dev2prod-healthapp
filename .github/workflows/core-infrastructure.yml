@@ -225,13 +225,3 @@ jobs:
           -auto-approve
         
         echo "✅ Terraform destroy completed for ${{ matrix.env }} environment"
-      run: |
-        terraform destroy \
-          -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
-          -var="network_tier=${{ matrix.env }}" \
-          -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
-          -var="repo_pat=${{ secrets.REPO_PAT }}" \
-          -var="repo_name=${{ secrets.REPO_NAME }}" \
-          -var="restore_from_snapshot=false" \
-          -var="snapshot_identifier=null" \
-          -auto-approve
