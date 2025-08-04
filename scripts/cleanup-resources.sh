@@ -52,28 +52,56 @@ delete_vpc() {
     echo "🗑️ Deleting VPC $vpc_name ($vpc_id) and dependencies..."
     
     # Delete NAT Gateways
-    aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc_id" --query 'NatGateways[*].NatGatewayId' --output text | \
-    xargs -r -n1 -I {} aws ec2 delete-nat-gateway --nat-gateway-id {} || true
+    local nat_gateways=$(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc_id" --query 'NatGateways[*].NatGatewayId' --output text)
+    if [[ -n "$nat_gateways" && "$nat_gateways" != "None" ]]; then
+        for nat_id in $nat_gateways; do
+            aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" || true
+        done
+        sleep 10
+    fi
     
     # Delete Internet Gateways
-    aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'InternetGateways[*].InternetGatewayId' --output text | \
-    xargs -r -n1 -I {} sh -c 'aws ec2 detach-internet-gateway --internet-gateway-id {} --vpc-id '$vpc_id' && aws ec2 delete-internet-gateway --internet-gateway-id {}' || true
+    local igws=$(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'InternetGateways[*].InternetGatewayId' --output text)
+    if [[ -n "$igws" && "$igws" != "None" ]]; then
+        for igw_id in $igws; do
+            aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" || true
+            aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" || true
+        done
+    fi
     
     # Delete Subnets
-    aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[*].SubnetId' --output text | \
-    xargs -r -n1 -I {} aws ec2 delete-subnet --subnet-id {} || true
+    local subnets=$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[*].SubnetId' --output text)
+    if [[ -n "$subnets" && "$subnets" != "None" ]]; then
+        for subnet_id in $subnets; do
+            aws ec2 delete-subnet --subnet-id "$subnet_id" || true
+        done
+    fi
     
     # Delete Route Tables (except main)
-    aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | \
-    xargs -r -n1 -I {} aws ec2 delete-route-table --route-table-id {} || true
+    local route_tables=$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text)
+    if [[ -n "$route_tables" && "$route_tables" != "None" ]]; then
+        for rt_id in $route_tables; do
+            aws ec2 delete-route-table --route-table-id "$rt_id" || true
+        done
+    fi
     
     # Delete Security Groups (except default)
-    aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | \
-    xargs -r -n1 -I {} aws ec2 delete-security-group --group-id {} || true
+    local security_groups=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text)
+    if [[ -n "$security_groups" && "$security_groups" != "None" ]]; then
+        for sg_id in $security_groups; do
+            aws ec2 delete-security-group --group-id "$sg_id" || true
+        done
+    fi
+    
+    # Wait for dependencies to be deleted
+    sleep 5
     
     # Delete VPC
-    aws ec2 delete-vpc --vpc-id "$vpc_id" || true
-    echo "✅ VPC $vpc_name deleted"
+    if aws ec2 delete-vpc --vpc-id "$vpc_id" 2>/dev/null; then
+        echo "✅ VPC $vpc_name deleted successfully"
+    else
+        echo "⚠️ VPC $vpc_name deletion failed (may have remaining dependencies)"
+    fi
 }
 
 # 1. Clean up offline GitHub runners
@@ -123,24 +151,39 @@ fi
 echo "🔍 Cleaning up orphaned resources..."
 
 # Delete orphaned key pairs
-aws ec2 describe-key-pairs --filters "Name=key-name,Values=health-app-*" --query 'KeyPairs[*].KeyName' --output text | \
-xargs -r -n1 -I {} aws ec2 delete-key-pair --key-name {} || true
+local key_pairs=$(aws ec2 describe-key-pairs --filters "Name=key-name,Values=health-app-*" --query 'KeyPairs[*].KeyName' --output text)
+if [[ -n "$key_pairs" && "$key_pairs" != "None" ]]; then
+    for key_name in $key_pairs; do
+        aws ec2 delete-key-pair --key-name "$key_name" || true
+    done
+fi
 
 # Delete orphaned security groups (not in any VPC)
-aws ec2 describe-security-groups --filters "Name=group-name,Values=health-app-*" --query 'SecurityGroups[*].GroupId' --output text | \
-xargs -r -n1 -I {} aws ec2 delete-security-group --group-id {} 2>/dev/null || true
+local orphaned_sgs=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=health-app-*" --query 'SecurityGroups[*].GroupId' --output text)
+if [[ -n "$orphaned_sgs" && "$orphaned_sgs" != "None" ]]; then
+    for sg_id in $orphaned_sgs; do
+        aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null || true
+    done
+fi
 
-# 4. Check VPC limits
+# 4. Wait for VPC deletions to complete
+echo "⏳ Waiting for VPC deletions to complete..."
+sleep 15
+
+# 5. Check VPC limits
 echo "📊 Checking VPC usage..."
 VPC_COUNT=$(aws ec2 describe-vpcs --query 'length(Vpcs)')
 echo "Current VPC count: $VPC_COUNT/5"
 
 if [[ $VPC_COUNT -ge 5 ]]; then
-    echo "⚠️ WARNING: VPC limit reached ($VPC_COUNT/5)"
-    echo "Consider deleting unused VPCs or requesting limit increase"
+    echo "⚠️ WARNING: VPC limit still reached ($VPC_COUNT/5)"
+    echo "Listing remaining VPCs:"
+    aws ec2 describe-vpcs --query 'Vpcs[*].[VpcId,Tags[?Key==`Name`].Value|[0],IsDefault]' --output table
+    echo "💡 Consider manually deleting unused VPCs or requesting limit increase"
+    echo "💡 You can also try running this script again in a few minutes"
     exit 1
 else
-    echo "✅ VPC limit OK ($VPC_COUNT/5)"
+    echo "✅ VPC limit OK ($VPC_COUNT/5) - ready for deployment"
 fi
 
-echo "🎉 Resource cleanup completed!"
+echo "🎉 Resource cleanup completed successfully!"
