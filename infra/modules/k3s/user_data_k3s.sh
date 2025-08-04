@@ -6,7 +6,7 @@ exec > >(tee /var/log/k3s-install.log) 2>&1
 
 echo "Starting K3s installation at $(date)"
 
-# Get public IP first
+# Get public IP once and reuse
 echo "🌐 Fetching public IP..."
 TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
@@ -107,41 +107,10 @@ if [[ "$ENVIRONMENT" == "dev" ]] || [[ "$NETWORK_TIER" == "lower" ]]; then
   kubectl create namespace health-app-dev --insecure-skip-tls-verify || true
   kubectl create namespace health-app-test --insecure-skip-tls-verify || true
   
-  # Database secrets commented out for now
-  # echo "💾 Creating database secrets for shared DB..."
-  # kubectl create secret generic database-config \
-  #   --from-literal=DB_HOST="$DB_ENDPOINT" \
-  #   --from-literal=DB_PORT="5432" \
-  #   --from-literal=DB_NAME="healthapi" \
-  #   --from-literal=DB_USER="postgres" \
-  #   --from-literal=DB_PASSWORD="changeme123!" \
-  #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
-  #   -n health-app-dev || true
-  #   
-  # kubectl create secret generic database-config \
-  #   --from-literal=DB_HOST="$DB_ENDPOINT" \
-  #   --from-literal=DB_PORT="5432" \
-  #   --from-literal=DB_NAME="healthapi" \
-  #   --from-literal=DB_USER="postgres" \
-  #   --from-literal=DB_PASSWORD="changeme123!" \
-  #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
-  #   -n health-app-test || true
-
 elif [[ "$ENVIRONMENT" == "prod" ]] || [[ "$NETWORK_TIER" == "higher" ]]; then
   # Higher network: production environment
   kubectl create namespace health-app-prod --insecure-skip-tls-verify || true
   
-  # Database secrets commented out for now
-  # echo "💾 Creating database secrets for dedicated prod DB..."
-  # kubectl create secret generic database-config \
-  #   --from-literal=DB_HOST="$DB_ENDPOINT" \
-  #   --from-literal=DB_PORT="5432" \
-  #   --from-literal=DB_NAME="healthapi" \
-  #   --from-literal=DB_USER="postgres" \
-  #   --from-literal=DB_PASSWORD="changeme123!" \
-  #   --from-literal=DATABASE_URL="postgresql://postgres:changeme123!@$DB_ENDPOINT:5432/healthapi" \
-  #   -n health-app-prod || true
-
 elif [[ "$ENVIRONMENT" == "monitoring" ]]; then
   # Monitoring network: monitoring tools
   kubectl create namespace monitoring --insecure-skip-tls-verify || true
@@ -181,17 +150,19 @@ kubectl create clusterrolebinding gha-deployer-binding \
 echo "🎫 Generating service account token..."
 TOKEN=$(kubectl create token gha-deployer -n gha-access --duration=8760h --insecure-skip-tls-verify) # 1 year
 
-if [[ -n "$TOKEN" ]]; then
-  PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+# Function to create kubeconfig
+create_kubeconfig() {
+  local config_file=$1
+  local server_url=$2
+  local token=$3
   
-  # Create kubeconfig for GitHub Actions
-  cat > /tmp/gha-kubeconfig.yaml << KUBE_EOF
+  cat > "$config_file" << KUBE_EOF
 apiVersion: v1
 kind: Config
 clusters:
 - cluster:
     insecure-skip-tls-verify: true
-    server: https://$PUBLIC_IP:6443
+    server: $server_url
   name: k3s-cluster
 contexts:
 - context:
@@ -203,43 +174,49 @@ current-context: gha-context
 users:
 - name: gha-deployer
   user:
-    token: $TOKEN
+    token: $token
 KUBE_EOF
+}
+
+# Function to upload to S3
+upload_to_s3() {
+  local file_path=$1
+  local s3_key=$2
+  local description=$3
   
-  # Upload kubeconfig to S3 if bucket is provided
+  if aws s3 ls "s3://$S3_BUCKET/$s3_key" >/dev/null 2>&1; then
+    echo "🔄 Existing $description found, updating..."
+    aws s3 cp "$file_path" "s3://$S3_BUCKET/$s3_key"
+    echo "✅ $description updated in S3"
+  else
+    echo "📤 Creating new $description..."
+    aws s3 cp "$file_path" "s3://$S3_BUCKET/$s3_key"
+    echo "✅ $description uploaded to S3"
+  fi
+}
+
+if [[ -n "$TOKEN" ]]; then
+  # Create kubeconfig for GitHub Actions
+  create_kubeconfig "/tmp/gha-kubeconfig.yaml" "https://$PUBLIC_IP:6443" "$TOKEN"
+  
+  # Upload GitHub Actions kubeconfig to S3
   if [[ -n "$S3_BUCKET" ]]; then
-    echo "📤 Uploading kubeconfig to S3..."
-    if aws s3 ls s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml >/dev/null 2>&1; then
-      echo "🔄 Existing kubeconfig found, updating..."
-      aws s3 cp /tmp/gha-kubeconfig.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml
-      echo "✅ GitHub Actions kubeconfig updated in S3"
-    else
-      echo "📤 Creating new kubeconfig..."
-      aws s3 cp /tmp/gha-kubeconfig.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-gha.yaml
-      echo "✅ GitHub Actions kubeconfig uploaded to S3"
-    fi
+    echo "📤 Uploading GitHub Actions kubeconfig to S3..."
+    upload_to_s3 "/tmp/gha-kubeconfig.yaml" "kubeconfig/$ENVIRONMENT-gha.yaml" "GitHub Actions kubeconfig"
   fi
 else
   echo "❌ Failed to generate service account token"
 fi
 
-# Also upload standard kubeconfig to S3 for easy access
+# Create and upload standard kubeconfig to S3
 if [[ -n "$S3_BUCKET" ]]; then
   # Create standard kubeconfig with public IP
-  PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
   cp /etc/rancher/k3s/k3s.yaml /tmp/kubeconfig-standard.yaml
   sed -i "s|https://127.0.0.1:6443|https://$PUBLIC_IP:6443|g" /tmp/kubeconfig-standard.yaml
   sed -i "s|server: https://0.0.0.0:6443|server: https://$PUBLIC_IP:6443|g" /tmp/kubeconfig-standard.yaml
   
-  if aws s3 ls s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml >/dev/null 2>&1; then
-    echo "🔄 Existing standard kubeconfig found, updating..."
-    aws s3 cp /tmp/kubeconfig-standard.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml
-    echo "✅ Standard kubeconfig updated in S3"
-  else
-    echo "📤 Creating new standard kubeconfig..."
-    aws s3 cp /tmp/kubeconfig-standard.yaml s3://$S3_BUCKET/kubeconfig/$ENVIRONMENT-standard.yaml
-    echo "✅ Standard kubeconfig uploaded to S3"
-  fi
+  echo "📤 Uploading standard kubeconfig to S3..."
+  upload_to_s3 "/tmp/kubeconfig-standard.yaml" "kubeconfig/$ENVIRONMENT-standard.yaml" "Standard kubeconfig"
 fi
 
 # CloudWatch Agent disabled to stay in free tier
@@ -300,80 +277,7 @@ fi
 # echo "✅ CloudWatch monitoring enabled"
 
 # Setup local kubeconfig access
-echo "🔧 Setting up local kubeconfig access..." monitoring (costs ~$2.60/month)
-# echo "📊 Installing CloudWatch Agent..."
-# wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
-# dpkg -i -E ./amazon-cloudwatch-agent.deb
-
-# Setup local kubeconfig access
-echo "🔧 Setting up local kubeconfig access...t..."
-wget https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb
-dpkg -i -E ./amazon-cloudwatch-agent.deb
-
-# Create CloudWatch Agent configuration
-cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << 'CW_EOF'
-{
-  "agent": {
-    "metrics_collection_interval": 60,
-    "run_as_user": "cwagent"
-  },
-  "metrics": {
-    "namespace": "HealthApp/K3s",
-    "metrics_collected": {
-      "cpu": {
-        "measurement": [
-          "cpu_usage_idle",
-          "cpu_usage_iowait",
-          "cpu_usage_user",
-          "cpu_usage_system"
-        ],
-        "metrics_collection_interval": 60
-      },
-      "disk": {
-        "measurement": [
-          "used_percent"
-        ],
-        "metrics_collection_interval": 60,
-        "resources": [
-          "*"
-        ]
-      },
-      "mem": {
-        "measurement": [
-          "mem_used_percent"
-        ],
-        "metrics_collection_interval": 60
-      }
-    }
-  },
-  "logs": {
-    "logs_collected": {
-      "files": {
-        "collect_list": [
-          {
-            "file_path": "/var/log/k3s-install.log",
-            "log_group_name": "/aws/ec2/health-app/k3s-install",
-            "log_stream_name": "{instance_id}"
-          }
-        ]
-      }
-    }
-  }
-}
-CW_EOF
-
-# Start CloudWatch Agent
-/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
-  -a fetch-config \
-  -m ec2 \
-  -s \
-  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-
-systemctl enable amazon-cloudwatch-agent
-echo "✅ CloudWatch monitoring enabled"
-
-# Setup local kubeconfig access
-echo "🔧 Setting up local kubeconfig access....."
+echo "🔧 Setting up local kubeconfig access..."
 mkdir -p /home/ubuntu/.kube
 cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
 chown ubuntu:ubuntu /home/ubuntu/.kube/config
@@ -389,14 +293,14 @@ echo 'alias k="kubectl"' >> /root/.bashrc
 
 # Install NGINX Ingress Controller
 echo "🌐 Installing NGINX Ingress Controller..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml --insecure-skip-tls-verify
 
 # Wait for ingress controller to be ready
 echo "⏳ Waiting for ingress controller..."
 kubectl wait --namespace ingress-nginx \
   --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller \
-  --timeout=300s || true
+  --timeout=300s --insecure-skip-tls-verify || true
 
 # Create test deployment for verification
 echo "🧪 Creating test deployment..."
@@ -447,8 +351,8 @@ spec:
 EOF
 
 # Apply test deployment if namespace exists
-if kubectl get namespace health-app-$ENVIRONMENT 2>/dev/null; then
-  kubectl apply -f /tmp/test-deployment.yaml
+if kubectl get namespace health-app-$ENVIRONMENT --insecure-skip-tls-verify 2>/dev/null; then
+  kubectl apply -f /tmp/test-deployment.yaml --insecure-skip-tls-verify
   echo "✅ Test deployment created in health-app-$ENVIRONMENT"
 fi
 
@@ -469,14 +373,14 @@ else
 fi
 
 # Check API server
-if kubectl get nodes > /dev/null 2>&1; then
+if kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
     echo "$(date): ✅ K3s API server is responding" >> $LOG_FILE
 else
     echo "$(date): ❌ K3s API server not responding" >> $LOG_FILE
 fi
 
 # Check node status
-NODE_STATUS=$(kubectl get nodes --no-headers | awk '{print $2}')
+NODE_STATUS=$(kubectl get nodes --no-headers --insecure-skip-tls-verify | awk '{print $2}')
 if [[ "$NODE_STATUS" == "Ready" ]]; then
     echo "$(date): ✅ Node is Ready" >> $LOG_FILE
 else
@@ -497,22 +401,22 @@ echo "=== K3s Cluster Information ==="
 echo "Cluster: $CLUSTER_NAME"
 echo "Environment: $ENVIRONMENT"
 echo "Network Tier: $NETWORK_TIER"
-echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+echo "Public IP: $PUBLIC_IP"
 echo ""
 echo "=== Node Status ==="
-kubectl get nodes -o wide
+kubectl get nodes -o wide --insecure-skip-tls-verify
 echo ""
 echo "=== Namespaces ==="
-kubectl get namespaces
+kubectl get namespaces --insecure-skip-tls-verify
 echo ""
 echo "=== All Pods ==="
-kubectl get pods -A
+kubectl get pods -A --insecure-skip-tls-verify
 echo ""
 echo "=== Services ==="
-kubectl get services -A
+kubectl get services -A --insecure-skip-tls-verify
 echo ""
 echo "=== Ingress Controller ==="
-kubectl get pods -n ingress-nginx
+kubectl get pods -n ingress-nginx --insecure-skip-tls-verify
 INFOEOF
 
 chmod +x /home/ubuntu/cluster-info.sh
@@ -535,7 +439,7 @@ sleep 30
 if systemctl is-active --quiet k3s; then
     echo "✅ K3s restarted successfully"
     sudo systemctl status k3s --no-pager
-    kubectl get nodes
+    kubectl get nodes --insecure-skip-tls-verify
 else
     echo "❌ K3s restart failed"
     sudo journalctl -u k3s --no-pager -n 20
@@ -553,13 +457,13 @@ else
     echo "❌ Internet connectivity: FAILED"
 fi
 
-if kubectl get nodes > /dev/null 2>&1; then
+if kubectl get nodes --insecure-skip-tls-verify > /dev/null 2>&1; then
     echo "✅ K3s API server: OK"
 else
     echo "❌ K3s API server: FAILED"
 fi
 
-if kubectl get pods -A > /dev/null 2>&1; then
+if kubectl get pods -A --insecure-skip-tls-verify > /dev/null 2>&1; then
     echo "✅ Pod listing: OK"
 else
     echo "❌ Pod listing: FAILED"
@@ -570,8 +474,7 @@ echo "🎉 K3s cluster setup completed!"
 echo "Cluster: $CLUSTER_NAME"
 echo "Environment: $ENVIRONMENT"
 echo "Network Tier: $NETWORK_TIER"
-echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
-# echo "Database endpoint: $DB_ENDPOINT"  # Commented out for now
+echo "Public IP: $PUBLIC_IP"
 
 echo "📋 Available scripts:"
 echo "  - /home/ubuntu/cluster-info.sh - Show cluster information"
@@ -590,7 +493,7 @@ echo "🔍 Kubeconfig file:"
 ls -la /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "Kubeconfig file not found"
 echo ""
 echo "🔍 kubectl test:"
-kubectl get nodes 2>/dev/null || echo "kubectl not working"
+kubectl get nodes --insecure-skip-tls-verify 2>/dev/null || echo "kubectl not working"
 
 echo "SUCCESS" > /var/log/k3s-install-complete
 echo "K3S_INSTALLATION_COMPLETE=$(date)" >> /var/log/k3s-ready
