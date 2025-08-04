@@ -205,6 +205,17 @@ jobs:
         
         echo "✅ Pre-deployment cleanup completed"
 
+ get nodes --request-timeout=10s >/dev/null 2>&1; then
+              echo "✅ kubectl configured successfully"
+              kubectl get nodes
+            else
+              echo "⚠️ kubectl connection failed, will configure after infrastructure deployment"
+            fi
+          else
+            echo "⚠️ No existing kubeconfig found in S3"
+          fi
+        fi
+
     - name: Terraform Init
       working-directory: infra/live
       run: |
@@ -372,7 +383,22 @@ jobs:
           exit 1
         fi
 
-
+    - name: Verify Infrastructure
+      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && matrix.env != 'cleanup'
+      run: |
+        echo "🔍 Verifying infrastructure deployment..."
+        
+        # Get K3s instance details
+        K3S_IP=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+        
+        if [ "$K3S_IP" != "None" ] && [ -n "$K3S_IP" ]; then
+          echo "✅ K3s cluster deployed at: $K3S_IP"
+          echo "📊 Kubeconfig will be available at: s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml"
+        else
+          echo "❌ No K3s instance found"
+        fi
 
     - name: Infrastructure Summary
       if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
