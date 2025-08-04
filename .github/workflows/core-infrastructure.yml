@@ -87,6 +87,11 @@ jobs:
           ./scripts/cleanup-resources.sh || echo "⚠️ Cleanup had issues but continuing"
         fi
         
+        # Clean up old kubeconfig files to ensure fresh deployment
+        echo "🧹 Cleaning up old kubeconfig files..."
+        aws s3 rm "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" 2>/dev/null || echo "No existing kubeconfig found"
+        aws s3 rm "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-gha.yaml" 2>/dev/null || echo "No existing GHA kubeconfig found"
+        
         echo "✅ Pre-deployment cleanup completed"
 
     - name: Terraform Init
