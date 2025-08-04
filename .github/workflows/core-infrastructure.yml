@@ -122,42 +122,83 @@ jobs:
         mkdir -p ~/.terraform.d/plugin-cache
         echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
 
-    - name: Pre-deployment Resource Check
+    - name: Pre-deployment Resource Cleanup
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
       run: |
-        echo "🔍 Pre-deployment checks..."
+        echo "🧹 Pre-deployment resource cleanup..."
         
-        # Force cleanup of other regions first
-        echo "🌍 Cleaning other regions before deployment..."
-        REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1 ap-southeast-2 eu-central-1 ca-central-1 sa-east-1"
-        
-        for REGION in $REGIONS; do
-          echo "Cleaning $REGION..."
-          # Terminate any instances
-          INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
-          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
-            echo "Terminating instances in $REGION: $INSTANCES"
-            echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
-          fi
-        done
-        
-        # Check for resources in other regions
-        if [ -f "scripts/prevent-multi-region-resources.sh" ]; then
-          chmod +x scripts/prevent-multi-region-resources.sh
-          if ! ./scripts/prevent-multi-region-resources.sh ${{ env.AWS_REGION }} check; then
-            echo "⚠️ Found resources in other regions after cleanup!"
-            echo "🧹 Manual cleanup may be required"
-          fi
+        # Run cleanup script
+        if [ -f "scripts/cleanup-resources.sh" ]; then
+          chmod +x scripts/cleanup-resources.sh
+          ./scripts/cleanup-resources.sh
         else
-          echo "⚠️ Multi-region check script not found - skipping"
+          echo "⚠️ Cleanup script not found - running manual cleanup"
+          
+          # Manual cleanup for VPC limit
+          echo "🔍 Checking VPC usage..."
+          VPC_COUNT=$(aws ec2 describe-vpcs --query 'length(Vpcs)')
+          echo "Current VPC count: $VPC_COUNT/5"
+          
+          if [ $VPC_COUNT -ge 5 ]; then
+            echo "⚠️ VPC limit reached - cleaning up old health-app VPCs"
+            
+            # Get health-app VPCs
+            VPCS=$(aws ec2 describe-vpcs \
+              --filters "Name=tag:Project,Values=health-app" \
+              --query 'Vpcs[*].[VpcId,Tags[?Key==`Name`].Value|[0]]' \
+              --output text)
+            
+            if [ -n "$VPCS" ]; then
+              echo "Found health-app VPCs to clean:"
+              echo "$VPCS"
+              
+              echo "$VPCS" | while read -r vpc_id vpc_name; do
+                # Check for running instances
+                RUNNING=$(aws ec2 describe-instances \
+                  --filters "Name=vpc-id,Values=$vpc_id" "Name=instance-state-name,Values=running" \
+                  --query 'Reservations[*].Instances[*].InstanceId' --output text)
+                
+                if [ -z "$RUNNING" ] || [ "$RUNNING" = "None" ]; then
+                  echo "🗑️ Deleting empty VPC: $vpc_name ($vpc_id)"
+                  
+                  # Delete subnets
+                  aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[*].SubnetId' --output text | \
+                  xargs -r -n1 -I {} aws ec2 delete-subnet --subnet-id {} || true
+                  
+                  # Delete internet gateways
+                  aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'InternetGateways[*].InternetGatewayId' --output text | \
+                  xargs -r -n1 -I {} sh -c 'aws ec2 detach-internet-gateway --internet-gateway-id {} --vpc-id '$vpc_id' && aws ec2 delete-internet-gateway --internet-gateway-id {}' || true
+                  
+                  # Delete route tables
+                  aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | \
+                  xargs -r -n1 -I {} aws ec2 delete-route-table --route-table-id {} || true
+                  
+                  # Delete security groups
+                  aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | \
+                  xargs -r -n1 -I {} aws ec2 delete-security-group --group-id {} || true
+                  
+                  # Delete VPC
+                  aws ec2 delete-vpc --vpc-id "$vpc_id" || true
+                  echo "✅ VPC $vpc_name deleted"
+                else
+                  echo "⚠️ VPC $vpc_name has running instances, skipping"
+                fi
+              done
+            fi
+          fi
         fi
         
-        # Check naming convention compliance
-        echo ""
-        echo "🏷️ Verifying naming convention..."
-        echo "Environment: ${{ matrix.env }}"
-        echo "Expected prefix: health-app-*-${{ matrix.env }}"
-        echo "✅ Naming convention verified"
+        # Final VPC check
+        VPC_COUNT_AFTER=$(aws ec2 describe-vpcs --query 'length(Vpcs)')
+        echo "VPC count after cleanup: $VPC_COUNT_AFTER/5"
+        
+        if [ $VPC_COUNT_AFTER -ge 5 ]; then
+          echo "❌ VPC limit still reached after cleanup"
+          echo "💡 Consider requesting VPC limit increase or manual cleanup"
+          exit 1
+        fi
+        
+        echo "✅ Pre-deployment cleanup completed"
 
     - name: Terraform Init
       working-directory: infra/live
@@ -279,6 +320,19 @@ jobs:
         
         echo "⏳ Waiting for cleanup to complete..."
         sleep 30
+
+    - name: Post-deployment Cleanup Check
+      if: failure() && (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
+      run: |
+        echo "🧹 Post-failure cleanup..."
+        
+        # Clean up any partially created resources
+        if [ -f "scripts/cleanup-resources.sh" ]; then
+          chmod +x scripts/cleanup-resources.sh
+          ./scripts/cleanup-resources.sh
+        fi
+        
+        echo "✅ Post-failure cleanup completed"
 
     - name: Terraform Apply
       id: terraform-apply
