@@ -151,7 +151,7 @@ fi
 echo "🔍 Cleaning up orphaned resources..."
 
 # Delete orphaned key pairs
-local key_pairs=$(aws ec2 describe-key-pairs --filters "Name=key-name,Values=health-app-*" --query 'KeyPairs[*].KeyName' --output text)
+key_pairs=$(aws ec2 describe-key-pairs --filters "Name=key-name,Values=health-app-*" --query 'KeyPairs[*].KeyName' --output text)
 if [[ -n "$key_pairs" && "$key_pairs" != "None" ]]; then
     for key_name in $key_pairs; do
         aws ec2 delete-key-pair --key-name "$key_name" || true
@@ -159,7 +159,7 @@ if [[ -n "$key_pairs" && "$key_pairs" != "None" ]]; then
 fi
 
 # Delete orphaned security groups (not in any VPC)
-local orphaned_sgs=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=health-app-*" --query 'SecurityGroups[*].GroupId' --output text)
+orphaned_sgs=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=health-app-*" --query 'SecurityGroups[*].GroupId' --output text)
 if [[ -n "$orphaned_sgs" && "$orphaned_sgs" != "None" ]]; then
     for sg_id in $orphaned_sgs; do
         aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null || true
@@ -170,17 +170,61 @@ fi
 echo "⏳ Waiting for VPC deletions to complete..."
 sleep 15
 
-# 5. Check VPC limits
-echo "📊 Checking VPC usage..."
+# 5. Aggressive cleanup for remaining VPCs with dependencies
+echo "🔍 Checking for remaining health-app VPCs with dependencies..."
+REMAINING_VPCS=$(aws ec2 describe-vpcs \
+    --filters "Name=tag:Project,Values=health-app" \
+    --query 'Vpcs[*].[VpcId,Tags[?Key==`Name`].Value|[0]]' \
+    --output text)
+
+if [[ -n "$REMAINING_VPCS" ]]; then
+    echo "Found VPCs with remaining dependencies:"
+    echo "$REMAINING_VPCS"
+    
+    echo "$REMAINING_VPCS" | while read -r vpc_id vpc_name; do
+        echo "🔧 Force cleaning VPC $vpc_name ($vpc_id)..."
+        
+        # Force delete network interfaces
+        enis=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$vpc_id" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text)
+        if [[ -n "$enis" && "$enis" != "None" ]]; then
+            for eni_id in $enis; do
+                aws ec2 delete-network-interface --network-interface-id "$eni_id" 2>/dev/null || true
+            done
+        fi
+        
+        # Force delete VPC endpoints
+        endpoints=$(aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$vpc_id" --query 'VpcEndpoints[*].VpcEndpointId' --output text)
+        if [[ -n "$endpoints" && "$endpoints" != "None" ]]; then
+            for endpoint_id in $endpoints; do
+                aws ec2 delete-vpc-endpoint --vpc-endpoint-id "$endpoint_id" || true
+            done
+        fi
+        
+        # Try VPC deletion again
+        sleep 5
+        if aws ec2 delete-vpc --vpc-id "$vpc_id" 2>/dev/null; then
+            echo "✅ VPC $vpc_name force deleted"
+        else
+            echo "⚠️ VPC $vpc_name still has dependencies"
+        fi
+    done
+fi
+
+# 6. Final VPC count check
+echo "📊 Final VPC usage check..."
+sleep 10
 VPC_COUNT=$(aws ec2 describe-vpcs --query 'length(Vpcs)')
 echo "Current VPC count: $VPC_COUNT/5"
 
 if [[ $VPC_COUNT -ge 5 ]]; then
     echo "⚠️ WARNING: VPC limit still reached ($VPC_COUNT/5)"
-    echo "Listing remaining VPCs:"
+    echo "Listing all VPCs:"
     aws ec2 describe-vpcs --query 'Vpcs[*].[VpcId,Tags[?Key==`Name`].Value|[0],IsDefault]' --output table
-    echo "💡 Consider manually deleting unused VPCs or requesting limit increase"
-    echo "💡 You can also try running this script again in a few minutes"
+    echo ""
+    echo "💡 Options to resolve:"
+    echo "1. Wait 5-10 minutes and run this script again"
+    echo "2. Manually delete unused VPCs from AWS Console"
+    echo "3. Request VPC limit increase from AWS Support"
     exit 1
 else
     echo "✅ VPC limit OK ($VPC_COUNT/5) - ready for deployment"
