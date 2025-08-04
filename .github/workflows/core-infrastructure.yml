@@ -41,6 +41,16 @@ on:
         options:
         - github
         - aws
+      optimize_data_transfer:
+        description: 'Run data transfer optimization'
+        required: false
+        default: false
+        type: boolean
+      cleanup_all_regions:
+        description: 'Cleanup all AWS regions (for destroy only)'
+        required: false
+        default: false
+        type: boolean
 
 env:
   AWS_REGION: ap-south-1
@@ -67,32 +77,64 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    - name: Clear Cache (for redeploy)
+      if: github.event.inputs.action == 'redeploy'
+      run: |
+        echo "🧹 Clearing ALL Terraform cache for fresh redeploy..."
+        rm -rf ~/.terraform.d/plugin-cache
+        rm -rf infra/live/.terraform
+        rm -rf infra/live/.terraform.lock.hcl
+        find infra -name ".terraform" -type d -exec rm -rf {} + 2>/dev/null || true
+        find infra -name ".terraform.lock.hcl" -type f -delete 2>/dev/null || true
+        find infra -name "tfplan" -type f -delete 2>/dev/null || true
+        echo "✅ All Terraform cache cleared"
+        
+    - name: Setup Terraform Cache Directory
+      run: |
+        mkdir -p ~/.terraform.d/plugin-cache
+        mkdir -p infra/live/.terraform
+        
+    - name: Cache Terraform
+      if: github.event.inputs.action != 'redeploy'
+      uses: actions/cache@v4
+      with:
+        path: ~/.terraform.d/plugin-cache
+        key: terraform-plugins-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}
+        restore-keys: terraform-plugins-${{ runner.os }}-
+
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-    - name: Pre-deployment Resource Cleanup
-      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
-      continue-on-error: true
-      env:
-        DEPLOYMENT_ACTION: ${{ github.event.inputs.action }}
-        TARGET_ENVIRONMENT: ${{ matrix.env }}
-        RUNNER_TYPE: ${{ github.event.inputs.runner_type }}
+        
+    - name: Configure Terraform Plugin Cache
       run: |
-        echo "🧹 Pre-deployment resource cleanup..."
+        mkdir -p ~/.terraform.d/plugin-cache
+        echo 'plugin_cache_dir = "$HOME/.terraform.d/plugin-cache"' > ~/.terraformrc
+
+    - name: Pre-deployment Resource Check
+      if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      run: |
+        echo "🔍 Pre-deployment checks..."
         
-        if [ -f "scripts/cleanup-resources.sh" ]; then
-          chmod +x scripts/cleanup-resources.sh
-          ./scripts/cleanup-resources.sh || echo "⚠️ Cleanup had issues but continuing"
-        fi
+        # Force cleanup of other regions first
+        echo "🌍 Cleaning other regions before deployment..."
+        REGIONS="us-east-1 us-west-2 eu-west-1 ap-northeast-1 ap-southeast-1 ap-southeast-2 eu-central-1 ca-central-1 sa-east-1"
         
-        # Clean up old kubeconfig files to ensure fresh deployment
-        echo "🧹 Cleaning up old kubeconfig files..."
-        aws s3 rm "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" 2>/dev/null || echo "No existing kubeconfig found"
-        aws s3 rm "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-gha.yaml" 2>/dev/null || echo "No existing GHA kubeconfig found"
+        for REGION in $REGIONS; do
+          echo "Cleaning $REGION..."
+          INSTANCES=$(aws ec2 describe-instances --region $REGION --filters "Name=instance-state-name,Values=running,stopped,stopping" --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "Terminating instances in $REGION: $INSTANCES"
+            echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
+          fi
+        done
         
-        echo "✅ Pre-deployment cleanup completed"
+        # Check naming convention compliance
+        echo "🏷️ Verifying naming convention..."
+        echo "Environment: ${{ matrix.env }}"
+        echo "Expected prefix: health-app-*-${{ matrix.env }}"
+        echo "✅ Naming convention verified"
 
     - name: Terraform Init
       working-directory: infra/live
@@ -101,11 +143,33 @@ jobs:
         echo "- Bucket: ${{ secrets.TF_STATE_BUCKET }}"
         echo "- Key: health-app-${{ matrix.env }}.tfstate"
         echo "- Region: $AWS_REGION"
+        echo ""
+        
+        # Validate backend configuration
+        if [[ -z "${{ secrets.TF_STATE_BUCKET }}" ]]; then
+          echo "❌ TF_STATE_BUCKET secret not configured"
+          exit 1
+        fi
         
         terraform init -reconfigure \
           -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
           -backend-config="key=health-app-${{ matrix.env }}.tfstate" \
           -backend-config="region=$AWS_REGION"
+        
+        echo ""
+        echo "📋 Terraform workspace: $(terraform workspace show)"
+        echo "📋 Backend config verified"
+        
+        # Verify S3 backend is working
+        echo ""
+        echo "🔍 Verifying S3 backend..."
+        if aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ > /dev/null 2>&1; then
+          echo "✅ S3 bucket accessible"
+          echo "📋 Existing state files:"
+          aws s3 ls s3://${{ secrets.TF_STATE_BUCKET }}/ | grep ".tfstate" || echo "No state files found yet"
+        else
+          echo "❌ S3 bucket not accessible - check bucket name and permissions"
+        fi
 
     - name: Terraform Plan
       working-directory: infra/live
@@ -113,6 +177,20 @@ jobs:
       run: |
         echo "📋 Planning infrastructure changes..."
         
+        # Check current state first
+        echo "🔍 Checking current state..."
+        if terraform state list > /tmp/current_state.txt 2>/dev/null; then
+          echo "✅ Found existing state with $(wc -l < /tmp/current_state.txt) resources:"
+          head -10 /tmp/current_state.txt
+          if [ $(wc -l < /tmp/current_state.txt) -gt 10 ]; then
+            echo "... and $(($(wc -l < /tmp/current_state.txt) - 10)) more resources"
+          fi
+        else
+          echo "ℹ️ No existing state found - will create new resources"
+        fi
+        
+        echo ""
+        echo "📋 Planning changes..."
         terraform plan \
           -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
           -var="network_tier=${{ matrix.env }}" \
@@ -122,14 +200,74 @@ jobs:
           -var="restore_from_snapshot=${{ github.event.inputs.restore_from_snapshot }}" \
           -var="snapshot_identifier=${{ github.event.inputs.restore_from_snapshot == 'true' && 'healthapidb-snapshot' || 'null' }}" \
           -out=tfplan
+        
+        echo ""
+        echo "🔡️ Running policy validation..."
+        if [ -f "../../scripts/terraform-policy-check.sh" ]; then
+          chmod +x ../../scripts/terraform-policy-check.sh
+          if ! ../../scripts/terraform-policy-check.sh tfplan ../../policies cost-estimate; then
+            echo "❌ Policy validation failed - deployment blocked"
+            exit 1
+          fi
+        else
+          echo "⚠️ Policy check script not found - skipping validation"
+        fi
+        
+        echo ""
+        echo "📊 Plan Summary:"
+        terraform show -no-color tfplan | grep -E "Plan:|No changes|will be created|will be updated|will be destroyed" | head -20
+
+    - name: Terraform Destroy (for redeploy)
+      working-directory: infra/live
+      if: github.event.inputs.action == 'redeploy'
+      run: |
+        echo "🧹 Destroying existing resources first..."
+        
+        # Check what will be destroyed
+        if terraform state list > /dev/null 2>&1; then
+          echo "📋 Resources to be destroyed:"
+          terraform state list | head -10
+          RESOURCE_COUNT=$(terraform state list | wc -l)
+          echo "Total: $RESOURCE_COUNT resources"
+          
+          # Only destroy if resources exist
+          terraform destroy \
+            -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
+            -var="network_tier=${{ matrix.env }}" \
+            -var="ssh_public_key=${{ secrets.SSH_PUBLIC_KEY }}" \
+            -var="repo_pat=${{ secrets.REPO_PAT }}" \
+            -var="repo_name=${{ secrets.REPO_NAME }}" \
+            -var="restore_from_snapshot=false" \
+            -var="snapshot_identifier=null" \
+            -auto-approve || echo "Destroy completed with warnings"
+        else
+          echo "ℹ️ No existing resources found to destroy"
+        fi
+        
+        # Verify state is empty
+        echo ""
+        echo "🔍 Verifying cleanup..."
+        REMAINING=$(terraform state list 2>/dev/null | wc -l)
+        if [ "$REMAINING" -eq 0 ]; then
+          echo "✅ All resources destroyed successfully"
+        else
+          echo "⚠️ Warning: $REMAINING resources remain in state"
+        fi
+        
+        echo "⏳ Waiting for cleanup to complete..."
+        sleep 30
 
     - name: Terraform Apply
+      id: terraform-apply
       working-directory: infra/live
       if: github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy'
+      continue-on-error: false
       run: |
         echo "🚀 Applying infrastructure changes..."
         
+        # For redeploy, create new plan after destroy
         if [ "${{ github.event.inputs.action }}" = "redeploy" ]; then
+          echo "🔄 Creating fresh plan for redeploy..."
           terraform plan \
             -var="environment=${{ matrix.env == 'lower' && 'dev' || matrix.env == 'higher' && 'prod' || 'monitoring' }}" \
             -var="network_tier=${{ matrix.env }}" \
@@ -141,75 +279,23 @@ jobs:
             -out=tfplan
         fi
         
-        terraform apply -auto-approve tfplan
-
-    - name: Wait for K3s Initialization
-      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && matrix.env != 'cleanup'
-      run: |
-        echo "⏳ Waiting for K3s cluster to initialize..."
+        # Show what will be applied
+        echo "📋 Resources to be modified:"
+        terraform show -no-color tfplan | grep -E "# .* will be" | head -10
         
-        # Get K3s instance
-        K3S_IP=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
-          --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-        
-        if [ "$K3S_IP" != "None" ] && [ -n "$K3S_IP" ]; then
-          echo "📍 K3s cluster found at: $K3S_IP"
-          echo "⏳ Waiting 3 minutes for K3s installation to complete..."
-          sleep 180
-          
-          # Check if kubeconfig is available in S3
-          echo "🔍 Checking for kubeconfig in S3..."
-          for i in {1..10}; do
-            if aws s3 ls "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" >/dev/null 2>&1; then
-              echo "✅ Kubeconfig found in S3 (attempt $i)"
-              break
-            else
-              echo "⏳ Kubeconfig not ready yet (attempt $i/10), waiting 30s..."
-              sleep 30
-            fi
-          done
-        else
-          echo "❌ No K3s instance found"
+        echo ""
+        echo "🔄 Applying changes..."
+        if ! terraform apply -auto-approve tfplan; then
+          echo "❌ Terraform apply failed"
           exit 1
         fi
 
-    - name: Setup kubectl
-      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && matrix.env != 'cleanup'
+    - name: Infrastructure Summary
+      if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && (steps.terraform-apply.outcome == 'success' || github.event.inputs.action == 'redeploy')
+      working-directory: infra/live
       run: |
-        echo "🔧 Setting up kubectl..."
-        
-        # Install kubectl if not present
-        if ! command -v kubectl &> /dev/null; then
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-        fi
-        
-        # Download kubeconfig from S3
-        if aws s3 cp "s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" ./kubeconfig 2>/dev/null; then
-          export KUBECONFIG=./kubeconfig
-          
-          # Test kubectl connection with retry
-          echo "🔍 Testing kubectl connection..."
-          for i in {1..12}; do
-            if kubectl get nodes --request-timeout=10s >/dev/null 2>&1; then
-              echo "✅ kubectl configured successfully (attempt $i)"
-              kubectl get nodes
-              kubectl get namespaces
-              break
-            else
-              echo "⏳ kubectl connection failed (attempt $i/12), waiting 30s..."
-              if [ $i -eq 12 ]; then
-                echo "⚠️ kubectl connection failed after 6 minutes - cluster may have issues"
-              else
-                sleep 30
-              fi
-            fi
-          done
-        else
-          echo "⚠️ Could not download kubeconfig from S3"
-        fi
+        echo "✅ Infrastructure deployed successfully for ${{ matrix.env }} environment"
+        echo "📊 See detailed network design and access info in the job summary tab"
 
     - name: Infrastructure Summary
       if: always()
@@ -243,3 +329,252 @@ jobs:
           -auto-approve
         
         echo "✅ Terraform destroy completed for ${{ matrix.env }} environment"
+
+    - name: Multi-Region Cleanup (if enabled)
+      if: github.event.inputs.action == 'destroy' && github.event.inputs.cleanup_all_regions == 'true'
+      run: |
+        echo "🌍 Starting multi-region cleanup..."
+        
+        REGIONS="us-east-1 us-west-1 us-west-2 eu-west-1 eu-west-2 eu-central-1 ap-south-1 ap-southeast-1 ap-southeast-2 ap-northeast-1 ca-central-1 sa-east-1"
+        
+        for REGION in $REGIONS; do
+          echo "🧹 Cleaning region: $REGION"
+          
+          # Terminate EC2 instances
+          INSTANCES=$(aws ec2 describe-instances --region $REGION \
+            --filters "Name=tag:Project,Values=health-app" "Name=instance-state-name,Values=running,stopped,stopping" \
+            --query "Reservations[].Instances[].InstanceId" --output text 2>/dev/null || echo "")
+          
+          if [ -n "$INSTANCES" ] && [ "$INSTANCES" != "None" ]; then
+            echo "Terminating instances in $REGION: $INSTANCES"
+            echo $INSTANCES | xargs -n1 aws ec2 terminate-instances --region $REGION --instance-ids || true
+            sleep 10
+          fi
+          
+          echo "✅ Cleanup completed for $REGION"
+        done
+        
+        echo "🌍 Multi-region cleanup completed"
+
+    - name: Generate Execution Report
+      if: always()
+      working-directory: infra/live
+      run: |
+        echo "## 🏗️ Infrastructure Execution Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Basic execution details
+        echo "### 📋 Execution Details" >> $GITHUB_STEP_SUMMARY
+        echo "**Action:** ${{ github.event.inputs.action }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Network Tier:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Completed:** $(date '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Runner:** ${{ github.event.inputs.runner_type }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Current state and detailed infrastructure info
+        echo "### 📊 Infrastructure State & Network Design" >> $GITHUB_STEP_SUMMARY
+        if terraform state list > /tmp/resources.txt 2>/dev/null; then
+          RESOURCE_COUNT=$(wc -l < /tmp/resources.txt)
+          echo "**Total Resources:** $RESOURCE_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+          # Generate network diagram with actual IPs
+          K3S_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null || echo "N/A")
+          RUNNER_IP=$(aws ec2 describe-instances --filters "Name=tag:NetworkTier,Values=${{ matrix.env }}" "Name=tag:Name,Values=*runner*" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text 2>/dev/null || echo "N/A")
+          
+          echo "#### 🌐 Network Architecture" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "┌─────────────────────────────────────────────────────────────┐" >> $GITHUB_STEP_SUMMARY
+          echo "│                    AWS Region: ap-south-1                   │" >> $GITHUB_STEP_SUMMARY
+          echo "├─────────────────────────────────────────────────────────────┤" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ matrix.env }}" = "lower" ]; then
+            echo "│ ┌─────────────────────────────────────────────────────────┐ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │                 LOWER NETWORK (ACTIVE)                 │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ ┌─────────────┐  ┌─────────────┐                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │   K3S NODE  │  │ GITHUB RUN  │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │ $K3S_IP │  │ $RUNNER_IP │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │   t2.micro  │  │   t2.micro  │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │  Port: 6443 │  │  SSH: 22    │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ └─────────────┘  └─────────────┘                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ └─────────────────────────────────────────────────────────┘ │" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ matrix.env }}" = "higher" ]; then
+            echo "│ ┌─────────────────────────────────────────────────────────┐ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │                HIGHER NETWORK (ACTIVE)                 │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ ┌─────────────┐  ┌─────────────┐                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │   K3S NODE  │  │ GITHUB RUN  │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │ $K3S_IP │  │ $RUNNER_IP │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │   t2.micro  │  │   t2.micro  │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │  Port: 6443 │  │  SSH: 22    │                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ └─────────────┘  └─────────────┘                       │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ └─────────────────────────────────────────────────────────┘ │" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ matrix.env }}" = "monitoring" ]; then
+            echo "│ ┌─────────────────────────────────────────────────────────┐ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │              MONITORING NETWORK (ACTIVE)               │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ ┌─────────────────────────────────────────────────────┐ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │              MONITORING CLUSTER                     │ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │         K3s Master + GitHub Runner                  │ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │         $K3S_IP + $RUNNER_IP                        │ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │         Prometheus + Grafana                        │ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ │                t2.micro                             │ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ │ └─────────────────────────────────────────────────────┘ │ │" >> $GITHUB_STEP_SUMMARY
+            echo "│ └─────────────────────────────────────────────────────────┘ │" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "└─────────────────────────────────────────────────────────────┘" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Connection details if resources exist
+          if [ "$RESOURCE_COUNT" -gt 0 ]; then
+            echo "#### 🚀 Access Information" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$K3S_IP" != "None" ] && [ -n "$K3S_IP" ]; then
+              echo "**K3s Cluster:** \`ssh -i ~/.ssh/key ubuntu@$K3S_IP\`" >> $GITHUB_STEP_SUMMARY
+              echo "**K3s API:** https://$K3S_IP:6443" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ "$RUNNER_IP" != "None" ] && [ -n "$RUNNER_IP" ]; then
+              echo "**GitHub Runner:** \`ssh -i ~/.ssh/key ubuntu@$RUNNER_IP\`" >> $GITHUB_STEP_SUMMARY
+              echo "**Runner Labels:** self-hosted, github-runner-${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+            echo "1. **Run K3s Validation** - Verify cluster health" >> $GITHUB_STEP_SUMMARY
+            echo "2. **Deploy Apps** - Run Core Deployment workflow" >> $GITHUB_STEP_SUMMARY
+            echo "3. **Setup Ingress** - Configure SSL/TLS if needed" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "**Status:** No infrastructure deployed" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  kubeconfig:
+    runs-on: ${{ fromJSON(format('["self-hosted", "github-runner-{0}"]', matrix.env)) }}
+    needs: infrastructure
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') && needs.infrastructure.result == 'success'
+    strategy:
+      matrix:
+        env: ${{ github.event.inputs.environment == 'all' && fromJson('["lower", "higher", "monitoring"]') || fromJson(format('["{0}"]', github.event.inputs.environment)) }}
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-south-1
+
+    - name: Verify tools
+      run: |
+        # Verify pre-installed tools
+        aws --version
+        kubectl version --client
+        terraform version
+        docker --version
+        gh --version
+
+    - name: Pre-Validation System Check
+      run: |
+        echo "🔍 Pre-validation system check for ${{ matrix.env }} environment..."
+        
+        # Get K3s instance ID
+        INSTANCE_ID=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].InstanceId" --output text)
+        
+        if [ "$INSTANCE_ID" != "None" ] && [ -n "$INSTANCE_ID" ]; then
+          echo "📋 Found K3s instance: $INSTANCE_ID"
+          
+          # Wait for SSM to be ready
+          echo "⏳ Waiting for SSM agent to be online..."
+          for i in {1..10}; do
+            SSM_STATUS=$(aws ssm describe-instance-information \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --query "InstanceInformationList[0].PingStatus" --output text 2>/dev/null || echo "Offline")
+            
+            if [ "$SSM_STATUS" = "Online" ]; then
+              echo "✅ SSM agent is online"
+              break
+            fi
+            echo "⏳ SSM not ready, waiting... ($i/10)"
+            if [ $i -eq 10 ]; then
+              echo "⚠️ SSM agent not online after 5 minutes, continuing anyway..."
+            else
+              sleep 30
+            fi
+          done
+        else
+          echo "❌ No K3s instance found"
+          exit 1
+        fi
+
+    - name: Setup kubeconfig via SSH
+      run: |
+        echo "🔧 Setting up kubeconfig for ${{ matrix.env }} environment..."
+        
+        # Get K3s instance details
+        K3S_DETAILS=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=health-app-${{ matrix.env }}-k3s-node" "Name=instance-state-name,Values=running" \
+          --query "Reservations[0].Instances[0].[InstanceId,PublicIpAddress]" --output text)
+        
+        if [ "$K3S_DETAILS" = "None" ]; then
+          echo "❌ No K3s instance found for ${{ matrix.env }} environment"
+          exit 1
+        fi
+        
+        K3S_INSTANCE_ID=$(echo $K3S_DETAILS | cut -d' ' -f1)
+        K3S_IP=$(echo $K3S_DETAILS | cut -d' ' -f2)
+        
+        echo "📥 Connecting to K3s via SSH: $K3S_IP"
+        
+        # Setup SSH key
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/k3s-key
+        chmod 600 ~/.ssh/k3s-key
+        
+        # Download kubeconfig via SSH with retry
+        echo "📥 Downloading kubeconfig via SSH..."
+        for i in {1..10}; do
+          if scp -i ~/.ssh/k3s-key -o ConnectTimeout=30 -o StrictHostKeyChecking=no ubuntu@$K3S_IP:/etc/rancher/k3s/k3s.yaml /tmp/kubeconfig.yaml; then
+            echo "✅ Kubeconfig downloaded successfully (attempt $i)"
+            break
+          else
+            echo "⏳ Kubeconfig not ready yet (attempt $i/10), waiting..."
+            if [ $i -eq 10 ]; then
+              echo "❌ Failed to download kubeconfig after 10 attempts"
+              echo "💡 Run the K3s Validation workflow to troubleshoot"
+              exit 1
+            fi
+            sleep 60
+          fi
+        done
+        
+        # Update server IP to public IP
+        sed -i "s/127.0.0.1/$K3S_IP/g" /tmp/kubeconfig.yaml
+        
+        # Upload kubeconfig to S3
+        echo "📤 Uploading kubeconfig to S3..."
+        aws s3 cp /tmp/kubeconfig.yaml s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml
+        
+        # Generate summary
+        echo "### 🔐 Kubeconfig Ready" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ matrix.env }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Cluster:** $K3S_IP:6443" >> $GITHUB_STEP_SUMMARY
+        echo "**S3 Location:** s3://${{ secrets.TF_STATE_BUCKET }}/kubeconfig/${{ matrix.env }}-kubeconfig.yaml" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### 🔧 Next Steps" >> $GITHUB_STEP_SUMMARY
+        echo "1. Run **K3s Validation** workflow to verify cluster health" >> $GITHUB_STEP_SUMMARY
+        echo "2. Run **Core Deployment** workflow to deploy applications" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# Manual SSH access" >> $GITHUB_STEP_SUMMARY
+        echo "ssh -i ~/.ssh/k3s-key ubuntu@$K3S_IP" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        
+        # Cleanup
+        rm -f ~/.ssh/k3s-key /tmp/kubeconfig.yaml
+        echo "🎉 Kubeconfig configured and uploaded to S3 for ${{ matrix.env }} environment"

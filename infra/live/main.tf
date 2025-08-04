@@ -131,12 +131,10 @@ resource "aws_iam_role_policy" "k3s_policy" {
           "s3:GetObject",
           "s3:PutObject"
         ]
-        Resource = "arn:aws:s3:::health-app-terraform-state/kubeconfig/*"
-        Condition = {
-          StringEquals = {
-            "s3:x-amz-server-side-encryption" = "AES256"
-          }
-        }
+        Resource = [
+          "arn:aws:s3:::health-app-terraform-state/kubeconfig/*",
+          "arn:aws:s3:::health-app-terraform-state/kubeconfig"
+        ]
       },
       {
         Effect = "Allow"
@@ -145,11 +143,6 @@ resource "aws_iam_role_policy" "k3s_policy" {
           "ssm:GetParameter"
         ]
         Resource = "arn:aws:ssm:${var.aws_region}:*:parameter/health-app/${var.environment}/*"
-        Condition = {
-          StringEquals = {
-            "ssm:ParameterType" = "SecureString"
-          }
-        }
       },
       {
         Effect = "Allow"
@@ -158,11 +151,6 @@ resource "aws_iam_role_policy" "k3s_policy" {
           "kms:DescribeKey"
         ]
         Resource = "arn:aws:kms:${var.aws_region}:*:key/*"
-        Condition = {
-          StringEquals = {
-            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
-          }
-        }
       }
     ]
   })
@@ -188,13 +176,14 @@ resource "aws_instance" "k3s" {
     ignore_changes = [ami]
   }
 
-  user_data = templatefile("../modules/k3s/user_data_k3s.sh", {
+  user_data_replace_on_change = true
+  user_data = base64encode(templatefile("../modules/k3s/user_data_k3s.sh", {
     environment   = var.environment
     cluster_name  = "${local.name_prefix}-cluster"
     db_endpoint   = ""
     s3_bucket     = "health-app-terraform-state"
     network_tier  = var.network_tier
-  })
+  }))
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-k3s-node" })
 }
