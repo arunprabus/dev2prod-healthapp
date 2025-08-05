@@ -101,31 +101,11 @@ jobs:
         if: github.event.inputs.action == 'redeploy' || github.event_name == 'push'
         working-directory: infra
         run: |
-          echo "🔥 Complete infrastructure redeploy - deleting everything..."
+          echo "🔥 NUCLEAR CLEANUP - deleting everything..."
           
-          # Manual cleanup first
-          echo "🧹 Manual cleanup of persistent resources..."
-          aws rds delete-db-instance --db-instance-identifier health-app-shared-db --skip-final-snapshot --delete-automated-backups || true
-          
-          # Wait for RDS deletion
-          echo "⏳ Waiting for RDS deletion..."
-          for i in {1..15}; do
-            if ! aws rds describe-db-instances --db-instance-identifier health-app-shared-db >/dev/null 2>&1; then
-              echo "✅ RDS instance deleted"
-              break
-            fi
-            echo "Waiting for RDS deletion... ($i/15)"
-            sleep 20
-          done
-          
-          # Delete parameter group and subnet group
-          aws rds delete-db-parameter-group --db-parameter-group-name health-app-shared-db-params || true
-          aws rds delete-db-subnet-group --db-subnet-group-name health-app-shared-db-subnet-group || true
-          aws kms delete-alias --alias-name alias/health-app-rds-export || true
-          
-          # Force remove Terraform state for problematic resources
-          terraform state rm 'module.rds[0].aws_db_parameter_group.health_db' || true
-          terraform state rm 'module.rds[0].aws_db_subnet_group.health_db' || true
+          # Nuclear cleanup script
+          chmod +x scripts/nuclear-cleanup.sh
+          ./scripts/nuclear-cleanup.sh ${{ github.event.inputs.network || env.DEFAULT_NETWORK }}
           
           # Now destroy everything else
           terraform destroy \
@@ -137,6 +117,9 @@ jobs:
           
           echo "⏳ Waiting 60 seconds for complete cleanup..."
           sleep 60
+          
+          # Final nuclear cleanup to ensure everything is gone
+          ./scripts/nuclear-cleanup.sh ${{ github.event.inputs.network || env.DEFAULT_NETWORK }} final
           
           echo "✅ Complete cleanup done, deploying fresh infrastructure..."
           
