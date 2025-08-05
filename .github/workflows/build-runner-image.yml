@@ -1,9 +1,6 @@
 name: Build Runner Tools Image
 
 on:
-  push:
-    paths:
-      - 'docker/runner-tools/**'
   workflow_dispatch:
 
 env:
@@ -31,7 +28,3 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: docker/runner-tools
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}

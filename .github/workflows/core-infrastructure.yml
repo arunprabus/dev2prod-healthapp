@@ -1,12 +1,6 @@
 name: Core Infrastructure
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'infra/**'
-      - '.github/workflows/core-infrastructure.yml'
   workflow_dispatch:
     inputs:
       action:
@@ -98,7 +92,7 @@ jobs:
 
       - name: Complete Redeploy
         id: redeploy
-        if: github.event.inputs.action == 'redeploy' || github.event_name == 'push'
+        if: github.event.inputs.action == 'redeploy'
         working-directory: infra
         run: |
           echo "🔥 NUCLEAR CLEANUP - deleting everything..."
@@ -118,8 +112,62 @@ jobs:
           echo "⏳ Waiting 60 seconds for complete cleanup..."
           sleep 60
           
-          # Final nuclear cleanup to ensure everything is gone
-          ./scripts/nuclear-cleanup.sh ${{ github.event.inputs.network || env.DEFAULT_NETWORK }} final
+          # NUCLEAR CLEANUP - Delete everything
+          echo "☢️ NUCLEAR CLEANUP - Force delete all resources..."
+          
+          # Delete EC2 instances for specific network
+          aws ec2 describe-instances --filters "Name=tag:NetworkTier,Values=${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" "Name=instance-state-name,Values=running,stopped" --query "Reservations[].Instances[].InstanceId" --output text | xargs -n1 aws ec2 terminate-instances --instance-ids || true
+          
+          # Delete RDS instances for specific network
+          aws rds describe-db-instances --query 'DBInstances[?contains(DBInstanceIdentifier, `health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}`)].DBInstanceIdentifier' --output text | xargs -I {} aws rds delete-db-instance --db-instance-identifier {} --skip-final-snapshot --delete-automated-backups || true
+          
+          # Wait for deletions
+          sleep 120
+          
+          # Delete VPC for specific network
+          VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-vpc" --query "Vpcs[0].VpcId" --output text)
+          if [ "$VPC_ID" != "None" ] && [ "$VPC_ID" != "" ]; then
+            echo "Deleting VPC: $VPC_ID"
+            
+            # Delete security groups
+            aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | xargs -I {} aws ec2 delete-security-group --group-id {} || true
+            
+            # Delete route tables
+            aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text | xargs -I {} aws ec2 delete-route-table --route-table-id {} || true
+            
+            # Delete subnets
+            aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].SubnetId' --output text | xargs -I {} aws ec2 delete-subnet --subnet-id {} || true
+            
+            # Delete internet gateways
+            aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[].InternetGatewayId' --output text | xargs -I {} sh -c 'aws ec2 detach-internet-gateway --internet-gateway-id $1 --vpc-id '$VPC_ID' && aws ec2 delete-internet-gateway --internet-gateway-id $1' _ {} || true
+            
+            # Delete VPC
+            aws ec2 delete-vpc --vpc-id "$VPC_ID" || true
+          fi
+          
+          # Delete key pairs and IAM for specific network
+          aws ec2 describe-key-pairs --filters "Name=key-name,Values=health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-*" --query "KeyPairs[].KeyName" --output text | xargs -I {} aws ec2 delete-key-pair --key-name {} || true
+          aws iam list-roles --query "Roles[?contains(RoleName, 'health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}')].RoleName" --output text | xargs -I {} sh -c 'aws iam list-attached-role-policies --role-name $1 --query "AttachedPolicies[].PolicyArn" --output text | xargs -I {} aws iam detach-role-policy --role-name $1 --policy-arn {} || true; aws iam list-role-policies --role-name $1 --query "PolicyNames[]" --output text | xargs -I {} aws iam delete-role-policy --role-name $1 --policy-name {} || true; aws iam list-instance-profiles-for-role --role-name $1 --query "InstanceProfiles[].InstanceProfileName" --output text | xargs -I {} sh -c "aws iam remove-role-from-instance-profile --instance-profile-name {} --role-name $1 || true; aws iam delete-instance-profile --instance-profile-name {} || true"; aws iam delete-role --role-name $1 || true' _ {} || true
+          
+          # Clean Terraform state
+          aws s3 rm "s3://${{ secrets.TF_STATE_BUCKET }}/health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}.tfstate" || true
+          
+          # Verification for specific network
+          echo "🔍 Verifying cleanup for ${{ github.event.inputs.network || env.DEFAULT_NETWORK }} network..."
+          VPC_COUNT=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}-vpc" --query 'length(Vpcs)' --output text)
+          INSTANCE_COUNT=$(aws ec2 describe-instances --filters "Name=tag:NetworkTier,Values=${{ github.event.inputs.network || env.DEFAULT_NETWORK }}" "Name=instance-state-name,Values=running,stopped" --query 'length(Reservations[].Instances[])' --output text)
+          RDS_COUNT=$(aws rds describe-db-instances --query 'length(DBInstances[?contains(DBInstanceIdentifier, `health-app-${{ github.event.inputs.network || env.DEFAULT_NETWORK }}`)])' --output text)
+          
+          echo "Remaining resources:"
+          echo "- VPCs: $VPC_COUNT"
+          echo "- EC2 Instances: $INSTANCE_COUNT"
+          echo "- RDS Instances: $RDS_COUNT"
+          
+          if [ "$VPC_COUNT" == "0" ] && [ "$INSTANCE_COUNT" == "0" ] && [ "$RDS_COUNT" == "0" ]; then
+            echo "🎉 NUCLEAR CLEANUP SUCCESSFUL - All resources deleted!"
+          else
+            echo "⚠️ Some resources remain - continuing anyway..."
+          fi
           
           echo "✅ Complete cleanup done, deploying fresh infrastructure..."
           
@@ -197,7 +245,7 @@ jobs:
   # Step 3: Setup Runner Service
   setup-runner-service:
     needs: [terraform-deploy]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: ubuntu-latest
     
     steps:
@@ -232,15 +280,6 @@ jobs:
           else
             echo "⚠️ No runner instance found"
           fi
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
       
       - name: Get Instance IDs
         id: instances
@@ -326,7 +365,17 @@ jobs:
           SVCEOF
             chmod +x svc.sh
           fi
-
+          ./svc.sh install ubuntu
+          ./svc.sh start'
+          
+          # Fix dev instance
+          if [ "${{ steps.instances.outputs.dev_instance }}" != "None" ] && [ "${{ steps.instances.outputs.dev_instance }}" != "" ]; then
+            echo "🔧 Fixing dev runner service..."
+            
+            COMMAND_ID=$(aws ssm send-command \
+              --instance-ids "${{ steps.instances.outputs.dev_instance }}" \
+              --document-name "AWS-RunShellScript" \
+              --parameters "commands=[\"$RUNNER_FIX_SCRIPT\"]" \
               --query 'Command.CommandId' --output text)
             echo "✅ Runner fix command sent for dev instance"
           fi
@@ -366,7 +415,7 @@ jobs:
   # Step 3: Configure Security Groups → Sets up cross-SG references
   configure-security-groups:
     needs: [terraform-deploy, setup-runner-service]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: ubuntu-latest
     
     steps:
@@ -426,8 +475,8 @@ jobs:
 
   # Step 4: Install and Configure K3s → Install K3s using the newly created GitHub runner (inside the VPC)
   install-k3s:
-    needs: [terraform-deploy, create-github-runner]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    needs: [terraform-deploy, configure-security-groups]
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     
     steps:
@@ -508,7 +557,7 @@ jobs:
   # Step 5: Verify K3s API Availability → Tests if K3s is responding
   verify-k3s-api:
     needs: [terraform-deploy, install-k3s]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     timeout-minutes: 20
     
@@ -567,7 +616,7 @@ jobs:
   # Step 6: Setup Kubeconfig → Configures cluster access
   setup-kubeconfig:
     needs: [terraform-deploy, verify-k3s-api]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     
     steps:
@@ -639,7 +688,7 @@ jobs:
   # Step 7: Validate Cluster Deployment → Final validation
   validate-cluster:
     needs: [terraform-deploy, setup-kubeconfig]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     
     steps:
@@ -714,7 +763,7 @@ jobs:
   # Step 8: Setup K8s Secrets → Creates Kubernetes secrets
   setup-k8s-secrets:
     needs: [terraform-deploy, validate-cluster]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     
     steps:
@@ -788,7 +837,7 @@ jobs:
   # Step 9: Configure Network Security → Additional security rules
   configure-network-security:
     needs: [terraform-deploy, setup-k8s-secrets]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     
     steps:
@@ -817,7 +866,7 @@ jobs:
   # Step 10: Test Connectivity → End-to-end testing
   test-connectivity:
     needs: [terraform-deploy, configure-network-security]
-    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy') || github.event_name == 'push'
+    if: (github.event.inputs.action == 'deploy' || github.event.inputs.action == 'redeploy')
     runs-on: self-hosted
     
     steps:
