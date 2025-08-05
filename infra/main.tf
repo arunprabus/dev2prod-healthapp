@@ -176,6 +176,7 @@ module "github_runner" {
   repo_name        = var.github_repo
   s3_bucket        = var.tf_state_bucket
   aws_region       = var.aws_region
+  k3s_subnet_cidrs = [module.vpc.vpc_cidr_block]
 }
 
 # Deploy Parameter Store for configuration management - disabled for now

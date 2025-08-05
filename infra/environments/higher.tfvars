@@ -1,5 +1,5 @@
 # Higher Network Environment (Prod + Dedicated DB)
-environment = "higher"
+network_tier = "higher"
 cluster_name = "health-app-higher"
 
 # Network Configuration

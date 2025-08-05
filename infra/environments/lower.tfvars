@@ -1,5 +1,5 @@
 # Lower Network Environment (Dev + Test + Shared DB)
-environment = "lower"
+network_tier = "lower"
 cluster_name = "health-app-lower"
 
 # Network Configuration

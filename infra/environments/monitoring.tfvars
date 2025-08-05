@@ -1,29 +1,24 @@
 # Monitoring Network Environment
-environment = "monitoring"
+network_tier = "monitoring"
 cluster_name = "health-app-monitoring"
 
 # Network Configuration
 vpc_cidr = "10.3.0.0/16"
-public_subnet_cidrs = ["10.3.1.0/24"]  # Monitoring subnet
-private_subnet_cidrs = []  # No private subnets needed
+public_subnet_cidrs = ["10.3.1.0/24"]
+private_subnet_cidrs = ["10.3.10.0/24", "10.3.11.0/24"]
 
-# K8s Clusters (Monitoring only) - FREE TIER
-k8s_clusters = {
-  monitoring = {
-    instance_type = "t2.micro"  # FREE TIER
-    subnet_index = 0  # 10.3.1.0/24
-    namespace = "monitoring"
-  }
-}
+# K8s Clusters (Monitoring only)
+k8s_clusters = {}
 
-# No Database Configuration (monitoring doesn't need DB)
+# No database for monitoring environment
 database_config = null
 
+# GitHub Runner Configuration
+github_repo = "arunprabus/dev2prod-healthapp"
+
 # VPC Peering Configuration
-vpc_peering = {
-  peer_with_lower = true
-  peer_with_higher = true
-}
+connect_to_lower_env = true
+connect_to_higher_env = true
 
 # Tags
 tags = {
