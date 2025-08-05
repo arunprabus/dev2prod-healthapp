@@ -52,9 +52,38 @@ jobs:
           aws rds delete-db-instance --db-instance-identifier $db --skip-final-snapshot || true
         done
         
-        # Wait and delete VPCs
+        # Force delete VPCs with dependencies
         sleep 60
         for vpc in $(aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==`false`].VpcId' --output text); do
+          echo "Force deleting VPC: $vpc"
+          
+          # Delete NAT Gateways
+          for nat in $(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc" --query 'NatGateways[].NatGatewayId' --output text); do
+            aws ec2 delete-nat-gateway --nat-gateway-id $nat || true
+          done
+          
+          # Delete Internet Gateways
+          for igw in $(aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc" --query 'InternetGateways[].InternetGatewayId' --output text); do
+            aws ec2 detach-internet-gateway --internet-gateway-id $igw --vpc-id $vpc || true
+            aws ec2 delete-internet-gateway --internet-gateway-id $igw || true
+          done
+          
+          # Delete Route Tables
+          for rt in $(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc" --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text); do
+            aws ec2 delete-route-table --route-table-id $rt || true
+          done
+          
+          # Delete Security Groups
+          for sg in $(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text); do
+            aws ec2 delete-security-group --group-id $sg || true
+          done
+          
+          # Delete Subnets
+          for subnet in $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc" --query 'Subnets[].SubnetId' --output text); do
+            aws ec2 delete-subnet --subnet-id $subnet || true
+          done
+          
+          sleep 10
           aws ec2 delete-vpc --vpc-id $vpc || true
         done
         
@@ -66,31 +95,88 @@ jobs:
     - name: 🌍 All Regions Cleanup
       if: github.event.inputs.cleanup_scope == 'all-regions' || github.event.inputs.cleanup_scope == 'all'
       run: |
-        echo "🌍 Destroying resources in ALL regions..."
+        echo "🌍 Complete resource destruction across ALL regions..."
         
-        for region in $(aws ec2 describe-regions --query 'Regions[].RegionName' --output text); do
-          echo "Cleaning $region"
+        REGIONS="ap-south-1 ap-northeast-3 ap-northeast-2 ap-southeast-1 ap-southeast-2 ap-northeast-1 ca-central-1 eu-central-1 eu-west-1 eu-west-2 eu-west-3 eu-north-1 sa-east-1 us-west-1 us-east-1 us-east-2 us-west-2"
+        
+        for region in $REGIONS; do
+          echo "🧨 Nuking region: $region"
           
-          # EC2 instances
-          for id in $(aws ec2 describe-instances --region $region --query 'Reservations[].Instances[?State.Name!=`terminated`].InstanceId' --output text); do
+          # Terminate EC2 instances
+          for id in $(aws ec2 describe-instances --region $region --query 'Reservations[].Instances[?State.Name!=`terminated`].InstanceId' --output text 2>/dev/null); do
             aws ec2 terminate-instances --region $region --instance-ids $id || true
           done
           
-          # Key pairs
-          for key in $(aws ec2 describe-key-pairs --region $region --query 'KeyPairs[].KeyName' --output text); do
-            aws ec2 delete-key-pair --region $region --key-name $key || true
+          # Delete Auto Scaling Groups
+          for asg in $(aws autoscaling describe-auto-scaling-groups --region $region --query 'AutoScalingGroups[].AutoScalingGroupName' --output text 2>/dev/null); do
+            aws autoscaling delete-auto-scaling-group --region $region --auto-scaling-group-name $asg --force-delete || true
           done
           
-          # RDS instances
-          for db in $(aws rds describe-db-instances --region $region --query 'DBInstances[].DBInstanceIdentifier' --output text); do
-            aws rds delete-db-instance --region $region --db-instance-identifier $db --skip-final-snapshot || true
+          # Release Elastic IPs
+          for eip in $(aws ec2 describe-addresses --region $region --query 'Addresses[].AllocationId' --output text 2>/dev/null); do
+            aws ec2 release-address --region $region --allocation-id $eip || true
           done
           
-          # VPCs
+          # Delete NAT Gateways
+          for nat in $(aws ec2 describe-nat-gateways --region $region --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null); do
+            aws ec2 delete-nat-gateway --region $region --nat-gateway-id $nat || true
+          done
+          
+          # Delete VPC Endpoints
+          for vpce in $(aws ec2 describe-vpc-endpoints --region $region --query 'VpcEndpoints[].VpcEndpointId' --output text 2>/dev/null); do
+            aws ec2 delete-vpc-endpoint --region $region --vpc-endpoint-id $vpce || true
+          done
+          
+          # Delete VPC Peering Connections
+          for peer in $(aws ec2 describe-vpc-peering-connections --region $region --query 'VpcPeeringConnections[].VpcPeeringConnectionId' --output text 2>/dev/null); do
+            aws ec2 delete-vpc-peering-connection --region $region --vpc-peering-connection-id $peer || true
+          done
+          
+          # Detach and Delete Internet Gateways
+          for igw_info in $(aws ec2 describe-internet-gateways --region $region --query 'InternetGateways[?Attachments[0].VpcId!=null].[InternetGatewayId,Attachments[0].VpcId]' --output text 2>/dev/null); do
+            igw_id=$(echo $igw_info | awk '{print $1}')
+            vpc_id=$(echo $igw_info | awk '{print $2}')
+            aws ec2 detach-internet-gateway --region $region --internet-gateway-id $igw_id --vpc-id $vpc_id || true
+            aws ec2 delete-internet-gateway --region $region --internet-gateway-id $igw_id || true
+          done
+          
+          # Delete Route Tables
+          for rt in $(aws ec2 describe-route-tables --region $region --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' --output text 2>/dev/null); do
+            aws ec2 delete-route-table --region $region --route-table-id $rt || true
+          done
+          
+          # Delete Security Groups
+          for sg in $(aws ec2 describe-security-groups --region $region --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null); do
+            aws ec2 delete-security-group --region $region --group-id $sg || true
+          done
+          
+          # Delete Network ACLs
+          for acl in $(aws ec2 describe-network-acls --region $region --query 'NetworkAcls[?IsDefault!=`true`].NetworkAclId' --output text 2>/dev/null); do
+            aws ec2 delete-network-acl --region $region --network-acl-id $acl || true
+          done
+          
+          # Delete Network Interfaces
+          for eni in $(aws ec2 describe-network-interfaces --region $region --query 'NetworkInterfaces[?Status==`available`].NetworkInterfaceId' --output text 2>/dev/null); do
+            aws ec2 delete-network-interface --region $region --network-interface-id $eni || true
+          done
+          
+          # Delete Subnets
+          for subnet in $(aws ec2 describe-subnets --region $region --query 'Subnets[].SubnetId' --output text 2>/dev/null); do
+            aws ec2 delete-subnet --region $region --subnet-id $subnet || true
+          done
+          
+          # Delete Volumes
+          for vol in $(aws ec2 describe-volumes --region $region --query 'Volumes[?State==`available`].VolumeId' --output text 2>/dev/null); do
+            aws ec2 delete-volume --region $region --volume-id $vol || true
+          done
+          
+          # Delete VPCs
           sleep 30
-          for vpc in $(aws ec2 describe-vpcs --region $region --query 'Vpcs[?IsDefault==`false`].VpcId' --output text); do
+          for vpc in $(aws ec2 describe-vpcs --region $region --query 'Vpcs[?IsDefault==`false`].VpcId' --output text 2>/dev/null); do
             aws ec2 delete-vpc --region $region --vpc-id $vpc || true
           done
+          
+          echo "✅ Region $region nuked"
         done
 
     - name: 🗑️ Global Resources Cleanup
