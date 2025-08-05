@@ -133,11 +133,11 @@ jobs:
           done
           
           # Detach and Delete Internet Gateways
-          for igw_info in $(aws ec2 describe-internet-gateways --region $region --query 'InternetGateways[?Attachments[0].VpcId!=null].[InternetGatewayId,Attachments[0].VpcId]' --output text 2>/dev/null); do
-            igw_id=$(echo $igw_info | awk '{print $1}')
-            vpc_id=$(echo $igw_info | awk '{print $2}')
-            aws ec2 detach-internet-gateway --region $region --internet-gateway-id $igw_id --vpc-id $vpc_id || true
-            aws ec2 delete-internet-gateway --region $region --internet-gateway-id $igw_id || true
+          aws ec2 describe-internet-gateways --region $region --query 'InternetGateways[?length(Attachments)>`0`].[InternetGatewayId,Attachments[0].VpcId]' --output text 2>/dev/null | while read igw_id vpc_id; do
+            if [ "$igw_id" != "" ] && [ "$vpc_id" != "" ]; then
+              aws ec2 detach-internet-gateway --region $region --internet-gateway-id $igw_id --vpc-id $vpc_id || true
+              aws ec2 delete-internet-gateway --region $region --internet-gateway-id $igw_id || true
+            fi
           done
           
           # Delete Route Tables
